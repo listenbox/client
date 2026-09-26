@@ -2,6 +2,7 @@
 use std::{
     env,
     error::Error,
+    ffi::OsString,
     fs,
     path::{Path, PathBuf},
     process::Command,
@@ -22,6 +23,39 @@ fn run(command: &mut Command) -> Result<(), Box<dyn Error>> {
         return Err(format!("{command:?} failed: {status}").into());
     }
     Ok(())
+}
+
+fn unix_path(path: &Path, msys2_bin: Option<&Path>) -> Result<OsString, Box<dyn Error>> {
+    let Some(bin) = msys2_bin else {
+        return Ok(path.as_os_str().to_owned());
+    };
+    // Native Windows processes do not get MSYS2's automatic argument conversion.
+    // In particular, GNU tar cannot use a backslash-separated Windows -C path.
+    let output = unix_command("cygpath", Some(bin))
+        .args(["-u", "--"])
+        .arg(path)
+        .output()?;
+    if !output.status.success() {
+        return Err(format!(
+            "cygpath failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into());
+    }
+    Ok(String::from_utf8(output.stdout)?.trim_end().into())
+}
+
+fn extract_archive(
+    archive: &Path,
+    destination: &Path,
+    msys2_bin: Option<&Path>,
+) -> Result<(), Box<dyn Error>> {
+    run(unix_command("tar", msys2_bin)
+        .current_dir(archive.parent().ok_or("missing archive directory")?)
+        .arg("-xf")
+        .arg(archive.file_name().ok_or("missing archive filename")?)
+        .arg("-C")
+        .arg(unix_path(destination, msys2_bin)?))
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -68,21 +102,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     let digest = unix_command("openssl", msys2_bin.as_deref())
         .args(["dgst", "-sha256"])
-        .arg(&archive)
+        .arg(unix_path(&archive, msys2_bin.as_deref())?)
         .output()?;
     if !digest.status.success() || !String::from_utf8(digest.stdout)?.trim().ends_with(checksum) {
         return Err("FFmpeg source checksum mismatch".into());
     }
-    run(unix_command("tar", msys2_bin.as_deref())
-        .current_dir(&cache)
-        .arg("-xf")
-        .arg(
-            archive
-                .file_name()
-                .ok_or("missing FFmpeg archive filename")?,
-        )
-        .arg("-C")
-        .arg(&build))?;
+    extract_archive(&archive, &build, msys2_bin.as_deref())?;
     let source = build.join(format!("ffmpeg-{version}"));
     let mut configure = unix_command("bash", msys2_bin.as_deref());
     configure.arg("./configure").current_dir(&source);
@@ -94,8 +119,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             configure.arg("--disable-asm");
         }
     }
+    let unix_prefix = unix_path(&prefix, msys2_bin.as_deref())?;
     run(configure
-        .arg(format!("--prefix={}", prefix.display()).replace('\\', "/"))
+        .arg(format!("--prefix={}", Path::new(&unix_prefix).display()))
         .args([
             "--disable-everything",
             "--disable-autodetect",
@@ -143,6 +169,40 @@ fn main() -> Result<(), Box<dyn Error>> {
 mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    #[cfg(windows)]
+    fn msys_tar_extracts_into_windows_paths_with_spaces() {
+        let bin = PathBuf::from(env::var_os("MSYS2_LOCATION").expect("MSYS2_LOCATION is required"))
+            .join("usr/bin");
+        let root = env::temp_dir().join(format!(
+            "ffmpeg archive paths {} {}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let source = root.join("source files");
+        let destination = root.join("extracted files");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&destination).unwrap();
+        fs::write(source.join("fixture.txt"), "archive path regression").unwrap();
+        run(unix_command("tar", Some(&bin)).current_dir(&root).args([
+            "-cf",
+            "fixture.tar",
+            "-C",
+            "source files",
+            "fixture.txt",
+        ]))
+        .unwrap();
+        extract_archive(&root.join("fixture.tar"), &destination, Some(&bin)).unwrap();
+        assert_eq!(
+            fs::read_to_string(destination.join("fixture.txt")).unwrap(),
+            "archive path regression"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn msys_tools_ignore_ambient_search_paths() {
