@@ -9,6 +9,18 @@ fn run(command: &mut Command) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn require_arm64(path: &Path) -> Result<(), Box<dyn Error>> {
+    let output = Command::new("lipo").arg("-archs").arg(path).output()?;
+    if !output.status.success() {
+        return Err(format!("cannot inspect architectures in {}", path.display()).into());
+    }
+    let actual = String::from_utf8(output.stdout)?;
+    if actual.trim() != "arm64" {
+        return Err(format!("{} must be arm64, found {}", path.display(), actual.trim()).into());
+    }
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     if !cfg!(target_os = "macos") {
         return Err("DMGs require macOS".into());
@@ -27,7 +39,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     {
         return Err("invalid version".into());
     }
-    let dist = Path::new("dist/macos");
+    let dist = Path::new("crates/desktop/dist/macos");
+    let binary = Path::new("crates/desktop/dist/release/listenbox-desktop");
+    require_arm64(binary)?;
     let staging = dist.join("image");
     if staging.exists() {
         fs::remove_dir_all(&staging)?;
@@ -35,10 +49,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let contents = staging.join("Listenbox.app/Contents");
     fs::create_dir_all(contents.join("MacOS"))?;
     fs::create_dir_all(contents.join("Resources"))?;
-    fs::copy(
-        "dist/release/listenbox-desktop",
-        contents.join("MacOS/listenbox-desktop"),
-    )?;
+    fs::copy(binary, contents.join("MacOS/listenbox-desktop"))?;
     fs::copy(
         "crates/desktop/assets/icon.png",
         contents.join("Resources/icon.png"),
@@ -46,10 +57,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     for (source, target) in [
         ("LICENSE", "LICENSE"),
         ("THIRD-PARTY-NOTICES.txt", "THIRD-PARTY-NOTICES.txt"),
-        (".cache/ffmpeg/NOTICE.txt", "FFmpeg-NOTICE.txt"),
     ] {
         fs::copy(source, contents.join("Resources").join(target))?;
     }
+    fs::copy(
+        "crates/desktop/dist/release/FFmpeg-NOTICE.txt",
+        contents.join("Resources/FFmpeg-NOTICE.txt"),
+    )?;
     fs::write(
         contents.join("Info.plist"),
         format!(
@@ -88,10 +102,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .arg(&app))?;
     #[cfg(unix)]
     std::os::unix::fs::symlink("/Applications", staging.join("Applications"))?;
-    let dmg = dist.join(format!(
-        "Listenbox-{version}-macos-{}.dmg",
-        env::consts::ARCH
-    ));
+    let dmg = dist.join(format!("Listenbox-{version}-macos-arm64.dmg"));
     run(Command::new("hdiutil")
         .args(["create", "-volname", "Listenbox", "-srcfolder"])
         .arg(&staging)

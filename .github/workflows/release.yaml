@@ -1,16 +1,12 @@
-name: Release macOS clients
+name: Release desktop
 on:
   push:
-    tags: ['v*']
+    branches: [master]
 permissions:
   contents: read
 jobs:
-  package:
-    strategy:
-      fail-fast: false
-      matrix:
-        runner: [macos-15, macos-15-intel]
-    runs-on: ${{ matrix.runner }}
+  macos:
+    runs-on: macos-15
     env:
       MACOSX_DEPLOYMENT_TARGET: '13.0'
     steps:
@@ -21,7 +17,7 @@ jobs:
       - uses: moonrepo/setup-toolchain@v0
         with:
           moon-version: '2.5.5'
-      - run: rustup toolchain install 1.98.1 --profile minimal --component clippy,rustfmt
+      - run: rustup toolchain install 1.98.1 --profile minimal
       - uses: actions/cache@v6
         with:
           path: |
@@ -30,29 +26,124 @@ jobs:
             target
             .cache/ffmpeg
             ~/.pkgx
-          key: release-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'tools/native-ffmpeg.rs') }}
-      - run: moon ci
-      - run: moon run client:dmg client:package
-      - run: mv dist/listenbox-client.tar.gz "dist/listenbox-client-macos-$(uname -m).tar.gz"
+          key: release-macos-arm64-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'tools/native-ffmpeg.rs') }}
+      - name: Build Apple Silicon DMG
+        run: moon exec --ignore-ci-checks desktop:dmg
       - uses: actions/upload-artifact@v7
         with:
-          name: macos-${{ runner.arch }}
-          path: |
-            dist/macos/*.dmg
-            dist/*.tar.gz
+          name: release-macos
+          path: crates/desktop/dist/macos/*.dmg
           if-no-files-found: error
+
+  windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: x64
+            target: x86_64-pc-windows-msvc
+            runner: windows-2025
+          - architecture: arm64
+            target: aarch64-pc-windows-msvc
+            runner: windows-11-arm
+    runs-on: ${{ matrix.runner }}
+    outputs:
+      release-version: ${{ steps.version.outputs.version }}
+    steps:
+      - run: git config --global core.autocrlf input
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: msys2/setup-msys2@v2
+        id: msys2
+        with:
+          msystem: MSYS
+          path-type: inherit
+          install: make diffutils tar xz openssl
+      - name: Install Moon
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Moon publishes x64 Windows binaries; Windows ARM64 runs these too.
+          $archive = 'moon_cli-x86_64-pc-windows-msvc.zip'
+          $tools = Join-Path $env:RUNNER_TEMP 'moon'
+          New-Item -ItemType Directory -Force $tools | Out-Null
+          gh release download v2.5.5 --repo moonrepo/moon --pattern $archive --pattern "$archive.sha256" --dir $tools
+          if ($LASTEXITCODE -ne 0) { throw 'Moon download failed.' }
+          $expected = ((Get-Content (Join-Path $tools "$archive.sha256") -Raw).Trim() -split '\s+')[0]
+          if ((Get-FileHash (Join-Path $tools $archive) -Algorithm SHA256).Hash -ne $expected) { throw 'Moon checksum mismatch.' }
+          Expand-Archive (Join-Path $tools $archive) $tools
+          (Get-ChildItem $tools -Recurse -Filter moon.exe | Select-Object -First 1).DirectoryName >> $env:GITHUB_PATH
+      - run: rustup toolchain install 1.98.1 --profile minimal --component clippy,rustfmt --target ${{ matrix.target }}
+      - name: Resolve desktop release version
+        id: version
+        shell: pwsh
+        run: |
+          $metadata = cargo metadata --locked --no-deps --format-version 1 | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Cargo metadata failed.' }
+          $desktop = @($metadata.packages | Where-Object { $_.name -eq 'listenbox-desktop' })
+          if ($desktop.Count -ne 1) { throw 'Expected exactly one listenbox-desktop package.' }
+          $version = "$($desktop[0].version)+$($env:GITHUB_SHA.Substring(0, 12))"
+          "version=$version" >> $env:GITHUB_OUTPUT
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            .cache/ffmpeg-${{ matrix.target }}
+          key: windows-${{ matrix.architecture }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'tools/native-ffmpeg.rs', 'tools/build-windows.ps1') }}
+      - name: Build and verify release
+        env:
+          MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
+        run: moon exec --ignore-ci-checks desktop:build-release-windows-${{ matrix.architecture }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-windows-${{ matrix.architecture }}
+          path: |
+            crates/desktop/dist/listenbox-desktop-windows-${{ matrix.architecture }}.exe
+            crates/desktop/dist/listenbox-desktop-windows-${{ matrix.architecture }}.zip
+          if-no-files-found: error
+
   publish:
-    needs: package
+    needs: [macos, windows]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@v8
         with:
-          path: artifacts
+          pattern: release-*
           merge-multiple: true
-      - name: Publish downloadable clients
+          path: artifacts
+      - name: Publish desktop release
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes artifacts/*/*.dmg artifacts/*.tar.gz
+          DESKTOP_RELEASE_VERSION: ${{ needs.windows.outputs.release-version }}
+        run: |
+          set -euo pipefail
+          test -n "$DESKTOP_RELEASE_VERSION"
+          macos_version="${DESKTOP_RELEASE_VERSION%%+*}"
+          test -f "artifacts/Listenbox-${macos_version}-macos-arm64.dmg"
+          test -f artifacts/listenbox-desktop-windows-x64.exe
+          test -f artifacts/listenbox-desktop-windows-x64.zip
+          test -f artifacts/listenbox-desktop-windows-arm64.exe
+          test -f artifacts/listenbox-desktop-windows-arm64.zip
+          tag="desktop-v${DESKTOP_RELEASE_VERSION}"
+          cat > "$RUNNER_TEMP/release-notes.md" <<'NOTES'
+          Desktop builds from master:
+
+          - **macOS Apple Silicon**: open the DMG and drag Listenbox to Applications. The app is ad-hoc signed and is not notarized.
+          - **Windows x64**: Intel and AMD PCs; also runs through emulation on Windows 11 ARM.
+          - **Windows ARM64**: native build for Snapdragon/ARM Windows PCs.
+
+          Windows ZIPs include the executable and third-party license notices. The matching EXEs can be run directly. Windows executables are unsigned. Interactive testing is still required.
+          NOTES
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$tag" --repo "$GITHUB_REPOSITORY" --clobber artifacts/*
+          else
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --prerelease --latest=false --title "Listenbox Desktop ${DESKTOP_RELEASE_VERSION}" \
+              --notes-file "$RUNNER_TEMP/release-notes.md" artifacts/*
+          fi
