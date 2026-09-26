@@ -65,7 +65,8 @@ jobs:
           $version = "$($desktop[0].version)+$($env:GITHUB_SHA.Substring(0, 12))"
           "version=$version" >> $env:GITHUB_OUTPUT
           $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
-          $vsVersion = & $vswhere -latest -products '*' -property installationVersion
+          $component = if ('${{ matrix.architecture }}' -eq 'arm64') { 'ARM64' } else { 'x86.x64' }
+          $vsVersion = & $vswhere -latest -products '*' -requires "Microsoft.VisualStudio.Component.VC.Tools.$component" -property installationVersion
           if ($LASTEXITCODE -ne 0 -or -not $vsVersion) { throw 'Visual Studio build tools are missing.' }
           "native-toolchain=$vsVersion" >> $env:GITHUB_OUTPUT
       - name: Cache Cargo downloads
@@ -102,18 +103,17 @@ jobs:
         with:
           path: .cache/ffmpeg-${{ matrix.target }}
           key: ${{ steps.ffmpeg-cache.outputs.cache-primary-key }}
-      - name: Generate client sources
-        run: moon exec --ignore-ci-checks client:codegen
       - name: Build and verify release
         env:
           MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
-        # Dependencies were prepared above; a restored FFmpeg must not be rebuilt.
+        # Generated sources are checked in here. FFmpeg was prepared above and
+        # must not be rebuilt after an exact cache hit.
         run: |
           New-Item -ItemType Directory -Force .cache | Out-Null
           moon exec --ignore-ci-checks --upstream none desktop:build-release-windows-${{ matrix.architecture }} 2>&1 | Tee-Object .cache/windows-desktop-${{ matrix.architecture }}.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload build diagnostics
-        if: always()
+        if: always() && github.event_name != 'pull_request'
         uses: actions/upload-artifact@v7
         with:
           name: diagnostics-windows-${{ matrix.architecture }}-${{ github.run_attempt }}
@@ -125,6 +125,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
       - uses: actions/upload-artifact@v7
+        if: github.event_name != 'pull_request'
         with:
           name: windows-${{ matrix.architecture }}
           path: |

@@ -85,12 +85,18 @@ $headers = & dumpbin.exe /headers $executable
 if ($LASTEXITCODE -ne 0 -or -not ($headers -match $platform.Machine)) {
     throw "The packaged executable is not Windows $Architecture."
 }
+if (-not ($headers -match '2 subsystem \(Windows GUI\)')) {
+    throw 'The desktop executable must use the Windows GUI subsystem so launching it does not open a console.'
+}
 $dependencies = & dumpbin.exe /dependents $executable
 if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect Windows DLL dependencies.' }
 $dependencies | Write-Output
 if ($dependencies -match '(?i)(VCRUNTIME|MSVCP|ucrtbased|avcodec|avformat|avutil|swresample).*\.dll') {
     throw 'The executable unexpectedly requires a separately distributed runtime DLL.'
 }
-Invoke-Checked $executable @('--help')
+# PowerShell does not wait for GUI executables in every invocation context.
+# Wait explicitly so a loader/startup failure cannot pass the packaging check.
+$startup = Start-Process -FilePath $executable -ArgumentList '--help' -WindowStyle Hidden -Wait -PassThru
+if ($startup.ExitCode -ne 0) { throw "Desktop startup check failed with exit code $($startup.ExitCode)." }
 Copy-Item $executable (Join-Path $dist "listenbox-desktop-windows-$Architecture.exe") -Force
 Compress-Archive -Path "$package/*" -DestinationPath (Join-Path $dist "listenbox-desktop-windows-$Architecture.zip") -Force
