@@ -17,9 +17,13 @@ jobs:
             target: aarch64-pc-windows-msvc
             runner: windows-11-arm
     runs-on: ${{ matrix.runner }}
+    outputs:
+      release-version: ${{ steps.version.outputs.version }}
     steps:
       - run: git config --global core.autocrlf input
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - uses: msys2/setup-msys2@v2
         id: msys2
         with:
@@ -42,6 +46,16 @@ jobs:
           Expand-Archive (Join-Path $tools $archive) $tools
           (Get-ChildItem $tools -Recurse -Filter moon.exe | Select-Object -First 1).DirectoryName >> $env:GITHUB_PATH
       - run: rustup toolchain install 1.98.1 --profile minimal --component clippy,rustfmt --target ${{ matrix.target }}
+      - name: Resolve desktop release version
+        id: version
+        shell: pwsh
+        run: |
+          $metadata = cargo metadata --locked --no-deps --format-version 1 | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Cargo metadata failed.' }
+          $desktop = @($metadata.packages | Where-Object { $_.name -eq 'listenbox-desktop' })
+          if ($desktop.Count -ne 1) { throw 'Expected exactly one listenbox-desktop package.' }
+          $version = "$($desktop[0].version)+$($env:GITHUB_SHA.Substring(0, 12))"
+          "version=$version" >> $env:GITHUB_OUTPUT
       - uses: actions/cache@v6
         with:
           path: |
@@ -53,7 +67,8 @@ jobs:
       - name: Build and verify release
         env:
           MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
-        run: moon run desktop:build-release-windows-${{ matrix.architecture }}
+        # These tasks are excluded from general CI; explicitly select them here.
+        run: moon exec --ignore-ci-checks desktop:build-release-windows-${{ matrix.architecture }}
       - uses: actions/upload-artifact@v7
         with:
           name: windows-${{ matrix.architecture }}
@@ -75,9 +90,10 @@ jobs:
       - name: Publish Windows test release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DESKTOP_RELEASE_VERSION: ${{ needs.build.outputs.release-version }}
         run: |
           set -euo pipefail
-          tag="windows-${GITHUB_SHA:0:12}"
+          tag="desktop-v${DESKTOP_RELEASE_VERSION}"
           cat > "$RUNNER_TEMP/release-notes.md" <<'NOTES'
           Windows desktop builds from master:
 
@@ -90,6 +106,6 @@ jobs:
             gh release upload "$tag" --repo "$GITHUB_REPOSITORY" --clobber artifacts/*
           else
             gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-              --prerelease --latest=false --title "Windows x64 + ARM64 (${GITHUB_SHA:0:12})" \
+              --prerelease --latest=false --title "Listenbox Desktop ${DESKTOP_RELEASE_VERSION} (Windows x64 + ARM64)" \
               --notes-file "$RUNNER_TEMP/release-notes.md" artifacts/*
           fi
