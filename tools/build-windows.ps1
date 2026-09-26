@@ -25,13 +25,6 @@ $platform = switch ($Architecture) {
 }
 $target = $platform.Target
 
-# Initialize MSVC in this process; Moon starts each task with a fresh environment.
-$vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
-$vs = & $vswhere -latest -products '*' -requires "Microsoft.VisualStudio.Component.VC.Tools.$($platform.Component)" -property installationPath
-if ($LASTEXITCODE -ne 0 -or -not $vs) { throw "Install Visual Studio C++ $Architecture build tools and the Windows SDK." }
-Import-Module (Join-Path $vs 'Common7/Tools/Microsoft.VisualStudio.DevShell.dll')
-Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments "-arch=$($platform.Compiler) -host_arch=$($platform.Compiler)"
-
 if (-not $env:MSYS2_LOCATION) { throw 'Set MSYS2_LOCATION to an MSYS2 installation with make, diffutils, tar, xz, and openssl.' }
 $env:PATH = "$(Join-Path $env:MSYS2_LOCATION 'usr/bin');$env:PATH"
 # MSYS must retain the MSVC developer environment, rather than select MinGW.
@@ -46,6 +39,19 @@ if (-not (Test-Path (Join-Path $env:LIBCLANG_PATH 'libclang.dll'))) {
     throw 'Set LIBCLANG_PATH to the directory containing the host-native LLVM libclang.dll.'
 }
 $env:PATH = "$env:LIBCLANG_PATH;$env:PATH"
+
+# Initialize MSVC last so its linker precedes MSYS2's unrelated link.exe.
+# Moon starts each task with a fresh environment, so both stages need this.
+$vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+$vs = & $vswhere -latest -products '*' -requires "Microsoft.VisualStudio.Component.VC.Tools.$($platform.Component)" -property installationPath
+if ($LASTEXITCODE -ne 0 -or -not $vs) { throw "Install Visual Studio C++ $Architecture build tools and the Windows SDK." }
+Import-Module (Join-Path $vs 'Common7/Tools/Microsoft.VisualStudio.DevShell.dll')
+Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments "-arch=$($platform.Compiler) -host_arch=$($platform.Compiler)"
+
+$linker = (Get-Command link.exe -CommandType Application | Select-Object -First 1).Source
+$expectedLinker = Join-Path $env:VCToolsInstallDir "bin/Host$Architecture/$Architecture/link.exe"
+if ($linker -ne $expectedLinker) { throw "Expected the MSVC linker at $expectedLinker, but PATH selected $linker." }
+Write-Output "MSVC linker: $linker"
 $env:FFMPEG_DIR = Join-Path $root ".cache/ffmpeg-$target"
 
 if ($Stage -eq 'FFmpeg') {
