@@ -24,6 +24,21 @@ The app is `crates/desktop/dist/listenbox-desktop`; the terminal executable is `
 
 FFmpeg 9.0.2 is built from verified source by `tools/native-ffmpeg.rs`, linked with `ffmpeg-the-third`, and never run as a subprocess. The physical `youtubei` crate embeds a verified upstream bundle in QuickJS. Both applications are self-contained. See `THIRD-PARTY-NOTICES.txt` and the packaged FFmpeg source/license notice.
 
+### Windows releases
+
+Every push to `master` builds and publishes a commit-specific Windows prerelease on [GitHub Releases](https://github.com/listenbox/client/releases). Choose `listenbox-desktop-windows-x64.zip` for Intel/AMD PCs or `listenbox-desktop-windows-arm64.zip` for native Windows ARM64, including Windows 11 ARM in VMware Fusion on Apple Silicon. Both archives include the executable and license notices; matching `.exe` assets are also available to run directly. Windows 11 ARM can also run the x64 version through emulation. The executables are unsigned; signing is not configured. Each build checks its architecture, runtime DLL dependencies and `--help` startup. Interactive Windows testing remains necessary.
+
+The same builds can run on native Windows machines of the matching architecture with Rust, Moon, Visual Studio's C++ tools for that architecture and Windows SDK, host-native LLVM, and MSYS2 (`make`, `diffutils`, `tar`, `xz`, `openssl`). Set `MSYS2_LOCATION` to the MSYS2 installation directory and, if LLVM is not installed at `C:\Program Files\LLVM`, set `LIBCLANG_PATH` to the directory containing `libclang.dll`:
+
+```powershell
+$env:MSYS2_LOCATION = 'C:\msys64'
+moon run desktop:build-release-windows-x64
+# On Windows ARM64:
+moon run desktop:build-release-windows-arm64
+```
+
+Outputs are in `crates/desktop/dist/`. FFmpeg and the MSVC runtime are linked statically. Each Windows target has its own FFmpeg cache, separate from the native macOS/Linux build. GPUI compiles its release shaders using the Windows SDK, so these tasks must run on Windows. The client profile is `%USERPROFILE%\.config\listenbox` on Windows; `LISTENBOX_PROFILE_DIR` overrides it on all platforms.
+
 ## Desktop development
 
 In the parent Listenbox workspace, start the backend and dashboard in one terminal:

@@ -57,6 +57,24 @@ tasks:
       mkdir -p dist
       cp ../../target/debug/listenbox-desktop dist/listenbox-desktop
     outputs: [dist/listenbox-desktop]
+  build-release-windows-x64:
+    description: Build and package a Windows x64 release, also runnable through Windows 11 ARM emulation.
+    deps: [client:codegen, client:native-ffmpeg-windows-x64]
+    command: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ../../tools/build-windows.ps1 -Architecture x64 -Stage Release
+    inputs: ['@group(sources)', 'project://client?group=sources', 'project://client?group=notices']
+    outputs: [dist/windows-x64/**/*, dist/listenbox-desktop-windows-x64.exe, dist/listenbox-desktop-windows-x64.zip]
+    options:
+      os: windows
+      runInCI: false
+  build-release-windows-arm64:
+    description: Build and package a native Windows ARM64 release on Windows ARM64.
+    deps: [client:codegen, client:native-ffmpeg-windows-arm64]
+    command: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ../../tools/build-windows.ps1 -Architecture arm64 -Stage Release
+    inputs: ['@group(sources)', 'project://client?group=sources', 'project://client?group=notices']
+    outputs: [dist/windows-arm64/**/*, dist/listenbox-desktop-windows-arm64.exe, dist/listenbox-desktop-windows-arm64.zip]
+    options:
+      os: windows
+      runInCI: false
   test:
     deps: [client:prerequisites]
     inputs: ['@group(sources)', 'project://client?group=sources']

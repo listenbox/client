@@ -3,11 +3,13 @@ toolchains:
   default: system
 tags: [client-workspace]
 fileGroups:
+  notices: [LICENSE, THIRD-PARTY-NOTICES.txt]
   sources:
     - crates/**/*.rs
     - crates/**/*.sql
     - crates/**/Cargo.toml
     - tools/**/*.rs
+    - tools/**/*.ps1
     - crates/desktop/assets/**/*
     - Cargo.toml
     - Cargo.lock
@@ -32,10 +34,28 @@ tasks:
       .cache/native-ffmpeg
     outputs: [.cache/ffmpeg/**/*]
   prerequisites:
-    deps: [~:native-ffmpeg]
+    deps: [~:native-ffmpeg, ~:codegen]
     inputs: []
     options:
       internal: true
+  codegen:
+    inputs: []
+    options:
+      internal: true
+  native-ffmpeg-windows-x64:
+    command: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/build-windows.ps1 -Architecture x64 -Stage FFmpeg
+    inputs: [tools/native-ffmpeg.rs, tools/build-windows.ps1, rust-toolchain.toml]
+    outputs: [.cache/ffmpeg-x86_64-pc-windows-msvc/**/*]
+    options:
+      os: windows
+      runInCI: false
+  native-ffmpeg-windows-arm64:
+    command: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/build-windows.ps1 -Architecture arm64 -Stage FFmpeg
+    inputs: [tools/native-ffmpeg.rs, tools/build-windows.ps1, rust-toolchain.toml]
+    outputs: [.cache/ffmpeg-aarch64-pc-windows-msvc/**/*]
+    options:
+      os: windows
+      runInCI: false
   lint:
     deps: [~:prerequisites]
     inputs: ["@group(sources)", tools/**/*.sh]

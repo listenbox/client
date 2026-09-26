@@ -29,8 +29,8 @@ impl Config {
                 PathBuf::from(directory)
             }
             None => {
-                let home = std::env::var_os("HOME").context("resolve user home directory")?;
-                PathBuf::from(home).join(".config/listenbox")
+                let home = std::env::home_dir().context("resolve user home directory")?;
+                home.join(".config/listenbox")
             }
         };
         Self::load_in(explicit, directory)

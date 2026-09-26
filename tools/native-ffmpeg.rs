@@ -10,11 +10,31 @@ fn run(command: &mut Command) -> Result<(), Box<dyn Error>> {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    let target = env::args().nth(1);
+    let arch = match target.as_deref() {
+        Some("x86_64-pc-windows-msvc") => Some("x86_64"),
+        Some("aarch64-pc-windows-msvc") => Some("aarch64"),
+        Some(_) => return Err("unsupported FFmpeg target".into()),
+        None => None,
+    };
+    if target.is_some() && !cfg!(windows) {
+        return Err(
+            "the Windows FFmpeg build requires a Windows MSVC developer environment".into(),
+        );
+    }
     let version = "9.0.2";
     let checksum = "8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e";
     let cache = env::current_dir()?.join(".cache");
-    let prefix = cache.join("ffmpeg");
+    let prefix = cache.join(match &target {
+        Some(target) => format!("ffmpeg-{target}"),
+        None => "ffmpeg".into(),
+    });
+    let build = match &target {
+        Some(target) => cache.join(format!("ffmpeg-build-{target}")),
+        None => cache.clone(),
+    };
     fs::create_dir_all(&cache)?;
+    fs::create_dir_all(&build)?;
     let archive = cache.join(format!("ffmpeg-{version}.tar.xz"));
     let url = format!("https://ffmpeg.org/releases/ffmpeg-{version}.tar.xz");
     if !archive.exists() {
@@ -31,14 +51,28 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Err("FFmpeg source checksum mismatch".into());
     }
     run(Command::new("tar")
+        .current_dir(&cache)
         .arg("-xf")
-        .arg(&archive)
+        .arg(
+            archive
+                .file_name()
+                .ok_or("missing FFmpeg archive filename")?,
+        )
         .arg("-C")
-        .arg(&cache))?;
-    let source = cache.join(format!("ffmpeg-{version}"));
-    run(Command::new(source.join("configure"))
-        .current_dir(&source)
-        .arg(format!("--prefix={}", prefix.display()))
+        .arg(&build))?;
+    let source = build.join(format!("ffmpeg-{version}"));
+    let mut configure = Command::new("bash");
+    configure.arg("./configure").current_dir(&source);
+    if let Some(arch) = arch {
+        configure
+            .args(["--toolchain=msvc", "--extra-cflags=-MT"])
+            .arg(format!("--arch={arch}"));
+        if arch == "aarch64" {
+            configure.arg("--disable-asm");
+        }
+    }
+    run(configure
+        .arg(format!("--prefix={}", prefix.display()).replace('\\', "/"))
         .args([
             "--disable-everything",
             "--disable-autodetect",
