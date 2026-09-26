@@ -56,6 +56,9 @@ $env:FFMPEG_DIR = Join-Path $root ".cache/ffmpeg-$target"
 
 if ($Stage -eq 'FFmpeg') {
     New-Item -ItemType Directory -Force '.cache' | Out-Null
+    $tests = ".cache/native-ffmpeg-tests-$Architecture.exe"
+    Invoke-Checked rustc @('--edition', '2024', '--test', 'tools/native-ffmpeg.rs', '-o', $tests)
+    Invoke-Checked $tests @('--nocapture')
     $builder = ".cache/native-ffmpeg-$Architecture.exe"
     Invoke-Checked rustc @('--edition', '2024', 'tools/native-ffmpeg.rs', '-o', $builder)
     Invoke-Checked $builder @($target)

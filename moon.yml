@@ -33,6 +33,16 @@ tasks:
       rustc --edition 2024 tools/native-ffmpeg.rs -o .cache/native-ffmpeg
       .cache/native-ffmpeg
     outputs: [.cache/ffmpeg/**/*]
+  test-native-ffmpeg:
+    inputs: [tools/native-ffmpeg.rs, rust-toolchain.toml]
+    script: |-
+      set -euo pipefail
+      mkdir -p .cache
+      rustc --edition 2024 --test tools/native-ffmpeg.rs -o .cache/native-ffmpeg-tests
+      .cache/native-ffmpeg-tests
+    options:
+      os: [linux, macos]
+      timeout: 30
   prerequisites:
     deps: [~:native-ffmpeg, ~:codegen]
     inputs: []
@@ -69,7 +79,7 @@ tasks:
     deps: [cli:build, desktop:build]
     inputs: []
   check:
-    deps: [~:secrets, ~:lint, cli:test, client-engine:test, client-youtubei:test, desktop:test, ~:build]
+    deps: [~:secrets, ~:lint, ~:test-native-ffmpeg, cli:test, client-engine:test, client-youtubei:test, desktop:test, ~:build]
     inputs: []
     options:
       runInCI: false
