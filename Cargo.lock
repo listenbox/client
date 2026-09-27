@@ -4474,6 +4474,7 @@ dependencies = [
  "futures-util",
  "hex",
  "image",
+ "libc",
  "parking_lot",
  "refinery",
  "reqwest",

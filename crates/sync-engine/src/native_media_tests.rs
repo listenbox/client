@@ -30,12 +30,7 @@ fn decoded(result: Result<(), ffmpeg::Error>) -> bool {
     match result {
         Ok(()) => true,
         Err(ffmpeg::Error::Eof) => false,
-        Err(ffmpeg::Error::Other { errno })
-            if std::io::Error::from_raw_os_error(errno).kind()
-                == std::io::ErrorKind::WouldBlock =>
-        {
-            false
-        }
+        Err(ffmpeg::Error::Other { errno }) if errno == libc::EAGAIN => false,
         Err(error) => panic!("decoding prepared media failed: {error}"),
     }
 }
