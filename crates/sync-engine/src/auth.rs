@@ -27,15 +27,22 @@ const SCOPES: &[&str] = &[
 ];
 
 pub async fn login(api: &mut Api) -> Result<()> {
-    login_with(api, |url| println!("Verification URL: {url}")).await
+    login_with(api, p::AuthorizationClient::Cli, |url| {
+        println!("Verification URL: {url}")
+    })
+    .await
 }
 
-pub async fn login_with(api: &mut Api, mut open_browser: impl FnMut(&str)) -> Result<()> {
+pub async fn login_with(
+    api: &mut Api,
+    client: p::AuthorizationClient,
+    mut open_browser: impl FnMut(&str),
+) -> Result<()> {
     let mut response = api
         .send(
             api.client()
                 .create_cli_authorization(p::CreateCLIAuthorizationParams {
-                    body: serde_json::from_value(json!({"scopes": SCOPES}))?,
+                    body: serde_json::from_value(json!({"client": client, "scopes": SCOPES}))?,
                 }),
         )
         .await?;
@@ -45,7 +52,7 @@ pub async fn login_with(api: &mut Api, mut open_browser: impl FnMut(&str)) -> Re
             .send(
                 api.client()
                     .create_cli_authorization(p::CreateCLIAuthorizationParams {
-                        body: serde_json::from_value(json!({"scopes": SCOPES}))?,
+                        body: serde_json::from_value(json!({"client": client, "scopes": SCOPES}))?,
                     }),
             )
             .await?;
