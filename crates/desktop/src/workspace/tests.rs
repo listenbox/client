@@ -211,6 +211,7 @@ async fn live_import_payment_required(cx: &mut TestAppContext) {
         assert!(window.try_find("upgrade-plan").is_none());
         window.click("playlist-url", cx);
         window.input(&source, cx);
+        window.click("import-video", cx);
         window.click("start-import", cx);
         assert!(view.read(cx).importing, "import did not start");
     })
@@ -221,6 +222,14 @@ async fn live_import_payment_required(cx: &mut TestAppContext) {
         assert!(
             state.error.is_some(),
             "unpaid import unexpectedly succeeded"
+        );
+        assert!(
+            state
+                .error
+                .as_ref()
+                .unwrap()
+                .message
+                .starts_with("Could not create podcast.")
         );
         assert!(state.catalog.shows.is_empty());
         assert_eq!(state.source.read(cx).value().as_str(), source);
@@ -233,7 +242,10 @@ async fn live_import_payment_required(cx: &mut TestAppContext) {
         window.click("upgrade-plan", cx);
     })
     .unwrap();
-    assert_eq!(cx.opened_url(), Some(format!("{dashboard}/{team}/upgrade")));
+    assert_eq!(
+        cx.opened_url(),
+        Some(format!("{dashboard}/{team}/upgrade?family=video_hd"))
+    );
     cx.update_window(handle.into(), |_, window, cx| {
         view.read(cx)
             .source

@@ -5,7 +5,9 @@ use std::collections::HashSet;
 use youtubei::{
     BrowseOptions, Client, Engine, EngineOptions, FetchRequest, FetchResponse, Format,
     GetVideoInfoOptions, Innertube, Player, Playlist, SessionOptions, UniversalCache,
-    models::{LockupContentType, Microformat, PlaylistAlert, PlaylistItem},
+    models::{
+        ContentImage, LockupContentType, Microformat, PlaylistAlert, PlaylistItem, ThumbnailOverlay,
+    },
 };
 
 pub struct YouTube {
@@ -16,11 +18,14 @@ pub struct YouTube {
 pub struct PlaylistSnapshot {
     pub title: String,
     pub present: Vec<String>,
+    /// Sum of known listing durations, including unplayable entries, rounded up per video.
+    pub estimated_seconds: i64,
     /// Missing IDs prove removal only when the full scan has no warnings.
     pub can_remove: bool,
 }
 
 pub struct Media {
+    pub estimated_seconds: i64,
     pub title: String,
     pub description: String,
     pub published_at: i64,
@@ -119,6 +124,7 @@ impl YouTube {
             let mut page = Playlist::new(&actions, &response, false).await?;
             let mut title = None;
             let mut present = Vec::new();
+            let mut estimated_seconds = 0_i64;
             let mut seen = HashSet::new();
             let mut pages = 0;
             let mut can_remove = true;
@@ -144,13 +150,13 @@ impl YouTube {
                     title = data.info.title;
                 }
                 for item in data.items {
-                    let id = match item {
+                    let (id, seconds) = match item {
                         PlaylistItem::PlaylistVideo(video) => {
                             ensure!(
                                 valid_video_id(&video.id),
                                 "Playlist contains an unidentified unavailable item"
                             );
-                            video.id
+                            (video.id, known_seconds(video.duration.seconds))
                         }
                         PlaylistItem::LockupView(video)
                             if matches!(
@@ -162,11 +168,33 @@ impl YouTube {
                                 valid_video_id(&video.content_id),
                                 "Playlist contains an invalid video ID"
                             );
-                            video.content_id
+                            let seconds =
+                                match video.content_image {
+                                    Some(ContentImage::ThumbnailView { overlays }) => overlays
+                                        .iter()
+                                        .find_map(|overlay| match overlay {
+                                            ThumbnailOverlay::ThumbnailOverlayBadgeView {
+                                                badges,
+                                            }
+                                            | ThumbnailOverlay::ThumbnailBottomOverlayView {
+                                                badges,
+                                            } => badges
+                                                .iter()
+                                                .filter_map(|badge| badge.text.as_deref())
+                                                .find_map(duration_badge_seconds),
+                                            _ => None,
+                                        })
+                                        .unwrap_or(0),
+                                    _ => 0,
+                                };
+                            (video.content_id, seconds)
                         }
                         _ => bail!("Unsupported playlist item; listing is incomplete"),
                     };
                     if seen.insert(id.clone()) {
+                        estimated_seconds = estimated_seconds
+                            .checked_add(seconds)
+                            .context("Playlist duration exceeds the supported range")?;
                         present.push(id);
                     }
                 }
@@ -183,6 +211,7 @@ impl YouTube {
                     .filter(|title| !title.is_empty())
                     .context("YouTube playlist missing title")?,
                 present,
+                estimated_seconds,
                 can_remove,
             })
         })
@@ -281,6 +310,7 @@ impl YouTube {
                 .context("YouTube publication date is invalid")?
                 .timestamp_millis();
             Ok(Some(Media {
+                estimated_seconds: known_seconds(data.basic_info.duration.unwrap_or(0.0)),
                 title: data.basic_info.title.unwrap_or_else(|| id.into()),
                 description: data.basic_info.short_description.unwrap_or_default(),
                 published_at,
@@ -376,4 +406,33 @@ fn valid_video_id(id: &str) -> bool {
         && id
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+}
+
+// Listing metadata can omit durations or use non-duration badges (LIVE, etc.).
+// Unknown lengths contribute zero; admission never requests individual players.
+fn known_seconds(seconds: f64) -> i64 {
+    if seconds.is_finite() && seconds > 0.0 {
+        seconds.ceil() as i64
+    } else {
+        0
+    }
+}
+
+fn duration_badge_seconds(text: &str) -> Option<i64> {
+    let parts: Vec<_> = text.split(':').collect();
+    if !(2..=3).contains(&parts.len()) {
+        return None;
+    }
+    let mut total = 0_i64;
+    for (index, part) in parts.iter().enumerate() {
+        if part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        let value = part.parse::<i64>().ok()?;
+        if index > 0 && value >= 60 {
+            return None;
+        }
+        total = total.checked_mul(60)?.checked_add(value)?;
+    }
+    Some(total)
 }

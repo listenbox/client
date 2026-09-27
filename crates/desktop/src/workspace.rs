@@ -69,7 +69,13 @@ impl From<String> for ErrorNotice {
 }
 
 impl ErrorNotice {
-    fn import(error: anyhow::Error, client: &Client, team: Option<&str>) -> Self {
+    fn import(
+        error: anyhow::Error,
+        client: &Client,
+        team: Option<&str>,
+        created: bool,
+        kind: &ShowSourceKind,
+    ) -> Self {
         if let Some(payment) = error.downcast_ref::<PaymentRequired>() {
             let reason = if payment.0.is_empty() {
                 "Payment is required to continue."
@@ -77,8 +83,23 @@ impl ErrorNotice {
                 &payment.0
             };
             Self {
-                message: format!("Import paused. {reason}"),
-                upgrade_url: team.and_then(|team| client.upgrade_url(team).ok()),
+                message: format!(
+                    "{} {reason}",
+                    if created {
+                        "Podcast created, but the import did not finish."
+                    } else {
+                        "Could not create podcast."
+                    }
+                ),
+                upgrade_url: team
+                    .and_then(|team| client.upgrade_url(team).ok())
+                    .map(|url| {
+                        if *kind == ShowSourceKind::Video {
+                            format!("{url}?family=video_hd")
+                        } else {
+                            url
+                        }
+                    }),
             }
         } else {
             format!("Import did not finish. {error:#}").into()
@@ -431,9 +452,9 @@ impl Workspace {
                         self.receive(Message::Report(show.slug, report), window, cx);
                     }
                     Err(error) => {
-                        if let Some(slug) = imported_slug {
+                        if let Some(slug) = &imported_slug {
                             self.reports.insert(
-                                slug,
+                                slug.clone(),
                                 "Import paused. Progress is saved; use Sync now to resume.".into(),
                             );
                         }
@@ -441,6 +462,8 @@ impl Workspace {
                             error,
                             &self.client,
                             self.catalog.import_team.as_deref(),
+                            imported_slug.is_some(),
+                            &self.import_kind,
                         ));
                         // Creation may have committed even when its reply was lost.
                         // A catalog reload exposes that podcast for explicit resumption.
@@ -887,9 +910,9 @@ impl Workspace {
             .child(div().w_full().border_t_1().border_color(t.divider).pt_4().flex().flex_col().gap_2()
                 .child(format!("Creates a new podcast in {team}."))
                 .child(div().text_size(px(12.)).text_color(t.muted)
-                    .child("A paid podcast plan is required. Playlist order is preserved. On later syncs, videos removed from the playlist are removed from the podcast.")))
+                    .child(if self.import_kind == ShowSourceKind::Video { "A video plan with enough storage for the playlist is required. Playlist order is preserved. On later syncs, videos removed from the playlist are removed from the podcast." } else { "A paid podcast plan is required. Playlist order is preserved. On later syncs, videos removed from the playlist are removed from the podcast." })))
             .child(div().flex().items_center().gap_3()
-                .child(Button::new("start-import").primary().label(if self.importing { "Importing…" } else { "Create podcast & import" })
+                .child(Button::new("start-import").primary().label(if self.importing { "Checking playlist and plan…" } else { "Create podcast & import" })
                     .disabled(busy).on_click(cx.listener(|view, _, _, cx| view.import_playlist(cx))))
                 .when(self.importing, |row| row.child(Spinner::new().small()))
                 .when(!self.importing && self.show().is_some(), |row| row.child(Button::new("cancel-import").ghost().label("Cancel")
