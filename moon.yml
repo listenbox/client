@@ -13,7 +13,6 @@ fileGroups:
     - crates/**/*.sql
     - crates/**/Cargo.toml
     - crates/**/tests/**/*
-    - crates/**/benches/**/*
     - tools/**/*.rs
     - tools/**/*.ps1
     - crates/desktop/assets/**/*

@@ -13,7 +13,6 @@ fileGroups:
     - build.rs
     - src/**/*.rs
     - tests/**/*
-    - benches/**/*
     - examples/**/*.rs
     - Cargo.toml
 tasks:
