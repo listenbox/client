@@ -1,6 +1,9 @@
 language: rust
+layer: library
 toolchains:
-  default: system
+  default: rust
+env:
+  CARGO_TERM_COLOR: always
 dependsOn: ['client']
 taskOptions:
   cache: true
@@ -8,6 +11,7 @@ fileGroups:
   sources:
     - src/**/*.rs
     - tests/**/*
+    - benches/**/*
     - examples/**/*.rs
     - build.rs
     - Cargo.toml

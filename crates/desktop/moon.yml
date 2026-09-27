@@ -1,7 +1,10 @@
 language: rust
+layer: application
 toolchains:
-  default: system
-dependsOn: ['client', 'client-engine']
+  default: rust
+env:
+  CARGO_TERM_COLOR: always
+dependsOn: ['client']
 taskOptions:
   cache: true
 fileGroups:
@@ -10,6 +13,7 @@ fileGroups:
     - build.rs
     - src/**/*.rs
     - tests/**/*
+    - benches/**/*
     - examples/**/*.rs
     - Cargo.toml
 tasks:

@@ -24,6 +24,30 @@ The debug app is `crates/desktop/dist/listenbox-desktop`; the terminal executabl
 
 FFmpeg 9.0.2 is built from verified source by `tools/native-ffmpeg.rs`, linked with `ffmpeg-the-third`, and never run as a subprocess. The physical `youtubei` crate embeds a verified upstream bundle in QuickJS. Both applications are self-contained. See `THIRD-PARTY-NOTICES.txt` and the packaged FFmpeg source/license notice.
 
+### Moon and Cargo
+
+The task setup follows the [Moon Rust handbook](https://moonrepo.dev/docs/guides/rust/handbook).
+`.moon/toolchains.yml` enables Rust integration, and the parent Listenbox
+workspace extends that same configuration. `rust-toolchain.toml` remains the
+single toolchain version and component pin for both direct Cargo and Moon runs.
+Moon reads Cargo manifests and the lockfile for dependency tracking and hashing,
+and infers local crate relationships from Cargo path dependencies. Cargo owns
+compilation and its build-directory lock; concurrent crate tasks may wait for it.
+
+From either workspace:
+
+```sh
+moon run client:typecheck  # Check all workspace crates and targets
+moon run client:lint       # Format Rust, check shell scripts, and run Clippy
+moon run client:test       # Run each crate's existing test runner
+moon run client:check      # Secrets, typecheck, lint, tests, and debug builds
+```
+
+Build, typecheck, lint, and test tasks retain the native FFmpeg prerequisite.
+In the parent workspace, it also waits for the OpenAPI client and configuration
+generators; standalone checkouts use the committed generated Rust sources.
+Moon caches deliverable binaries under `dist/`, never Cargo's `target/` directory.
+
 ### Worktree disk usage
 
 Cargo downloads are shared through `registry` and `git` under `CARGO_HOME`

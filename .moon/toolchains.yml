@@ -1,0 +1,4 @@
+# Rustup reads the version and components from rust-toolchain.toml.
+# Cargo fetches dependencies on demand; CI caches target/ separately from Moon.
+rust:
+  inheritAliases: false
