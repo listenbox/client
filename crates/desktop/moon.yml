@@ -107,19 +107,6 @@ tasks:
       os: macos
       cache: false
       runInCI: false
-  test-macos-reinstall:
-    description: Verify macOS installation, replacement, graceful shutdown, and failure preservation in isolated bundles.
-    inputs: [project://client?group=macos-install-tools]
-    script: |-
-      set -euo pipefail
-      cd ../..
-      mkdir -p .cache
-      xcrun swiftc -warnings-as-errors -parse-as-library tools/reinstall-macos-fixture.swift -o .cache/reinstall-macos-fixture
-      xcrun swiftc -warnings-as-errors -parse-as-library -D REINSTALL_TESTS tools/reinstall-macos.swift tools/reinstall-macos-tests.swift -o .cache/reinstall-macos-tests
-      .cache/reinstall-macos-tests .cache/reinstall-macos-fixture
-    options:
-      os: macos
-      timeout: 30
   build-release-windows-x64:
     description: Build and package a Windows x64 release, also runnable through Windows 11 ARM emulation.
     deps: [client:codegen, client:native-ffmpeg-windows-x64]

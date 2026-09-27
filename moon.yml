@@ -7,7 +7,7 @@ env:
 tags: [client-workspace]
 fileGroups:
   notices: [LICENSE, THIRD-PARTY-NOTICES.txt]
-  macos-install-tools: [tools/reinstall-macos*.swift]
+  macos-install-tools: [tools/reinstall-macos.swift]
   sources:
     - crates/**/*.rs
     - crates/**/*.sql

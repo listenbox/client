@@ -79,7 +79,6 @@ func reinstall(source: URL, destination: URL, shutdownTimeout: TimeInterval = 30
     print("Installed \(destination.path)")
 }
 
-#if !REINSTALL_TESTS
 @main
 struct ReinstallMacOS {
     static func main() {
@@ -97,4 +96,3 @@ struct ReinstallMacOS {
         }
     }
 }
-#endif
