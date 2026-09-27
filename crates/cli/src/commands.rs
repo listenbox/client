@@ -20,7 +20,7 @@ pub async fn shows(api: &Api, command: ShowCommand) -> Result<()> {
                     .await?,
                 )?
             } else {
-                listenbox_sync_engine::sync::set_order(api, &show, episode, None).await?
+                listenbox_sync_engine::sync::set_order(api, &show, episode).await?
             };
             for id in order.episode_ids {
                 println!("{id}");
@@ -57,21 +57,6 @@ pub async fn shows(api: &Api, command: ShowCommand) -> Result<()> {
             progress.await?;
             result?;
         }
-        ShowCommand::Source {
-            show,
-            youtube,
-            disconnect: _,
-        } => {
-            let result = listenbox_sync_engine::sync::set_source(api, &show, youtube).await?;
-            println!(
-                "{}: {}",
-                result.slug,
-                result
-                    .youtube_source_url
-                    .as_deref()
-                    .unwrap_or("source disconnected")
-            );
-        }
         ShowCommand::List => {
             let result = api.json(api.client().list_shows(), &[200]).await?;
             let shows: Vec<p::Show> = serde_json::from_value(result)?;
@@ -98,6 +83,7 @@ pub async fn shows(api: &Api, command: ShowCommand) -> Result<()> {
                     slug: slug.clone(),
                     language,
                     image_asset_id,
+                    youtube_source_url: None,
                     source_kind: serde_json::from_value(serde_json::to_value(source_kind)?)?,
                 },
             });

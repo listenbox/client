@@ -1,14 +1,13 @@
 use crate::{
     api::{Api, string},
     download::download,
-    events::Progress,
     innertube::YouTube,
     publicapi as p,
 };
 use anyhow::{Context, Result, ensure};
 use serde_json::json;
 use sha2::{Digest, Sha256};
-use std::{collections::HashSet, path::Path, time::Duration};
+use std::path::Path;
 use url::Url;
 
 pub fn is_source(source: &str) -> bool {
@@ -20,105 +19,110 @@ pub fn is_source(source: &str) -> bool {
     })
 }
 
-pub async fn import(api: &Api, source: &str, requested_slug: Option<&str>) -> Result<()> {
+/// Validate the playlist boundary before starting network or creating a podcast.
+pub fn playlist_source(source: &str) -> Result<String> {
+    let url = Url::parse(source.trim())?;
+    let ids: Vec<_> = url.query_pairs().filter(|(key, _)| key == "list").collect();
+    ensure!(
+        source.len() <= 2048
+            && url.scheme() == "https"
+            && matches!(url.host_str(), Some("youtube.com" | "www.youtube.com"))
+            && url.path() == "/playlist"
+            && url.username().is_empty()
+            && url.password().is_none()
+            && url.port().is_none()
+            && ids.len() == 1
+            && (2..=200).contains(&ids[0].1.len())
+            && valid_youtube_id(&ids[0].1),
+        "Enter a public YouTube playlist URL, such as https://www.youtube.com/playlist?list=PL…"
+    );
+    Ok(format!(
+        "https://www.youtube.com/playlist?list={}",
+        ids[0].1
+    ))
+}
+
+/// Both interfaces use this creation boundary and the same durable first sync.
+/// Creation is never an upsert: collisions must be resumed with sync explicitly.
+pub async fn import(
+    api: &Api,
+    engine: &crate::sync::Engine,
+    source: &str,
+    requested_slug: Option<&str>,
+    kind: p::ShowSourceKind,
+    mut created: impl FnMut(&p::Show),
+) -> Result<(p::Show, crate::sync::Report)> {
     let url = Url::parse(source)?;
     ensure!(
-        url.scheme() == "https"
+        is_source(source)
+            && url.scheme() == "https"
             && url.username().is_empty()
             && url.password().is_none()
             && url.port().is_none(),
         "invalid YouTube source URL"
     );
-    let youtube = YouTube::new(api).await?;
-    let (title, videos) =
-        if let Some((_, playlist)) = url.query_pairs().find(|(key, _)| key == "list") {
-            ensure!(valid_youtube_id(&playlist), "invalid playlist ID");
-            youtube.playlist(api, &playlist).await?
-        } else {
-            let id = if url.host_str() == Some("youtu.be") {
-                url.path().trim_matches('/').to_owned()
-            } else if let Some((_, id)) = url.query_pairs().find(|(key, _)| key == "v") {
-                id.into_owned()
-            } else {
-                url.path()
-                    .strip_prefix("/shorts/")
-                    .or_else(|| url.path().strip_prefix("/embed/"))
-                    .unwrap_or("")
-                    .into()
-            };
-            ensure!(
-                id.len() == 11 && valid_youtube_id(&id),
-                "invalid YouTube video ID"
-            );
-            let media = youtube.media(api, &id).await?;
-            (media.title, vec![id])
-        };
-    ensure!(!videos.is_empty(), "YouTube playlist has no public videos");
-    let slug = requested_slug
-        .map(str::to_owned)
-        .unwrap_or_else(|| format!("youtube-{}", &hex::encode(Sha256::digest(source))[..16]));
+    let collection = if url.query_pairs().any(|(key, _)| key == "list") {
+        Some(playlist_source(source)?)
+    } else {
+        None
+    };
+    let slug = requested_slug.map(str::to_owned).unwrap_or_else(|| {
+        format!(
+            "youtube-{}",
+            &hex::encode(Sha256::digest(collection.as_deref().unwrap_or(source)))[..16]
+        )
+    });
     let slug = crate::slug(&slug).map_err(anyhow::Error::msg)?;
     let shows: Vec<p::Show> =
         serde_json::from_value(api.json(api.client().list_shows(), &[200]).await?)?;
-    let show = match shows.into_iter().find(|show| show.slug == slug) {
-        Some(show) => {
-            ensure!(
-                show.source_kind == p::ShowSourceKind::Video,
-                "show {slug:?} is not a video show"
-            );
-            show
-        }
-        None => {
-            let response = api
-                .json(
-                    api.client().create_show(p::CreateShowParams {
-                        body: p::CreateShow {
-                            id: format!("shw_{}", &uuid::Uuid::new_v4().simple().to_string()[..16]),
-                            title,
-                            slug: slug.clone(),
-                            source_kind: p::ShowSourceKind::Video,
-                            language: "en".into(),
-                            image_asset_id: None,
-                        },
-                    }),
-                    &[201],
-                )
-                .await?;
-            serde_json::from_value(response)?
-        }
-    };
-    let mut progress = Progress::default();
-    let mut seen = HashSet::new();
-    for (index, id) in videos.iter().enumerate() {
-        ensure!(
-            id.len() == 11 && valid_youtube_id(id),
-            "invalid YouTube playlist video ID"
-        );
-        if seen.insert(id) {
-            import_video(
-                api,
-                &youtube,
-                VideoImport {
-                    slug: &slug,
-                    id,
-                    collection: None,
-                    transfer: None,
-                    journal: None,
-                    audio: false,
-                },
-            )
-            .await
-            .with_context(|| format!("import YouTube video {id:?}"))?;
-        }
-        progress.update(((index + 1) * 100 / videos.len()) as i64)?;
-    }
-    progress.update(100)?;
-    println!("{slug}");
-    eprintln!(
-        "Open in Listenbox: {}",
-        api.config.show_url(&show.team_id, &show.id)?
+    ensure!(
+        !shows.iter().any(|show| show.slug == slug),
+        "Podcast {slug:?} already exists. Use sync to resume an imported podcast, or choose a new slug."
     );
-    Ok(())
+    let youtube = YouTube::new(api).await?;
+    let (title, canonical) = if let Some(collection) = &collection {
+        let id = Url::parse(collection)?
+            .query_pairs()
+            .find(|(key, _)| key == "list")
+            .unwrap()
+            .1
+            .into_owned();
+        let (title, _) = youtube.playlist(api, &id).await?;
+        (title, collection.clone())
+    } else {
+        let id = if url.host_str() == Some("youtu.be") {
+            url.path().trim_matches('/').to_owned()
+        } else if let Some((_, id)) = url.query_pairs().find(|(key, _)| key == "v") {
+            id.into_owned()
+        } else {
+            url.path()
+                .strip_prefix("/shorts/")
+                .or_else(|| url.path().strip_prefix("/embed/"))
+                .unwrap_or("")
+                .into()
+        };
+        ensure!(
+            id.len() == 11 && valid_youtube_id(&id),
+            "invalid YouTube video ID"
+        );
+        (
+            youtube.media(api, &id).await?.title,
+            format!("https://www.youtube.com/watch?v={id}"),
+        )
+    };
+    let show: p::Show = serde_json::from_value(api.json(api.client().create_show(p::CreateShowParams {
+        body: p::CreateShow {
+            id: format!("shw_{}", &uuid::Uuid::new_v4().simple().to_string()[..16]),
+            title, slug: slug.clone(), source_kind: kind.clone(), language: "en".into(),
+            image_asset_id: None, youtube_source_url: Some(canonical),
+        },
+    }), &[201]).await.with_context(|| format!("Create podcast {slug:?}. If creation completed but its reply was lost, reload your podcasts and resume with sync."))?)?;
+    created(&show);
+    let report = engine
+        .once(api, &slug)
+        .await
+        .with_context(|| format!("Podcast {slug:?} was created. Resume it with sync."))?;
+    Ok((show, report))
 }
 
 fn valid_youtube_id(id: &str) -> bool {
@@ -131,9 +135,9 @@ fn valid_youtube_id(id: &str) -> bool {
 pub(crate) struct VideoImport<'a> {
     pub slug: &'a str,
     pub id: &'a str,
-    pub collection: Option<&'a str>,
+    pub collection: &'a str,
     pub transfer: Option<&'a crate::downloads::Transfer>,
-    pub journal: Option<&'a crate::database::Database>,
+    pub journal: &'a crate::database::Database,
     pub audio: bool,
 }
 
@@ -151,32 +155,9 @@ pub(crate) async fn import_video(
         audio,
     } = work;
     let source_url = format!("https://www.youtube.com/watch?v={id}");
-    let operation_id = match journal {
-        Some(journal) => journal.operation(
-            &api.config.api_origin,
-            slug,
-            &source_url,
-            collection.unwrap_or(""),
-        )?,
-        None => uuid::Uuid::new_v4().to_string(),
-    };
-    let temporary = if journal.is_none() {
-        Some(tempfile::tempdir()?)
-    } else {
-        None
-    };
-    let directory = match journal {
-        Some(journal) => journal.directory(&operation_id)?,
-        None => temporary
-            .as_ref()
-            .context("Missing transfer directory")?
-            .path()
-            .to_owned(),
-    };
-    let saved = journal
-        .map(|journal| journal.prepared(&operation_id))
-        .transpose()?
-        .flatten();
+    let operation_id = journal.operation(&api.config.api_origin, slug, &source_url, collection)?;
+    let directory = journal.directory(&operation_id)?;
+    let saved = journal.prepared(&operation_id)?;
     let manifest = match saved {
         Some(manifest) => {
             for object in &manifest.objects {
@@ -208,7 +189,7 @@ pub(crate) async fn import_video(
                     media.audio.as_ref().unwrap_or(&media.video),
                     &directory.join("source-audio"),
                     transfer,
-                    journal.map(|journal| (journal, operation_id.as_str())),
+                    Some((journal, operation_id.as_str())),
                 )
                 .await?;
             } else {
@@ -217,7 +198,7 @@ pub(crate) async fn import_video(
                     &media.video,
                     &directory.join("source-video"),
                     transfer,
-                    journal.map(|journal| (journal, operation_id.as_str())),
+                    Some((journal, operation_id.as_str())),
                 )
                 .await?;
                 if let Some(stream) = &media.audio {
@@ -226,7 +207,7 @@ pub(crate) async fn import_video(
                         stream,
                         &directory.join("source-audio"),
                         transfer,
-                        journal.map(|journal| (journal, operation_id.as_str())),
+                        Some((journal, operation_id.as_str())),
                     )
                     .await?;
                 }
@@ -255,19 +236,16 @@ pub(crate) async fn import_video(
                 show_slug: slug.into(),
                 source_url: source_url.clone(),
                 operation_id,
-                source_collection_url: collection.map(str::to_owned),
                 title: media.title,
                 description: Some(media.description),
                 duration_seconds: duration,
                 published_at: media.published_at,
                 objects: inventory(&directory, audio).await?,
             };
-            if let Some(journal) = journal {
-                for object in &manifest.objects {
-                    std::fs::File::open(directory.join(&object.name))?.sync_all()?;
-                }
-                journal.save_prepared(&manifest)?;
+            for object in &manifest.objects {
+                std::fs::File::open(directory.join(&object.name))?.sync_all()?;
             }
+            journal.save_prepared(&manifest)?;
             manifest
         }
     };
@@ -294,14 +272,10 @@ pub(crate) async fn import_video(
         .map(str::to_owned);
     let session: p::EpisodePackage = api.decode(response).await?;
     if session.status == p::EpisodePackageStatus::Completed {
-        if let Some(journal) = journal {
-            journal.forget(&api.config.api_origin, slug, &source_url)?;
-        }
+        journal.forget(&api.config.api_origin, slug, &source_url)?;
         return Ok(());
     }
-    if let Some(journal) = journal {
-        journal.session(&manifest.operation_id, &session.upload_session_id)?;
-    }
+    journal.session(&manifest.operation_id, &session.upload_session_id)?;
     let result: Result<()> = async {
         if api.config.print_trace_ids {
             let trace = trace.context("response missing X-Trace-Id")?;
@@ -314,11 +288,7 @@ pub(crate) async fn import_video(
             let mut number = 1;
             while offset < object.byte_length {
                 let length = session.part_size.min(object.byte_length - offset);
-                if journal
-                    .map(|journal| journal.has_part(&manifest.operation_id, ordinal, number))
-                    .transpose()?
-                    .unwrap_or(false)
-                {
+                if journal.has_part(&manifest.operation_id, ordinal, number)? {
                     offset += length;
                     number += 1;
                     continue;
@@ -357,9 +327,7 @@ pub(crate) async fn import_video(
                     string(&parts[0], "upload_url")?,
                 )
                 .await?;
-                if let Some(journal) = journal {
-                    journal.save_part(&manifest.operation_id, ordinal, number)?;
-                }
+                journal.save_part(&manifest.operation_id, ordinal, number)?;
                 offset += length;
                 number += 1;
             }
@@ -380,36 +348,9 @@ pub(crate) async fn import_video(
         Ok(())
     }
     .await;
-    if let Err(error) = result {
-        if journal.is_some() {
-            return Err(error);
-        }
-        let mut cleanup = api.clone();
-        cleanup.cancel = tokio_util::sync::CancellationToken::new();
-        let request = cleanup
-            .client()
-            .cancel_episode_package(p::CancelEpisodePackageParams {
-                upload_session_id: session.upload_session_id,
-            });
-        let cancelled = tokio::time::timeout(Duration::from_secs(10), cleanup.send(request)).await;
-        match cancelled {
-            Ok(Ok(response)) if [204, 409].contains(&response.status().as_u16()) => {}
-            Ok(Ok(response)) => {
-                return Err(error).context(format!(
-                    "cancel pending package returned HTTP {}",
-                    response.status()
-                ));
-            }
-            Ok(Err(cleanup_error)) => {
-                return Err(error).context(format!("cancel pending package: {cleanup_error}"));
-            }
-            Err(_) => return Err(error).context("cancel pending package timed out"),
-        }
-        return Err(error);
-    }
-    if let Some(journal) = journal {
-        journal.forget(&api.config.api_origin, slug, &source_url)?;
-    }
+    // Failure and cancellation preserve this operation for the next explicit sync.
+    result?;
+    journal.forget(&api.config.api_origin, slug, &source_url)?;
     Ok(())
 }
 

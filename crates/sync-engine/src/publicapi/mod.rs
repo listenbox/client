@@ -474,8 +474,6 @@ pub struct CreateEpisodePackage {
     pub published_at: i64,
     #[serde(rename = "show_slug")]
     pub show_slug: ShowSlug,
-    #[serde(rename = "source_collection_url", default, skip_serializing_if = "Option::is_none")]
-    pub source_collection_url: std::option::Option<std::string::String>,
     #[serde(rename = "source_url")]
     pub source_url: std::string::String,
     #[serde(rename = "title")]
@@ -630,6 +628,8 @@ pub struct CreateShow {
     pub source_kind: ShowSourceKind,
     #[serde(rename = "title")]
     pub title: NonEmptyString,
+    #[serde(rename = "youtube_source_url", default, skip_serializing_if = "Option::is_none")]
+    pub youtube_source_url: std::option::Option<std::string::String>,
 }
 
 #[derive(Clone, Debug)]
@@ -706,8 +706,9 @@ pub struct CreateShowParams {
 #[derive(Debug)]
 pub enum CreateShowResponse {
     Status201(Show),
-    Status400(ValidationErr),
+    Status400(()),
     Status401(()),
+    Status402(()),
     Status403(()),
     Status409(()),
     Unexpected(reqwest::Response),
@@ -716,8 +717,9 @@ impl CreateShowResponse {
     pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
         Ok(match response.status().as_u16() {
             201 => Self::Status201(response.json().await?),
-            400 => Self::Status400(response.json().await?),
+            400 => Self::Status400(()),
             401 => Self::Status401(()),
+            402 => Self::Status402(()),
             403 => Self::Status403(()),
             409 => Self::Status409(()),
             _ => Self::Unexpected(response),
@@ -729,7 +731,6 @@ impl CreateShowResponse {
 pub struct CreateSyncEpisodeDeletionParams {
     pub show_slug: ShowSlug,
     pub episode_id: EpisodeID,
-    pub body: SyncEpisodeDeletion,
 }
 
 #[derive(Debug)]
@@ -1044,10 +1045,40 @@ pub enum EpisodeDeletionProgressEventType {
 pub type EpisodeDeletionRunID = std::string::String;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(untagged)]
+#[serde(tag = "status", deny_unknown_fields)]
 pub enum EpisodeDeletionTerminalEvent {
-    Variant0(EpisodeDeletionCompletedEvent),
-    Variant1(EpisodeDeletionFailedEvent),
+    #[serde(rename = "completed")]
+    Completed {
+        #[serde(rename = "episode_deletion_run_id")]
+        episode_deletion_run_id: EpisodeDeletionRunID,
+        #[serde(rename = "episode_id")]
+        episode_id: EpisodeID,
+        #[serde(rename = "type")]
+        r#type: EpisodeDeletionTerminalEventCompletedType,
+    },
+    #[serde(rename = "failed")]
+    Failed {
+        #[serde(rename = "episode_deletion_run_id")]
+        episode_deletion_run_id: EpisodeDeletionRunID,
+        #[serde(rename = "error_code")]
+        error_code: NonEmptyString,
+        #[serde(rename = "error_message")]
+        error_message: NonEmptyString,
+        #[serde(rename = "type")]
+        r#type: EpisodeDeletionTerminalEventFailedType,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EpisodeDeletionTerminalEventCompletedType {
+    #[serde(rename = "terminal")]
+    Terminal,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EpisodeDeletionTerminalEventFailedType {
+    #[serde(rename = "terminal")]
+    Terminal,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -2030,11 +2061,71 @@ pub enum PublicRSSImportEventVariant1Event {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(untagged)]
+#[serde(tag = "status", deny_unknown_fields)]
 pub enum PublicRSSImportTerminalEvent {
-    Variant0(PublicRSSImportCompletedTerminalEvent),
-    Variant1(RSSImportFailedTerminalEvent),
-    Variant2(RSSImportCancelledTerminalEvent),
+    #[serde(rename = "completed")]
+    Completed {
+        #[serde(rename = "feed_id")]
+        feed_id: FeedID,
+        #[serde(rename = "show_id")]
+        show_id: ShowID,
+        #[serde(rename = "show_slug")]
+        show_slug: ShowSlug,
+        #[serde(rename = "team_id")]
+        team_id: TeamID,
+        #[serde(rename = "type")]
+        r#type: PublicRSSImportTerminalEventCompletedType,
+    },
+    #[serde(rename = "failed")]
+    Failed {
+        #[serde(rename = "error_code")]
+        error_code: NonEmptyString,
+        #[serde(rename = "error_message")]
+        error_message: NonEmptyString,
+        #[serde(rename = "http_status", default, skip_serializing_if = "Option::is_none")]
+        http_status: std::option::Option<i64>,
+        #[serde(rename = "limit_seconds", default, skip_serializing_if = "Option::is_none")]
+        limit_seconds: std::option::Option<i64>,
+        #[serde(rename = "pricing_url", default, skip_serializing_if = "Option::is_none")]
+        pricing_url: std::option::Option<std::string::String>,
+        #[serde(rename = "remaining_seconds", default, skip_serializing_if = "Option::is_none")]
+        remaining_seconds: std::option::Option<i64>,
+        #[serde(rename = "requested_seconds", default, skip_serializing_if = "Option::is_none")]
+        requested_seconds: std::option::Option<i64>,
+        #[serde(rename = "required_next_plan", default, skip_serializing_if = "Option::is_none")]
+        required_next_plan: std::option::Option<NonEmptyString>,
+        #[serde(rename = "reserved_seconds", default, skip_serializing_if = "Option::is_none")]
+        reserved_seconds: std::option::Option<i64>,
+        #[serde(rename = "retained_seconds", default, skip_serializing_if = "Option::is_none")]
+        retained_seconds: std::option::Option<i64>,
+        #[serde(rename = "sales_contact_required", default, skip_serializing_if = "Option::is_none")]
+        sales_contact_required: std::option::Option<bool>,
+        #[serde(rename = "type")]
+        r#type: PublicRSSImportTerminalEventFailedType,
+    },
+    #[serde(rename = "cancelled")]
+    Cancelled {
+        #[serde(rename = "type")]
+        r#type: PublicRSSImportTerminalEventCancelledType,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PublicRSSImportTerminalEventCancelledType {
+    #[serde(rename = "terminal")]
+    Terminal,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PublicRSSImportTerminalEventCompletedType {
+    #[serde(rename = "terminal")]
+    Terminal,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PublicRSSImportTerminalEventFailedType {
+    #[serde(rename = "terminal")]
+    Terminal,
 }
 
 pub type R2ObjectKey = std::string::String;
@@ -2266,8 +2357,6 @@ pub type SHA256Hex = std::string::String;
 pub struct SetEpisodeOrder {
     #[serde(rename = "episode_ids")]
     pub episode_ids: std::vec::Vec<EpisodeID>,
-    #[serde(rename = "source_collection_url", default, skip_serializing_if = "Option::is_none")]
-    pub source_collection_url: std::option::Option<std::string::String>,
 }
 
 #[derive(Clone, Debug)]
@@ -2304,50 +2393,13 @@ impl SetEpisodeOrderResponse {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct SetYouTubeSource {
-    #[serde(rename = "source_url", default, skip_serializing_if = "Option::is_none")]
-    pub source_url: std::option::Option<std::string::String>,
-}
-
-#[derive(Clone, Debug)]
-pub struct SetYouTubeSourceParams {
-    pub show_slug: ShowSlug,
-    pub body: SetYouTubeSource,
-}
-
-#[derive(Debug)]
-pub enum SetYouTubeSourceResponse {
-    Status200(Show),
-    Status400(ValidationErr),
-    Status401(()),
-    Status402(()),
-    Status403(()),
-    Status404(()),
-    Status409(()),
-    Unexpected(reqwest::Response),
-}
-impl SetYouTubeSourceResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
-        Ok(match response.status().as_u16() {
-            200 => Self::Status200(response.json().await?),
-            400 => Self::Status400(response.json().await?),
-            401 => Self::Status401(()),
-            402 => Self::Status402(()),
-            403 => Self::Status403(()),
-            404 => Self::Status404(()),
-            409 => Self::Status409(()),
-            _ => Self::Unexpected(response),
-        })
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct Show {
     #[serde(rename = "has_active_subscription")]
     pub has_active_subscription: bool,
     #[serde(rename = "id")]
     pub id: ShowID,
+    #[serde(rename = "image_url", default, skip_serializing_if = "Option::is_none")]
+    pub image_url: std::option::Option<std::string::String>,
     #[serde(rename = "language")]
     pub language: ShowLanguage,
     #[serde(rename = "slug")]
@@ -2358,10 +2410,8 @@ pub struct Show {
     pub team_id: TeamID,
     #[serde(rename = "title")]
     pub title: NonEmptyString,
-    #[serde(rename = "youtube_destination")]
-    pub youtube_destination: bool,
-    #[serde(rename = "youtube_source_url", default, skip_serializing_if = "Option::is_none")]
-    pub youtube_source_url: std::option::Option<std::string::String>,
+    #[serde(rename = "youtube")]
+    pub youtube: YouTubeConnection,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -2528,10 +2578,40 @@ pub enum ShowDeletionProgressEventType {
 pub type ShowDeletionRunID = std::string::String;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(untagged)]
+#[serde(tag = "status", deny_unknown_fields)]
 pub enum ShowDeletionTerminalEvent {
-    Variant0(ShowDeletionCompletedEvent),
-    Variant1(ShowDeletionFailedEvent),
+    #[serde(rename = "completed")]
+    Completed {
+        #[serde(rename = "show_deletion_run_id")]
+        show_deletion_run_id: ShowDeletionRunID,
+        #[serde(rename = "show_slug")]
+        show_slug: ShowSlug,
+        #[serde(rename = "type")]
+        r#type: ShowDeletionTerminalEventCompletedType,
+    },
+    #[serde(rename = "failed")]
+    Failed {
+        #[serde(rename = "error_code")]
+        error_code: NonEmptyString,
+        #[serde(rename = "error_message")]
+        error_message: NonEmptyString,
+        #[serde(rename = "show_deletion_run_id")]
+        show_deletion_run_id: ShowDeletionRunID,
+        #[serde(rename = "type")]
+        r#type: ShowDeletionTerminalEventFailedType,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ShowDeletionTerminalEventCompletedType {
+    #[serde(rename = "terminal")]
+    Terminal,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ShowDeletionTerminalEventFailedType {
+    #[serde(rename = "terminal")]
+    Terminal,
 }
 
 pub type ShowID = std::string::String;
@@ -2581,17 +2661,8 @@ pub struct SyncEpisode {
     pub id: EpisodeID,
     #[serde(rename = "position", default, skip_serializing_if = "Option::is_none")]
     pub position: std::option::Option<i64>,
-    #[serde(rename = "source_collection_url", default, skip_serializing_if = "Option::is_none")]
-    pub source_collection_url: std::option::Option<std::string::String>,
     #[serde(rename = "source_url")]
     pub source_url: std::string::String,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SyncEpisodeDeletion {
-    #[serde(rename = "source_collection_url")]
-    pub source_collection_url: std::string::String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -2933,6 +3004,63 @@ impl WhoamiResponse {
     }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", deny_unknown_fields)]
+pub enum YouTubeConnection {
+    #[serde(rename = "none")]
+    None {
+    },
+    #[serde(rename = "import")]
+    Import {
+        #[serde(rename = "source_url")]
+        source_url: std::string::String,
+    },
+    #[serde(rename = "destination")]
+    Destination {
+    },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct YouTubeDestination {
+    #[serde(rename = "kind")]
+    pub kind: YouTubeDestinationKind,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum YouTubeDestinationKind {
+    #[serde(rename = "destination")]
+    Destination,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct YouTubeImport {
+    #[serde(rename = "kind")]
+    pub kind: YouTubeImportKind,
+    #[serde(rename = "source_url")]
+    pub source_url: std::string::String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum YouTubeImportKind {
+    #[serde(rename = "import")]
+    Import,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct YouTubeNone {
+    #[serde(rename = "kind")]
+    pub kind: YouTubeNoneKind,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum YouTubeNoneKind {
+    #[serde(rename = "none")]
+    None,
+}
+
 
 #[derive(Clone, Debug)]
 pub struct Client {
@@ -3181,15 +3309,7 @@ impl Client {
         let path = path.replace("{show_slug}", &encode_path(&params.show_slug.to_string()));
         let path = path.replace("{episode_id}", &encode_path(&params.episode_id.to_string()));
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
-        let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
-        request.json(&params.body)
-    }
-    pub fn set_you_tube_source(&self, params: SetYouTubeSourceParams) -> reqwest::RequestBuilder {
-        let path = "/s/shows/{show_slug}/youtube-source".to_owned();
-        let path = path.replace("{show_slug}", &encode_path(&params.show_slug.to_string()));
-        let request = self.http.request(reqwest::Method::PUT, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
-        let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
-        request.json(&params.body)
+        match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
     }
     pub fn create_team_invitation(&self, params: CreateTeamInvitationParams) -> reqwest::RequestBuilder {
         let path = "/s/team/invitations".to_owned();

@@ -7,17 +7,17 @@ related_targets: []
 
 # Listenbox desktop
 
-Mode: Operate. Podcasters with a paid audio or video plan keep their YouTube playlist and Listenbox show aligned. Teams and accessible shows load live. Shared authorization opens the dashboard in the browser. Work is resumable and the engine owns every checkpoint.
+Mode: Operate. Podcasters with a paid audio or video plan keep their YouTube playlist and Listenbox show aligned. Teams and existing YouTube imports load live. Ordinary shows and destinations are hidden. Shared authorization opens the dashboard in the browser. Work is resumable and the engine owns every checkpoint.
 
 ## Direction contract
 
-THESIS: a focused native podcast workspace, with a stable show list and one clear action per selected show.
+THESIS: a native podcast library whose team heading, creation action and artwork rows share a deliberate left edge; automatic sync makes progress visible without setup controls.
 
-OWN-WORLD: expand Listenbox's established white, silver and charcoal surfaces, native system type, quiet borders and soft control corners into GPUI Kit. Semantic color belongs to status, not decoration. Respect the system's light and dark appearance. Mazit supplies transfer mechanics only.
+OWN-WORLD: a desktop-specific layout and control system using Listenbox’s white, silver and charcoal palette. A bold left-aligned team heading leads a charcoal import action and compact artwork rows. System type, quiet dividers and fixed toolbar geometry keep the native workspace coherent. Semantic color belongs to status, not decoration. Respect the system's light and dark appearance. Mazit supplies transfer mechanics only.
 
-STORY: sign in, select an accessible podcast, connect its playlist, then sync once or keep watching. See what is downloading, preparing, or uploading; pause new work or stop a show without losing progress.
+STORY: sign in, import a fresh playlist or select an existing import, then let automatic sync keep it current. See what is downloading, preparing, or uploading; pause new work or stop a show without losing progress.
 
-FIRST VIEWPORT: a 240-point podcast sidebar with team selection; a spacious main pane with a 30-point show title, source URL field and action row; a flat transfer table below, with status and measured byte progress. Account and reload actions sit in the toolbar.
+FIRST VIEWPORT: a 240-point sidebar with a 56-point application toolbar, bold 18-point team picker, charcoal import button and a shared 16-point content inset; a spacious main pane with a 30-point show title, cover artwork, read-only source link and contrasting action row; a flat transfer table below, with status and measured byte progress. Account and reload actions sit in the toolbar.
 
 FORM: code-led extension of the existing product workspace, selected from the established design authority. Seed key: existing-listenbox-native-workspace; no new visual-world tournament.
 
