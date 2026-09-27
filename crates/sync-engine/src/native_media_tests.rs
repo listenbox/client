@@ -120,7 +120,10 @@ fn opus_is_decoded_resampled_and_encoded_to_aac() {
 }
 
 fn prepare_video(separate_audio: bool) {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = tempfile::Builder::new()
+        .prefix("native media ü-")
+        .tempdir()
+        .unwrap();
     let root = directory.path();
     fs::copy(fixture("avc-aac.mp4"), root.join("source-video")).unwrap();
     if separate_audio {
@@ -140,13 +143,21 @@ fn prepare_video(separate_audio: bool) {
         let playlist = fs::read_to_string(hls.join("index.m3u8")).unwrap();
         assert!(playlist.contains("#EXT-X-ENDLIST"));
         assert!(playlist.contains("#EXT-X-MAP:URI=\"init.mp4\""));
-        let mut bytes = fs::read(hls.join("init.mp4")).unwrap();
+        let init = hls.join("init.mp4");
+        let mut bytes = fs::read(&init).unwrap_or_else(|error| panic!("reading {init:?}: {error}"));
         let mut segments = 0;
         for line in playlist
             .lines()
             .filter(|line| !line.is_empty() && !line.starts_with('#'))
         {
-            bytes.extend(fs::read(hls.join(line)).unwrap());
+            assert!(
+                line.starts_with("segment-") && !line.contains(['/', '\\', ':']),
+                "segment must be relative to its playlist: {line:?}"
+            );
+            let segment = hls.join(line);
+            bytes.extend(
+                fs::read(&segment).unwrap_or_else(|error| panic!("reading {segment:?}: {error}")),
+            );
             segments += 1;
         }
         assert!((1..=2).contains(&segments));
