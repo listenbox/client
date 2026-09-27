@@ -10,6 +10,7 @@ use gpui_kit::component::{
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use listenbox_sync_engine::{
+    api::PaymentRequired,
     client::{Catalog, Client},
     downloads::{Phase, Snapshot},
     publicapi::{Show, ShowSourceKind},
@@ -48,8 +49,41 @@ pub struct Workspace {
     source: Entity<InputState>,
     jobs: HashMap<String, CancellationToken>,
     reports: HashMap<String, String>,
-    error: Option<String>,
+    error: Option<ErrorNotice>,
     progress: Snapshot,
+}
+
+#[derive(Clone, Debug)]
+struct ErrorNotice {
+    message: String,
+    upgrade_url: Option<String>,
+}
+
+impl From<String> for ErrorNotice {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            upgrade_url: None,
+        }
+    }
+}
+
+impl ErrorNotice {
+    fn import(error: anyhow::Error, client: &Client, team: Option<&str>) -> Self {
+        if let Some(payment) = error.downcast_ref::<PaymentRequired>() {
+            let reason = if payment.0.is_empty() {
+                "Payment is required to continue."
+            } else {
+                &payment.0
+            };
+            Self {
+                message: format!("Import paused. {reason}"),
+                upgrade_url: team.and_then(|team| client.upgrade_url(team).ok()),
+            }
+        } else {
+            format!("Import did not finish. {error:#}").into()
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -307,7 +341,9 @@ impl Workspace {
                         self.select(None, window, cx);
                         self.progress = Snapshot::default();
                     }
-                    Err(error) => self.error = Some(format!("Could not sign out. {error:#}")),
+                    Err(error) => {
+                        self.error = Some(format!("Could not sign out. {error:#}").into())
+                    }
                 }
             }
             Message::SyncDue => self.sync_all(false, cx),
@@ -354,7 +390,7 @@ impl Workspace {
                             self.catalog = Catalog::default();
                             self.select(None, window, cx);
                         } else {
-                            self.error = Some(format!("Could not load podcasts. {error:#}"));
+                            self.error = Some(format!("Could not load podcasts. {error:#}").into());
                         }
                     }
                 }
@@ -363,7 +399,9 @@ impl Workspace {
                 self.authenticating = false;
                 match result {
                     Ok(()) => self.reload(cx),
-                    Err(error) => self.error = Some(format!("Sign-in did not finish. {error:#}")),
+                    Err(error) => {
+                        self.error = Some(format!("Sign-in did not finish. {error:#}").into())
+                    }
                 }
             }
             Message::ImportCreated(show) => {
@@ -399,7 +437,11 @@ impl Workspace {
                                 "Import paused. Progress is saved; use Sync now to resume.".into(),
                             );
                         }
-                        self.error = Some(format!("Import did not finish. {error:#}"));
+                        self.error = Some(ErrorNotice::import(
+                            error,
+                            &self.client,
+                            self.catalog.import_team.as_deref(),
+                        ));
                         // Creation may have committed even when its reply was lost.
                         // A catalog reload exposes that podcast for explicit resumption.
                         self.reload_after_import(cx);
@@ -468,7 +510,7 @@ impl Workspace {
         let source = match listenbox_sync_engine::youtube::playlist_source(&source) {
             Ok(source) => source,
             Err(error) => {
-                self.error = Some(error.to_string());
+                self.error = Some(error.to_string().into());
                 cx.notify();
                 return;
             }
@@ -901,13 +943,17 @@ impl Workspace {
                     .items_start()
                     .gap_2()
                     .child("Choose a paid audio or video plan to resume syncing.")
-                    .child(
-                        Button::new("choose-plan")
-                            .primary()
-                            .label("Open billing")
-                            .on_click(cx.listener(|view, _, _, cx| {
-                                cx.open_url(view.client.dashboard_url())
-                            })),
+                    .when_some(
+                        self.client.upgrade_url(&show.team_id).ok(),
+                        |notice, url| {
+                            notice.child(
+                                Button::new("choose-plan")
+                                    .ghost()
+                                    .icon(assets::IconName::ExternalLink)
+                                    .label("Upgrade plan")
+                                    .on_click(move |_, _, cx| cx.open_url(&url)),
+                            )
+                        },
                     ),
             );
         }
@@ -1162,7 +1208,24 @@ impl Render for Workspace {
                             .overflow_y_scroll()
                             .p(px(tokens::SPACE))
                             .when_some(self.error.clone(), |pane, error| {
-                                pane.child(div().mb_4().text_color(t.danger).child(error))
+                                pane.child(
+                                    div()
+                                        .mb_4()
+                                        .flex()
+                                        .flex_col()
+                                        .items_start()
+                                        .gap_2()
+                                        .child(div().text_color(t.danger).child(error.message))
+                                        .when_some(error.upgrade_url, |notice, url| {
+                                            notice.child(
+                                                Button::new("upgrade-plan")
+                                                    .ghost()
+                                                    .icon(assets::IconName::ExternalLink)
+                                                    .label("Upgrade plan")
+                                                    .on_click(move |_, _, cx| cx.open_url(&url)),
+                                            )
+                                        }),
+                                )
                             })
                             .child(self.detail(window, cx))
                             .when(self.loaded, |pane| pane.child(self.transfers(cx))),

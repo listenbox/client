@@ -17,12 +17,23 @@ mod workspace {
 
     pub fn show_error(view: &mut Workspace) {
         view.import_open = true;
-        view.error = Some("Enter a public YouTube playlist URL.".into());
+        view.error = Some("Enter a public YouTube playlist URL.".to_owned().into());
         view.catalog.shows[0].image_url = Some("https://artwork.example.test/missing.png".into());
     }
 
     pub fn show_import(view: &mut Workspace) {
         view.import_open = true;
+    }
+
+    pub fn show_payment_required(view: &mut Workspace) {
+        view.import_open = true;
+        view.catalog.shows.clear();
+        view.selected = None;
+        view.error = Some(ErrorNotice::import(
+            PaymentRequired("A paid podcast plan is required for YouTube imports.".into()).into(),
+            &view.client,
+            view.catalog.import_team.as_deref(),
+        ));
     }
 
     pub fn show_selected_team(view: &mut Workspace) {
@@ -146,6 +157,8 @@ fn main() -> anyhow::Result<()> {
         ("import-light", ThemeMode::Light, 1080., 760., true, false),
         ("import-dark", ThemeMode::Dark, 840., 600., true, false),
         ("import-error", ThemeMode::Light, 840., 600., true, false),
+        ("payment-light", ThemeMode::Light, 1080., 760., true, false),
+        ("payment-dark", ThemeMode::Dark, 840., 600., true, false),
         ("quit-light", ThemeMode::Light, 1080., 760., false, true),
         ("quit-dark", ThemeMode::Dark, 840., 600., true, true),
     ] {
@@ -170,6 +183,9 @@ fn main() -> anyhow::Result<()> {
                 }
                 if name == "import-error" {
                     workspace::show_error(&mut view);
+                }
+                if name.starts_with("payment-") {
+                    workspace::show_payment_required(&mut view);
                 }
                 if name == "team-menu" {
                     workspace::show_team_menu(&mut view);
