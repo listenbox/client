@@ -49,6 +49,14 @@ pub enum AssignableTeamRole {
     Read,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AuthorizationClient {
+    #[serde(rename = "cli")]
+    Cli,
+    #[serde(rename = "desktop")]
+    Desktop,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CLIAuthorizationApprovedEvent {
@@ -395,6 +403,8 @@ pub struct CompletedEpisodeUploadPart {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CreateCLIAuthorization {
+    #[serde(rename = "client")]
+    pub client: AuthorizationClient,
     #[serde(rename = "scopes")]
     pub scopes: std::vec::Vec<ApiKeyScope>,
 }

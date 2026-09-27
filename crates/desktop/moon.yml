@@ -57,6 +57,37 @@ tasks:
       mkdir -p dist
       cp ../../target/debug/listenbox-desktop dist/listenbox-desktop
     outputs: [dist/listenbox-desktop]
+  build-release:
+    description: Build the production desktop executable for the host architecture.
+    deps: [client:prerequisites]
+    inputs: ['@group(sources)', 'project://client?group=sources', 'project://client?group=notices']
+    script: |-
+      set -euo pipefail
+      cd ../..
+      pkgx +llvm.org +cmake.org cargo build --locked --release -p listenbox-desktop
+      mkdir -p crates/desktop/dist/release
+      cp target/release/listenbox-desktop crates/desktop/dist/release/listenbox-desktop
+      cp .cache/ffmpeg/NOTICE.txt crates/desktop/dist/release/FFmpeg-NOTICE.txt
+      crates/desktop/dist/release/listenbox-desktop --help
+    outputs: [dist/release/listenbox-desktop, dist/release/FFmpeg-NOTICE.txt]
+    options:
+      os: [linux, macos]
+      runInCI: false
+  dmg:
+    description: Package the production Apple Silicon desktop executable as a macOS DMG.
+    deps: [~:build-release]
+    inputs: [project://client?group=notices, project://client?group=sources]
+    script: |-
+      set -euo pipefail
+      cd ../..
+      mkdir -p .cache
+      rustc --edition 2024 tools/package-macos.rs -o .cache/package-macos
+      .cache/package-macos
+    outputs: [dist/macos/*.dmg]
+    options:
+      os: macos
+      cache: false
+      runInCI: false
   build-release-windows-x64:
     description: Build and package a Windows x64 release, also runnable through Windows 11 ARM emulation.
     deps: [client:codegen, client:native-ffmpeg-windows-x64]
