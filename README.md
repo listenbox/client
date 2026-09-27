@@ -65,18 +65,22 @@ and parent checkouts. Existing artifacts are not automatically removed. After
 stopping builds in a worktree, `cargo clean` from this directory reclaims its
 build artifacts. FFmpeg's native build remains in this checkout's `.cache/ffmpeg`.
 
-CI and release jobs restore Cargo downloads, unpacked sources, and compiled
-artifacts together. Cargo fetches dependencies as the selected Moon tasks need
-them; there is no workspace-wide prefetch step. Cache prefixes keep the platform,
-Rust toolchain, and native build configuration fixed while allowing unchanged
-dependencies to be reused after lockfile updates. Windows also keys on the MSVC
-toolchain version.
+Client and parent CI restore Cargo downloads, unpacked sources, and compiled
+artifacts together. Standalone tasks fetch dependencies on demand; the parent
+also prepares Cargo dependencies in its workspace setup. Each commit gets a new
+cache key so successful jobs save their latest build artifacts. Restore prefixes
+prefer the same dependency set, then allow unchanged
+dependencies to be reused after lockfile updates. Both prefixes keep the platform,
+Rust toolchain, and native build configuration fixed. Windows also keys on the
+MSVC toolchain version. GitHub caches remain separate for each repository.
 
-Linux CI and macOS releases also retain Moon's content-hashed output archives.
-Moon can restore a matching FFmpeg build into a fresh checkout instead of
-rebuilding the restored libraries. Native preparation remains a prerequisite:
-missing archives or changed task inputs still run the real build. Windows keeps
-its separate FFmpeg cache and existing save-before-Rust-build behavior.
+Linux CI in both repositories and the client's macOS releases also retain their workspace's
+`.moon/cache/outputs` archives. Moon can restore a matching FFmpeg build into a
+fresh checkout instead of rebuilding the restored libraries. Native preparation
+remains a prerequisite: missing archives or changed task inputs still run the
+real build. Windows keeps its separate FFmpeg cache and saves it before Cargo
+runs. The parent continues to build the CLI and desktop test executable for its
+integrated tests; client release packaging stays in this repository.
 
 ### Native media acceptance
 
