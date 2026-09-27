@@ -37,13 +37,12 @@ compilation and its build-directory lock; concurrent crate tasks may wait for it
 From either workspace:
 
 ```sh
-moon run client:typecheck  # Check all workspace crates and targets
 moon run client:lint       # Format Rust, check shell scripts, and run Clippy
 moon run client:test       # Run each crate's existing test runner
-moon run client:check      # Secrets, typecheck, lint, tests, and debug builds
+moon run client:check      # Secrets, lint, tests, and debug builds
 ```
 
-Build, typecheck, lint, and test tasks retain the native FFmpeg prerequisite.
+Build, lint, and test tasks retain the native FFmpeg prerequisite.
 In the parent workspace, it also waits for the OpenAPI client and configuration
 generators; standalone checkouts use the committed generated Rust sources.
 Moon caches deliverable binaries under `dist/`, never Cargo's `target/` directory.

@@ -64,11 +64,6 @@ tasks:
     options:
       os: windows
       runInCI: false
-  typecheck:
-    description: Check every workspace crate and target without producing executables.
-    deps: [~:prerequisites]
-    inputs: ['@group(sources)']
-    command: pkgx +llvm.org +cmake.org cargo check --locked --workspace --all-targets
   lint:
     deps: [~:prerequisites]
     inputs: ["@group(sources)", tools/**/*.sh]
@@ -85,7 +80,7 @@ tasks:
     deps: [cli:test, client-engine:test, client-youtubei:test, desktop:test]
     inputs: []
   check:
-    deps: [~:secrets, ~:typecheck, ~:lint, ~:test, ~:build]
+    deps: [~:secrets, ~:lint, ~:test, ~:build]
     inputs: []
     options:
       runInCI: false
