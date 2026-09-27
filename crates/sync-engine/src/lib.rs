@@ -10,6 +10,8 @@ pub mod episodes;
 pub mod events;
 pub mod innertube;
 mod media;
+#[cfg(test)]
+mod native_media_tests;
 #[rustfmt::skip]
 pub mod publicapi;
 pub mod youtube;

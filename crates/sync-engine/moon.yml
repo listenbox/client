@@ -20,4 +20,12 @@ tasks:
   test:
     deps: [client:prerequisites]
     inputs: ['@group(sources)', 'project://client?group=sources']
-    command: pkgx +llvm.org +cmake.org cargo test --locked -p listenbox-sync-engine
+    command: pkgx +llvm.org +cmake.org cargo-nextest nextest run --locked -p listenbox-sync-engine
+  test-media:
+    description: Decode real AAC/Opus/AVC fixtures through the release-linked media preparation code.
+    deps: [client:prerequisites]
+    inputs: ['@group(sources)', 'project://client?group=sources']
+    command: pkgx +llvm.org +cmake.org cargo-nextest nextest run --locked --release --profile ci --success-output immediate -p listenbox-sync-engine -E 'test(native_media_tests::) or binary(native_build)'
+    options:
+      runInCI: false
+      cache: false

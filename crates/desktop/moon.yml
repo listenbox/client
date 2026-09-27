@@ -126,6 +126,7 @@ tasks:
     options:
       os: windows
       runInCI: false
+      cache: false
   build-release-windows-arm64:
     description: Build and package a native Windows ARM64 release on Windows ARM64.
     deps: [client:codegen, client:native-ffmpeg-windows-arm64]
@@ -135,6 +136,7 @@ tasks:
     options:
       os: windows
       runInCI: false
+      cache: false
   test:
     deps: [client:prerequisites]
     inputs: ['@group(sources)', 'project://client?group=sources']

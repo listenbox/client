@@ -9,6 +9,7 @@ fileGroups:
     - crates/**/*.rs
     - crates/**/*.sql
     - crates/**/Cargo.toml
+    - crates/**/tests/**/*
     - tools/**/*.rs
     - tools/**/*.ps1
     - crates/desktop/assets/**/*
@@ -16,6 +17,7 @@ fileGroups:
     - Cargo.lock
     - rust-toolchain.toml
     - .cargo/config.toml
+    - .config/nextest.toml
     - moon.yml
 taskOptions:
   cache: true
@@ -34,16 +36,6 @@ tasks:
       rustc --edition 2024 tools/native-ffmpeg.rs -o .cache/native-ffmpeg
       .cache/native-ffmpeg
     outputs: [.cache/ffmpeg/**/*]
-  test-native-ffmpeg:
-    inputs: [tools/native-ffmpeg.rs, rust-toolchain.toml]
-    script: |-
-      set -euo pipefail
-      mkdir -p .cache
-      rustc --edition 2024 --test tools/native-ffmpeg.rs -o .cache/native-ffmpeg-tests
-      .cache/native-ffmpeg-tests
-    options:
-      os: [linux, macos]
-      timeout: 30
   prerequisites:
     deps: [~:native-ffmpeg, ~:codegen]
     inputs: []
@@ -80,16 +72,8 @@ tasks:
     deps: [cli:build, desktop:build]
     inputs: []
   check:
-    deps: [~:secrets, ~:lint, ~:test-native-ffmpeg, cli:test, client-engine:test, client-youtubei:test, desktop:test, ~:build]
+    deps: [~:secrets, ~:lint, cli:test, client-engine:test, client-youtubei:test, desktop:test, ~:build]
     inputs: []
-    options:
-      runInCI: false
-  benchmark-measurer:
-    script: |-
-      mkdir -p .cache
-      cc -O2 -Wall -Wextra -Werror bench/measure.c -o .cache/cli-measure
-    inputs: [bench/measure.c]
-    outputs: [.cache/cli-measure]
     options:
       runInCI: false
   package:
