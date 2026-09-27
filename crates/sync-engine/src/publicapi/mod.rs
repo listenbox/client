@@ -2936,7 +2936,7 @@ impl WhoamiResponse {
 
 #[derive(Clone, Debug)]
 pub struct Client {
-    http: reqwest::Client,
+    http: reqwest_middleware::ClientWithMiddleware,
     base_url: String,
     bearer_token: Option<String>,
 }
@@ -2948,56 +2948,57 @@ fn encode_path(value: &str) -> String {
     }).collect()
 }
 impl Client {
-    pub fn new(http: reqwest::Client, base_url: String, bearer_token: Option<String>) -> Self {
+    /// Every operation uses this client's middleware when its request is sent.
+    pub fn new(http: reqwest_middleware::ClientWithMiddleware, base_url: String, bearer_token: Option<String>) -> Self {
         Self { http, base_url: base_url.trim_end_matches('/').to_owned(), bearer_token }
     }
-    pub fn openapi(&self) -> reqwest::RequestBuilder {
+    pub fn openapi(&self) -> reqwest_middleware::RequestBuilder {
         let path = "/".to_owned();
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
     }
-    pub fn head_openapi(&self) -> reqwest::RequestBuilder {
+    pub fn head_openapi(&self) -> reqwest_middleware::RequestBuilder {
         let path = "/".to_owned();
         let request = self.http.request(reqwest::Method::HEAD, format!("{}{}", self.base_url, path)).header("Accept", "*/*");
         match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
     }
-    pub fn create_cli_authorization(&self, params: CreateCLIAuthorizationParams) -> reqwest::RequestBuilder {
+    pub fn create_cli_authorization(&self, params: CreateCLIAuthorizationParams) -> reqwest_middleware::RequestBuilder {
         let path = "/cli/authorizations".to_owned();
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         request.json(&params.body)
     }
-    pub fn cli_authorization_events(&self, params: CliAuthorizationEventsParams) -> reqwest::RequestBuilder {
+    pub fn cli_authorization_events(&self, params: CliAuthorizationEventsParams) -> reqwest_middleware::RequestBuilder {
         let path = "/cli/authorizations/{code}/events".to_owned();
         let path = path.replace("{code}", &encode_path(&params.code.to_string()));
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "text/event-stream");
         match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
     }
-    pub fn episode_deletion_events(&self, params: EpisodeDeletionEventsParams) -> reqwest::RequestBuilder {
+    pub fn episode_deletion_events(&self, params: EpisodeDeletionEventsParams) -> reqwest_middleware::RequestBuilder {
         let path = "/s/episode-deletions/{episode_deletion_run_id}/events".to_owned();
         let path = path.replace("{episode_deletion_run_id}", &encode_path(&params.episode_deletion_run_id.to_string()));
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "text/event-stream");
         match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
     }
-    pub fn create_episode_package(&self, params: CreateEpisodePackageParams) -> reqwest::RequestBuilder {
+    pub fn create_episode_package(&self, params: CreateEpisodePackageParams) -> reqwest_middleware::RequestBuilder {
         let path = "/s/episode-packages".to_owned();
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         request.json(&params.body)
     }
-    pub fn cancel_episode_package(&self, params: CancelEpisodePackageParams) -> reqwest::RequestBuilder {
+    pub fn cancel_episode_package(&self, params: CancelEpisodePackageParams) -> reqwest_middleware::RequestBuilder {
         let path = "/s/episode-packages/{upload_session_id}".to_owned();
         let path = path.replace("{upload_session_id}", &encode_path(&params.upload_session_id.to_string()));
         let request = self.http.request(reqwest::Method::DELETE, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
     }
-    pub fn complete_episode_package(&self, params: CompleteEpisodePackageParams) -> reqwest::RequestBuilder {
+    pub fn complete_episode_package(&self, params: CompleteEpisodePackageParams) -> reqwest_middleware::RequestBuilder {
         let path = "/s/episode-packages/{upload_session_id}/complete".to_owned();
         let path = path.replace("{upload_session_id}", &encode_path(&params.upload_session_id.to_string()));
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
     }
-    pub fn presign_episode_package_parts(&self, params: PresignEpisodePackagePartsParams) -> reqwest::RequestBuilder {
+    pub fn presign_episode_package_parts(&self, params: PresignEpisodePackagePartsParams) -> reqwest_middleware::RequestBuilder {
         let path = "/s/episode-packages/{upload_session_id}/objects/{object_index}/parts".to_owned();
         let path = path.replace("{upload_session_id}", &encode_path(&params.upload_session_id.to_string()));
         let path = path.replace("{object_index}", &encode_path(&params.object_index.to_string()));
@@ -3005,119 +3006,119 @@ impl Client {
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         request.json(&params.body)
     }
-    pub fn create_episode_upload_session(&self, params: CreateEpisodeUploadSessionParams) -> reqwest::RequestBuilder {
+    pub fn create_episode_upload_session(&self, params: CreateEpisodeUploadSessionParams) -> reqwest_middleware::RequestBuilder {
         let path = "/s/episode-upload-sessions".to_owned();
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         request.json(&params.body)
     }
-    pub fn get_episode_upload_session(&self, params: GetEpisodeUploadSessionParams) -> reqwest::RequestBuilder {
+    pub fn get_episode_upload_session(&self, params: GetEpisodeUploadSessionParams) -> reqwest_middleware::RequestBuilder {
         let path = "/s/episode-upload-sessions/{upload_session_id}".to_owned();
         let path = path.replace("{upload_session_id}", &encode_path(&params.upload_session_id.to_string()));
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
     }
-    pub fn update_episode_upload_session(&self, params: UpdateEpisodeUploadSessionParams) -> reqwest::RequestBuilder {
+    pub fn update_episode_upload_session(&self, params: UpdateEpisodeUploadSessionParams) -> reqwest_middleware::RequestBuilder {
         let path = "/s/episode-upload-sessions/{upload_session_id}".to_owned();
         let path = path.replace("{upload_session_id}", &encode_path(&params.upload_session_id.to_string()));
         let request = self.http.request(reqwest::Method::PUT, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         request.json(&params.body)
     }
-    pub fn cancel_episode_upload_session(&self, params: CancelEpisodeUploadSessionParams) -> reqwest::RequestBuilder {
+    pub fn cancel_episode_upload_session(&self, params: CancelEpisodeUploadSessionParams) -> reqwest_middleware::RequestBuilder {
         let path = "/s/episode-upload-sessions/{upload_session_id}".to_owned();
         let path = path.replace("{upload_session_id}", &encode_path(&params.upload_session_id.to_string()));
         let request = self.http.request(reqwest::Method::DELETE, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
     }
-    pub fn complete_episode_upload_session(&self, params: CompleteEpisodeUploadSessionParams) -> reqwest::RequestBuilder {
+    pub fn complete_episode_upload_session(&self, params: CompleteEpisodeUploadSessionParams) -> reqwest_middleware::RequestBuilder {
         let path = "/s/episode-upload-sessions/{upload_session_id}/complete".to_owned();
         let path = path.replace("{upload_session_id}", &encode_path(&params.upload_session_id.to_string()));
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         request.json(&params.body)
     }
-    pub fn episode_upload_session_events(&self, params: EpisodeUploadSessionEventsParams) -> reqwest::RequestBuilder {
+    pub fn episode_upload_session_events(&self, params: EpisodeUploadSessionEventsParams) -> reqwest_middleware::RequestBuilder {
         let path = "/s/episode-upload-sessions/{upload_session_id}/events".to_owned();
         let path = path.replace("{upload_session_id}", &encode_path(&params.upload_session_id.to_string()));
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "text/event-stream");
         match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
     }
-    pub fn presign_episode_upload_session_parts(&self, params: PresignEpisodeUploadSessionPartsParams) -> reqwest::RequestBuilder {
+    pub fn presign_episode_upload_session_parts(&self, params: PresignEpisodeUploadSessionPartsParams) -> reqwest_middleware::RequestBuilder {
         let path = "/s/episode-upload-sessions/{upload_session_id}/parts/presign".to_owned();
         let path = path.replace("{upload_session_id}", &encode_path(&params.upload_session_id.to_string()));
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         request.json(&params.body)
     }
-    pub fn create_episode_deletion(&self, params: CreateEpisodeDeletionParams) -> reqwest::RequestBuilder {
+    pub fn create_episode_deletion(&self, params: CreateEpisodeDeletionParams) -> reqwest_middleware::RequestBuilder {
         let path = "/s/episodes/{episode_id}/deletions".to_owned();
         let path = path.replace("{episode_id}", &encode_path(&params.episode_id.to_string()));
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
     }
-    pub fn create_image_upload_presign(&self, params: CreateImageUploadPresignParams) -> reqwest::RequestBuilder {
+    pub fn create_image_upload_presign(&self, params: CreateImageUploadPresignParams) -> reqwest_middleware::RequestBuilder {
         let path = "/s/image-uploads/presign".to_owned();
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         request.json(&params.body)
     }
-    pub fn complete_image_upload(&self, params: CompleteImageUploadParams) -> reqwest::RequestBuilder {
+    pub fn complete_image_upload(&self, params: CompleteImageUploadParams) -> reqwest_middleware::RequestBuilder {
         let path = "/s/image-uploads/{image_asset_id}/complete".to_owned();
         let path = path.replace("{image_asset_id}", &encode_path(&params.image_asset_id.to_string()));
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         request.json(&params.body)
     }
-    pub fn import_rss(&self, params: ImportRSSParams) -> reqwest::RequestBuilder {
+    pub fn import_rss(&self, params: ImportRSSParams) -> reqwest_middleware::RequestBuilder {
         let path = "/s/rss-imports".to_owned();
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         request.json(&params.body)
     }
-    pub fn import_rss_run_events(&self, params: ImportRSSRunEventsParams) -> reqwest::RequestBuilder {
+    pub fn import_rss_run_events(&self, params: ImportRSSRunEventsParams) -> reqwest_middleware::RequestBuilder {
         let path = "/s/rss-imports/{import_run_id}/events".to_owned();
         let path = path.replace("{import_run_id}", &encode_path(&params.import_run_id.to_string()));
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "text/event-stream");
         match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
     }
-    pub fn show_deletion_events(&self, params: ShowDeletionEventsParams) -> reqwest::RequestBuilder {
+    pub fn show_deletion_events(&self, params: ShowDeletionEventsParams) -> reqwest_middleware::RequestBuilder {
         let path = "/s/show-deletions/{show_deletion_run_id}/events".to_owned();
         let path = path.replace("{show_deletion_run_id}", &encode_path(&params.show_deletion_run_id.to_string()));
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "text/event-stream");
         match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
     }
-    pub fn list_shows(&self) -> reqwest::RequestBuilder {
+    pub fn list_shows(&self) -> reqwest_middleware::RequestBuilder {
         let path = "/s/shows".to_owned();
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
     }
-    pub fn create_show(&self, params: CreateShowParams) -> reqwest::RequestBuilder {
+    pub fn create_show(&self, params: CreateShowParams) -> reqwest_middleware::RequestBuilder {
         let path = "/s/shows".to_owned();
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         request.json(&params.body)
     }
-    pub fn create_show_deletion(&self, params: CreateShowDeletionParams) -> reqwest::RequestBuilder {
+    pub fn create_show_deletion(&self, params: CreateShowDeletionParams) -> reqwest_middleware::RequestBuilder {
         let path = "/s/shows/{show_slug}/deletions".to_owned();
         let path = path.replace("{show_slug}", &encode_path(&params.show_slug.to_string()));
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
     }
-    pub fn get_episode_order(&self, params: GetEpisodeOrderParams) -> reqwest::RequestBuilder {
+    pub fn get_episode_order(&self, params: GetEpisodeOrderParams) -> reqwest_middleware::RequestBuilder {
         let path = "/s/shows/{show_slug}/episode-order".to_owned();
         let path = path.replace("{show_slug}", &encode_path(&params.show_slug.to_string()));
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
     }
-    pub fn set_episode_order(&self, params: SetEpisodeOrderParams) -> reqwest::RequestBuilder {
+    pub fn set_episode_order(&self, params: SetEpisodeOrderParams) -> reqwest_middleware::RequestBuilder {
         let path = "/s/shows/{show_slug}/episode-order".to_owned();
         let path = path.replace("{show_slug}", &encode_path(&params.show_slug.to_string()));
         let request = self.http.request(reqwest::Method::PUT, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         request.json(&params.body)
     }
-    pub fn list_episodes(&self, params: ListEpisodesParams) -> reqwest::RequestBuilder {
+    pub fn list_episodes(&self, params: ListEpisodesParams) -> reqwest_middleware::RequestBuilder {
         let path = "/s/shows/{show_slug}/episodes".to_owned();
         let path = path.replace("{show_slug}", &encode_path(&params.show_slug.to_string()));
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
@@ -3125,14 +3126,14 @@ impl Client {
         let request = match params.limit { Some(value) => request.query(&[("limit", value)]), None => request };
         match params.cursor { Some(value) => request.query(&[("cursor", value)]), None => request }
     }
-    pub fn create_show_invitation(&self, params: CreateShowInvitationParams) -> reqwest::RequestBuilder {
+    pub fn create_show_invitation(&self, params: CreateShowInvitationParams) -> reqwest_middleware::RequestBuilder {
         let path = "/s/shows/{show_slug}/invitations".to_owned();
         let path = path.replace("{show_slug}", &encode_path(&params.show_slug.to_string()));
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         request.json(&params.body)
     }
-    pub fn update_show_invitation_role(&self, params: UpdateShowInvitationRoleParams) -> reqwest::RequestBuilder {
+    pub fn update_show_invitation_role(&self, params: UpdateShowInvitationRoleParams) -> reqwest_middleware::RequestBuilder {
         let path = "/s/shows/{show_slug}/invitations/{invitation_id}".to_owned();
         let path = path.replace("{show_slug}", &encode_path(&params.show_slug.to_string()));
         let path = path.replace("{invitation_id}", &encode_path(&params.invitation_id.to_string()));
@@ -3140,20 +3141,20 @@ impl Client {
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         request.json(&params.body)
     }
-    pub fn revoke_show_invitation(&self, params: RevokeShowInvitationParams) -> reqwest::RequestBuilder {
+    pub fn revoke_show_invitation(&self, params: RevokeShowInvitationParams) -> reqwest_middleware::RequestBuilder {
         let path = "/s/shows/{show_slug}/invitations/{invitation_id}".to_owned();
         let path = path.replace("{show_slug}", &encode_path(&params.show_slug.to_string()));
         let path = path.replace("{invitation_id}", &encode_path(&params.invitation_id.to_string()));
         let request = self.http.request(reqwest::Method::DELETE, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
     }
-    pub fn list_show_members(&self, params: ListShowMembersParams) -> reqwest::RequestBuilder {
+    pub fn list_show_members(&self, params: ListShowMembersParams) -> reqwest_middleware::RequestBuilder {
         let path = "/s/shows/{show_slug}/members".to_owned();
         let path = path.replace("{show_slug}", &encode_path(&params.show_slug.to_string()));
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
     }
-    pub fn update_show_member_role(&self, params: UpdateShowMemberRoleParams) -> reqwest::RequestBuilder {
+    pub fn update_show_member_role(&self, params: UpdateShowMemberRoleParams) -> reqwest_middleware::RequestBuilder {
         let path = "/s/shows/{show_slug}/members/{user_id}".to_owned();
         let path = path.replace("{show_slug}", &encode_path(&params.show_slug.to_string()));
         let path = path.replace("{user_id}", &encode_path(&params.user_id.to_string()));
@@ -3161,14 +3162,14 @@ impl Client {
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         request.json(&params.body)
     }
-    pub fn remove_show_member(&self, params: RemoveShowMemberParams) -> reqwest::RequestBuilder {
+    pub fn remove_show_member(&self, params: RemoveShowMemberParams) -> reqwest_middleware::RequestBuilder {
         let path = "/s/shows/{show_slug}/members/{user_id}".to_owned();
         let path = path.replace("{show_slug}", &encode_path(&params.show_slug.to_string()));
         let path = path.replace("{user_id}", &encode_path(&params.user_id.to_string()));
         let request = self.http.request(reqwest::Method::DELETE, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
     }
-    pub fn get_sync_inventory(&self, params: GetSyncInventoryParams) -> reqwest::RequestBuilder {
+    pub fn get_sync_inventory(&self, params: GetSyncInventoryParams) -> reqwest_middleware::RequestBuilder {
         let path = "/s/shows/{show_slug}/sync".to_owned();
         let path = path.replace("{show_slug}", &encode_path(&params.show_slug.to_string()));
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
@@ -3176,7 +3177,7 @@ impl Client {
         let request = match params.cursor { Some(value) => request.query(&[("cursor", value)]), None => request };
         match params.limit { Some(value) => request.query(&[("limit", value)]), None => request }
     }
-    pub fn create_sync_episode_deletion(&self, params: CreateSyncEpisodeDeletionParams) -> reqwest::RequestBuilder {
+    pub fn create_sync_episode_deletion(&self, params: CreateSyncEpisodeDeletionParams) -> reqwest_middleware::RequestBuilder {
         let path = "/s/shows/{show_slug}/sync/episodes/{episode_id}/deletion".to_owned();
         let path = path.replace("{show_slug}", &encode_path(&params.show_slug.to_string()));
         let path = path.replace("{episode_id}", &encode_path(&params.episode_id.to_string()));
@@ -3184,56 +3185,56 @@ impl Client {
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         request.json(&params.body)
     }
-    pub fn set_you_tube_source(&self, params: SetYouTubeSourceParams) -> reqwest::RequestBuilder {
+    pub fn set_you_tube_source(&self, params: SetYouTubeSourceParams) -> reqwest_middleware::RequestBuilder {
         let path = "/s/shows/{show_slug}/youtube-source".to_owned();
         let path = path.replace("{show_slug}", &encode_path(&params.show_slug.to_string()));
         let request = self.http.request(reqwest::Method::PUT, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         request.json(&params.body)
     }
-    pub fn create_team_invitation(&self, params: CreateTeamInvitationParams) -> reqwest::RequestBuilder {
+    pub fn create_team_invitation(&self, params: CreateTeamInvitationParams) -> reqwest_middleware::RequestBuilder {
         let path = "/s/team/invitations".to_owned();
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         request.json(&params.body)
     }
-    pub fn update_team_invitation_role(&self, params: UpdateTeamInvitationRoleParams) -> reqwest::RequestBuilder {
+    pub fn update_team_invitation_role(&self, params: UpdateTeamInvitationRoleParams) -> reqwest_middleware::RequestBuilder {
         let path = "/s/team/invitations/{invitation_id}".to_owned();
         let path = path.replace("{invitation_id}", &encode_path(&params.invitation_id.to_string()));
         let request = self.http.request(reqwest::Method::PUT, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         request.json(&params.body)
     }
-    pub fn revoke_team_invitation(&self, params: RevokeTeamInvitationParams) -> reqwest::RequestBuilder {
+    pub fn revoke_team_invitation(&self, params: RevokeTeamInvitationParams) -> reqwest_middleware::RequestBuilder {
         let path = "/s/team/invitations/{invitation_id}".to_owned();
         let path = path.replace("{invitation_id}", &encode_path(&params.invitation_id.to_string()));
         let request = self.http.request(reqwest::Method::DELETE, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
     }
-    pub fn list_team_members(&self) -> reqwest::RequestBuilder {
+    pub fn list_team_members(&self) -> reqwest_middleware::RequestBuilder {
         let path = "/s/team/members".to_owned();
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
     }
-    pub fn update_team_member_role(&self, params: UpdateTeamMemberRoleParams) -> reqwest::RequestBuilder {
+    pub fn update_team_member_role(&self, params: UpdateTeamMemberRoleParams) -> reqwest_middleware::RequestBuilder {
         let path = "/s/team/members/{user_id}".to_owned();
         let path = path.replace("{user_id}", &encode_path(&params.user_id.to_string()));
         let request = self.http.request(reqwest::Method::PUT, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         request.json(&params.body)
     }
-    pub fn remove_team_member(&self, params: RemoveTeamMemberParams) -> reqwest::RequestBuilder {
+    pub fn remove_team_member(&self, params: RemoveTeamMemberParams) -> reqwest_middleware::RequestBuilder {
         let path = "/s/team/members/{user_id}".to_owned();
         let path = path.replace("{user_id}", &encode_path(&params.user_id.to_string()));
         let request = self.http.request(reqwest::Method::DELETE, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
     }
-    pub fn list_client_teams(&self) -> reqwest::RequestBuilder {
+    pub fn list_client_teams(&self) -> reqwest_middleware::RequestBuilder {
         let path = "/s/teams".to_owned();
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
     }
-    pub fn whoami(&self) -> reqwest::RequestBuilder {
+    pub fn whoami(&self) -> reqwest_middleware::RequestBuilder {
         let path = "/s/whoami".to_owned();
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
