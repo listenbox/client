@@ -2,13 +2,8 @@ name: Release desktop
 on:
   push:
     branches: [master]
-  pull_request:
-  workflow_dispatch:
 permissions:
   contents: read
-concurrency:
-  group: desktop-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   macos:
     runs-on: macos-15
@@ -35,7 +30,6 @@ jobs:
       - name: Build Apple Silicon DMG
         run: moon exec --ignore-ci-checks desktop:dmg
       - uses: actions/upload-artifact@v7
-        if: github.event_name != 'pull_request'
         with:
           name: release-macos
           path: crates/desktop/dist/macos/*.dmg
@@ -144,7 +138,7 @@ jobs:
           moon exec --ignore-ci-checks --upstream none desktop:build-release-windows-${{ matrix.architecture }} 2>&1 | Tee-Object .cache/windows-desktop-${{ matrix.architecture }}.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload build diagnostics
-        if: always() && github.event_name != 'pull_request'
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: diagnostics-windows-${{ matrix.architecture }}-${{ github.run_attempt }}
@@ -156,7 +150,6 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
       - uses: actions/upload-artifact@v7
-        if: github.event_name != 'pull_request'
         with:
           name: release-windows-${{ matrix.architecture }}
           path: |
@@ -165,7 +158,6 @@ jobs:
           if-no-files-found: error
 
   publish:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     needs: [macos, windows]
     runs-on: ubuntu-24.04
     permissions:
