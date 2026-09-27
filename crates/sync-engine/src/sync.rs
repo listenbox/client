@@ -160,7 +160,11 @@ impl Engine {
                 .context("Show source has no video ID")?;
             crate::innertube::PlaylistSnapshot {
                 title: before.show.title.clone(),
-                present: vec![id],
+                present: vec![crate::innertube::Video {
+                    title: format!("YouTube video {id}"),
+                    id,
+                    duration_seconds: None,
+                }],
                 estimated_seconds: 0,
                 can_remove: true,
             }
@@ -168,7 +172,7 @@ impl Engine {
         let ordered_urls: Vec<String> = snapshot
             .present
             .iter()
-            .map(|id| format!("https://www.youtube.com/watch?v={id}"))
+            .map(|video| format!("https://www.youtube.com/watch?v={}", video.id))
             .collect();
         if snapshot.can_remove {
             journal.snapshot(&api.config.api_origin, slug, collection, &ordered_urls)?;
@@ -176,7 +180,7 @@ impl Engine {
         let remote: HashSet<String> = snapshot
             .present
             .iter()
-            .map(|id| format!("https://www.youtube.com/watch?v={id}"))
+            .map(|video| format!("https://www.youtube.com/watch?v={}", video.id))
             .collect();
         for episode in &before.episodes {
             journal.forget(&api.config.api_origin, slug, &episode.source_url)?;
@@ -189,17 +193,18 @@ impl Engine {
         let additions: Vec<_> = snapshot
             .present
             .iter()
-            .filter(|id| {
-                !existing.contains_key(format!("https://www.youtube.com/watch?v={id}").as_str())
+            .filter(|video| {
+                !existing
+                    .contains_key(format!("https://www.youtube.com/watch?v={}", video.id).as_str())
             })
             .cloned()
             .collect();
         // Persist the whole admitted queue before its first external effect.
-        for id in &additions {
+        for video in &additions {
             journal.operation(
                 &api.config.api_origin,
                 slug,
-                &format!("https://www.youtube.com/watch?v={id}"),
+                &format!("https://www.youtube.com/watch?v={}", video.id),
                 collection,
             )?;
         }
@@ -208,11 +213,14 @@ impl Engine {
             &before.show.title,
             &additions
                 .iter()
-                .map(|id| (id.clone(), format!("YouTube · {id}")))
+                .map(|video| (video.id.clone(), video.title.clone()))
                 .collect::<Vec<_>>(),
         );
+        for (video, transfer) in additions.iter().zip(&transfers) {
+            transfer.duration(video.duration_seconds);
+        }
         let audio = before.show.source_kind == p::ShowSourceKind::Audio;
-        let mut work = stream::iter(additions.iter().zip(transfers).map(|(id, transfer)| {
+        let mut work = stream::iter(additions.iter().zip(transfers).map(|(video, transfer)| {
             let youtube = &youtube;
             let journal = &journal;
             async move {
@@ -229,7 +237,7 @@ impl Engine {
                     youtube,
                     crate::youtube::VideoImport {
                         slug,
-                        id,
+                        id: &video.id,
                         collection,
                         transfer: Some(&transfer),
                         journal,
@@ -237,8 +245,8 @@ impl Engine {
                     },
                 )
                 .await;
-                if matches!(result, Ok(ImportOutcome::Skipped)) {
-                    transfer.phase(crate::downloads::Phase::Skipped);
+                if let Ok(ImportOutcome::Skipped(reason)) = &result {
+                    transfer.skipped(reason);
                 }
                 let outcome = result
                     .as_ref()
@@ -260,7 +268,7 @@ impl Engine {
         while let Some(result) = work.next().await {
             match result {
                 Ok(ImportOutcome::Published) => report.added += 1,
-                Ok(ImportOutcome::Skipped) => report.skipped += 1,
+                Ok(ImportOutcome::Skipped(_)) => report.skipped += 1,
                 Err(error) => failures.push(format!("{error:#}")),
             }
         }

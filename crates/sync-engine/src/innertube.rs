@@ -13,19 +13,33 @@ use youtubei::{
 pub struct YouTube {
     client: Innertube,
     parse_failed: std::rc::Rc<std::cell::Cell<bool>>,
+    playback_client: Client,
 }
 
 pub struct PlaylistSnapshot {
     pub title: String,
-    pub present: Vec<String>,
+    pub present: Vec<Video>,
     /// Sum of known listing durations, including unplayable entries, rounded up per video.
     pub estimated_seconds: i64,
     /// Missing IDs prove removal only when the full scan has no warnings.
     pub can_remove: bool,
 }
 
+#[derive(Clone)]
+pub struct Video {
+    pub id: String,
+    pub title: String,
+    pub duration_seconds: Option<u64>,
+}
+
+pub enum Playback {
+    Available(Media),
+    Unavailable(String),
+}
+
 pub struct Media {
     pub estimated_seconds: i64,
+    pub duration_seconds: Option<u64>,
     pub title: String,
     pub description: String,
     pub published_at: i64,
@@ -41,11 +55,8 @@ pub struct Stream {
 
 impl YouTube {
     pub async fn new(api: &Api) -> Result<Self> {
-        let engine = Engine::with_options(EngineOptions {
-            memory_limit: 256 * 1024 * 1024,
-            stack_size: 4 * 1024 * 1024,
-        })
-        .await?;
+        let playback_client = Client::VisionOs;
+        let engine = Engine::with_options(EngineOptions::default()).await?;
         let cancel = api.cancel.clone();
         engine
             .set_interrupt_handler(move || cancel.is_cancelled())
@@ -99,7 +110,11 @@ impl YouTube {
                 location: Some("US".into()),
                 cache: Some(cache.as_cache()),
                 fetch: Some(fetch),
-                ..SessionOptions::local()
+                generate_session_locally: Some(false),
+                fail_fast: Some(true),
+                retrieve_player: Some(false),
+                retrieve_innertube_config: Some(false),
+                ..Default::default()
             },
         )
         .await
@@ -107,6 +122,7 @@ impl YouTube {
         Ok(Self {
             client,
             parse_failed,
+            playback_client,
         })
     }
 
@@ -150,13 +166,20 @@ impl YouTube {
                     title = data.info.title;
                 }
                 for item in data.items {
-                    let (id, seconds) = match item {
+                    let (video, seconds) = match item {
                         PlaylistItem::PlaylistVideo(video) => {
                             ensure!(
                                 valid_video_id(&video.id),
                                 "Playlist contains an unidentified unavailable item"
                             );
-                            (video.id, known_seconds(video.duration.seconds))
+                            (
+                                Video {
+                                    id: video.id,
+                                    title: video.title.into_string(),
+                                    duration_seconds: duration_seconds(video.duration.seconds),
+                                },
+                                known_seconds(video.duration.seconds),
+                            )
                         }
                         PlaylistItem::LockupView(video)
                             if matches!(
@@ -168,34 +191,50 @@ impl YouTube {
                                 valid_video_id(&video.content_id),
                                 "Playlist contains an invalid video ID"
                             );
-                            let seconds =
-                                match video.content_image {
-                                    Some(ContentImage::ThumbnailView { overlays }) => overlays
-                                        .iter()
-                                        .find_map(|overlay| match overlay {
+                            let duration = match video.content_image {
+                                Some(ContentImage::ThumbnailView { overlays }) => {
+                                    overlays.into_iter().find_map(|overlay| {
+                                        let badges = match overlay {
                                             ThumbnailOverlay::ThumbnailOverlayBadgeView {
                                                 badges,
                                             }
                                             | ThumbnailOverlay::ThumbnailBottomOverlayView {
                                                 badges,
-                                            } => badges
-                                                .iter()
-                                                .filter_map(|badge| badge.text.as_deref())
-                                                .find_map(duration_badge_seconds),
-                                            _ => None,
-                                        })
-                                        .unwrap_or(0),
-                                    _ => 0,
-                                };
-                            (video.content_id, seconds)
+                                            } => badges,
+                                            _ => return None,
+                                        };
+                                        badges
+                                            .into_iter()
+                                            .filter_map(|badge| badge.text)
+                                            .find_map(|text| duration_badge_seconds(&text))
+                                    })
+                                }
+                                _ => None,
+                            };
+                            (
+                                Video {
+                                    title: video
+                                        .metadata
+                                        .and_then(|metadata| metadata.title)
+                                        .map(|title| title.into_string())
+                                        .filter(|title| !title.trim().is_empty())
+                                        .unwrap_or_else(|| {
+                                            format!("YouTube video {}", video.content_id)
+                                        }),
+                                    id: video.content_id,
+                                    duration_seconds: duration
+                                        .and_then(|seconds| duration_seconds(seconds as f64)),
+                                },
+                                duration.unwrap_or(0),
+                            )
                         }
                         _ => bail!("Unsupported playlist item; listing is incomplete"),
                     };
-                    if seen.insert(id.clone()) {
+                    if seen.insert(video.id.clone()) {
                         estimated_seconds = estimated_seconds
                             .checked_add(seconds)
                             .context("Playlist duration exceeds the supported range")?;
-                        present.push(id);
+                        present.push(video);
                     }
                 }
                 pages += 1;
@@ -218,14 +257,14 @@ impl YouTube {
         .await
     }
 
-    pub async fn media(&self, api: &Api, id: &str) -> Result<Option<Media>> {
+    pub async fn media(&self, api: &Api, id: &str) -> Result<Playback> {
         api.wait(async {
             let info = match self
                 .client
                 .get_basic_info(
                     id,
                     GetVideoInfoOptions {
-                        client: Some(Client::VisionOs),
+                        client: Some(self.playback_client),
                         ..Default::default()
                     },
                 )
@@ -240,7 +279,7 @@ impl YouTube {
                         .as_ref()
                         .is_some_and(|info| info["status"] == "ERROR") =>
                 {
-                    return Ok(None);
+                    return Ok(Playback::Unavailable(error.info.as_ref().and_then(|info| info["reason"].as_str()).unwrap_or("Video unavailable").to_owned()));
                 }
                 Err(error) => return Err(error.into()),
             };
@@ -249,11 +288,14 @@ impl YouTube {
                 .playability_status
                 .as_ref()
                 .context("YouTube player response missing playability status")?;
-            if status.status != "OK"
-                || data.basic_info.is_live.unwrap_or(false)
-                || data.basic_info.is_upcoming.unwrap_or(false)
-            {
-                return Ok(None);
+            match status.status.as_str() {
+                "OK" => {},
+                "UNPLAYABLE" => return Ok(Playback::Unavailable(status.reason.clone().unwrap_or_else(|| "Video unavailable".into()))),
+                "LOGIN_REQUIRED" => bail!("YouTube rejected anonymous playback for {id}: {}. Check YouTube access on your current network before syncing again", status.reason.as_deref().unwrap_or("Sign in required")),
+                _ => bail!("YouTube could not resolve {id} ({}): {}", status.status, status.reason.as_deref().unwrap_or("No reason supplied")),
+            }
+            if data.basic_info.is_live.unwrap_or(false) || data.basic_info.is_upcoming.unwrap_or(false) {
+                return Ok(Playback::Unavailable("Live or upcoming video; sync after it has finished".into()));
             }
             let mut formats = info.formats().await?;
             formats.extend(info.adaptive_formats().await?);
@@ -290,7 +332,14 @@ impl YouTube {
                         .context("YouTube video has no audio stream")?,
                 )
             };
-            let published = match data.microformat {
+            // VISIONOS supplies downloadable streams but omits publication dates.
+            // WEB still supplies that metadata when its own playback is unavailable.
+            let metadata = self.client.get_basic_info(id, GetVideoInfoOptions {
+                client: Some(Client::Web),
+                ..Default::default()
+            }).await?.data().await?;
+            ensure!(metadata.basic_info.id.as_deref() == Some(id), "YouTube metadata video ID differs from the requested video");
+            let published = match metadata.microformat {
                 Some(Microformat::PlayerMicroformat(metadata)) => metadata
                     .publish_date
                     .filter(|date| !date.is_empty())
@@ -309,8 +358,9 @@ impl YouTube {
                 })
                 .context("YouTube publication date is invalid")?
                 .timestamp_millis();
-            Ok(Some(Media {
+            Ok(Playback::Available(Media {
                 estimated_seconds: known_seconds(data.basic_info.duration.unwrap_or(0.0)),
+                duration_seconds: data.basic_info.duration.and_then(duration_seconds),
                 title: data.basic_info.title.unwrap_or_else(|| id.into()),
                 description: data.basic_info.short_description.unwrap_or_default(),
                 published_at,
@@ -340,7 +390,8 @@ impl YouTube {
                 None,
                 None,
             )
-            .await?;
+            .await
+            .context("Load YouTube player for stream deciphering")?;
             session.set_player(&player).await?;
         }
         let mut url = url::Url::parse(&format.decipher(session.player().await?.as_ref()).await?)?;
@@ -348,17 +399,18 @@ impl YouTube {
         Ok(Stream {
             identity: format!("{}:{}:{:?}", info.itag, info.mime_type, info.content_length),
             url: url.into(),
-            user_agent: Client::VisionOs
+            user_agent: self
+                .playback_client
                 .user_agent(self.client.engine())
                 .await?
-                .context("YouTube VISIONOS user agent missing")?,
+                .unwrap_or_else(|| "Mozilla/5.0".into()),
         })
     }
 }
 
 async fn fetch(api: &Api, input: FetchRequest) -> Result<FetchResponse> {
     let url = url::Url::parse(&input.url)?;
-    let host = url.host_str().unwrap_or("");
+    let host = url.host_str().unwrap_or("").to_owned();
     ensure!(
         url.scheme() == "https"
             && [
@@ -374,7 +426,11 @@ async fn fetch(api: &Api, input: FetchRequest) -> Result<FetchResponse> {
     );
     let mut request = api.http.request(input.method.parse()?, url);
     for (name, value) in input.headers {
-        if !["host", "content-length", "cookie"].contains(&name.to_ascii_lowercase().as_str()) {
+        let name_lower = name.to_ascii_lowercase();
+        if matches!(name_lower.as_str(), "cookie" | "authorization") && host != "www.youtube.com" {
+            continue;
+        }
+        if !["host", "content-length"].contains(&name_lower.as_str()) {
             request = request.header(name, value);
         }
     }
@@ -406,6 +462,11 @@ fn valid_video_id(id: &str) -> bool {
         && id
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+}
+
+fn duration_seconds(seconds: f64) -> Option<u64> {
+    (seconds.is_finite() && seconds > 0.0 && seconds <= 7.0 * 24.0 * 3600.0)
+        .then_some(seconds as u64)
 }
 
 // Listing metadata can omit durations or use non-duration badges (LIVE, etc.).

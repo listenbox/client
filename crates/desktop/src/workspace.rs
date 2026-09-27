@@ -20,7 +20,16 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
+#[path = "workspace/episodes.rs"]
+mod episodes;
+
 pub struct Workspace {
+    episodes: Vec<listenbox_sync_engine::publicapi::EpisodeListItem>,
+    episode_cursor: Option<String>,
+    episode_loading: bool,
+    episode_error: Option<String>,
+    episode_request: u64,
+    episode_cancel: Option<CancellationToken>,
     client: Client,
     runtime: Arc<tokio::runtime::Runtime>,
     cancel: CancellationToken,
@@ -123,6 +132,11 @@ enum Message {
     Report(String, Report),
     Finished(String, anyhow::Result<()>),
     SyncDue,
+    Episodes(
+        u64,
+        bool,
+        anyhow::Result<listenbox_sync_engine::publicapi::EpisodePage>,
+    ),
 }
 
 impl Workspace {
@@ -167,6 +181,12 @@ impl Workspace {
         })
         .detach();
         let mut view = Self {
+            episodes: vec![],
+            episode_cursor: None,
+            episode_loading: false,
+            episode_error: None,
+            episode_request: 0,
+            episode_cancel: None,
             client,
             runtime,
             lifetime: cancel.clone(),
@@ -334,6 +354,9 @@ impl Workspace {
             return;
         }
         match message {
+            Message::Episodes(request, append, result) => {
+                self.episodes_received(request, append, result)
+            }
             Message::Drained(mode, result) => {
                 if mode == Shutdown::Quit {
                     cx.quit();
@@ -402,6 +425,8 @@ impl Workspace {
                                 cx,
                             );
                             self.error = error;
+                        } else {
+                            self.load_episodes(false, cx);
                         }
                         self.start_auto_sync(cx);
                     }
@@ -472,6 +497,9 @@ impl Workspace {
                 }
             }
             Message::Report(slug, report) => {
+                if self.selected.as_ref() == Some(&slug) {
+                    self.load_episodes(false, cx);
+                }
                 self.reports.insert(
                     slug,
                     format!(
@@ -489,6 +517,9 @@ impl Workspace {
                 );
             }
             Message::Finished(slug, result) => {
+                if result.is_err() && self.selected.as_ref() == Some(&slug) {
+                    self.load_episodes(false, cx);
+                }
                 let stopped = self
                     .jobs
                     .remove(&slug)
@@ -508,6 +539,7 @@ impl Workspace {
     fn select(&mut self, slug: Option<String>, _window: &mut Window, cx: &mut Context<Self>) {
         self.selected = slug;
         self.import_open = false;
+        self.load_episodes(false, cx);
         self.error = None;
         cx.notify();
     }
@@ -1071,14 +1103,18 @@ impl Workspace {
                         .flex()
                         .justify_between()
                         .gap_4()
-                        .child(
-                            div().flex_1().min_w_0().child(item.title.clone()).child(
-                                div()
-                                    .text_size(px(12.))
-                                    .text_color(t.muted)
-                                    .child(item.source_title.clone()),
+                        .child(div().flex_1().min_w_0().child(item.title.clone()).child(
+                            div().text_size(px(12.)).text_color(t.muted).child(
+                                match item.duration_seconds {
+                                    Some(seconds) => format!(
+                                        "{} · {}",
+                                        item.source_title,
+                                        episodes::duration(seconds)
+                                    ),
+                                    None => item.source_title.clone(),
+                                },
                             ),
-                        )
+                        ))
                         .child(
                             div()
                                 .text_color(if item.phase == Phase::Failed {
@@ -1107,6 +1143,9 @@ impl Workspace {
                         item.total as f64 / 1_000_000.,
                         item.bytes_per_second() as f64 / 1_000_000.
                     )));
+            }
+            if let Some(reason) = &item.reason {
+                row = row.child(div().text_color(t.muted).child(reason.clone()));
             }
             if let Some(error) = &item.error {
                 row = row.child(div().text_color(t.danger).child(error.clone()));
@@ -1251,7 +1290,9 @@ impl Render for Workspace {
                                 )
                             })
                             .child(self.detail(window, cx))
-                            .when(self.loaded, |pane| pane.child(self.transfers(cx))),
+                            .when(self.loaded, |pane| {
+                                pane.child(self.episode_list(cx)).child(self.transfers(cx))
+                            }),
                     ),
             )
             .when_some(quit_notice, |workspace, (instruction, opacity)| {

@@ -48,6 +48,28 @@ impl Client {
     pub fn show_url(&self, show: &p::Show) -> Result<String> {
         self.config.show_url(&show.team_id, &show.id)
     }
+    pub async fn episodes(
+        &self,
+        slug: String,
+        cursor: Option<String>,
+        cancel: CancellationToken,
+    ) -> Result<p::EpisodePage> {
+        let api = self.api(cancel)?;
+        if api.credential.is_none() {
+            return Err(crate::api::AuthenticationRequired.into());
+        }
+        Ok(serde_json::from_value(
+            api.json(
+                api.client().list_episodes(p::ListEpisodesParams {
+                    show_slug: slug,
+                    cursor,
+                    limit: Some(50),
+                }),
+                &[200],
+            )
+            .await?,
+        )?)
+    }
     fn api(&self, cancel: CancellationToken) -> Result<Api> {
         Api::new(self.config.clone(), cancel)
     }

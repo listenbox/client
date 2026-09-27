@@ -41,6 +41,24 @@ async fn live_backend(cx: &mut TestAppContext) {
         view.jobs.is_empty() && !view.reports.is_empty()
     })
     .await;
+    wait_for(cx, &workspace, |view| {
+        !view.episode_loading && !view.episodes.is_empty()
+    })
+    .await;
+    cx.update(|cx| {
+        let view = workspace.read(cx);
+        assert_eq!(view.episodes[0].title, "Listenbox deterministic fixture");
+        assert!(
+            view.episodes[0]
+                .duration_seconds
+                .is_some_and(|duration| (1..=5).contains(&duration))
+        );
+        assert_eq!(
+            view.progress.items[0].title,
+            "Listenbox deterministic fixture"
+        );
+        assert_eq!(view.progress.items[0].duration_seconds, Some(2));
+    });
     assert!(cx.update(|cx| {
         workspace
             .read(cx)

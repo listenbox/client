@@ -111,6 +111,8 @@ pub struct Download {
     pub source_id: String,
     pub source_title: String,
     pub title: String,
+    pub duration_seconds: Option<u64>,
+    pub reason: Option<String>,
     pub phase: Phase,
     pub attempt: usize,
     pub total: u64,
@@ -280,6 +282,8 @@ impl DownloadManager {
                     source_id: source_id.into(),
                     source_title: source_title.into(),
                     title: title.clone(),
+                    duration_seconds: None,
+                    reason: None,
                     phase: Phase::Queued,
                     attempt: 0,
                     total: 0,
@@ -378,6 +382,21 @@ impl Transfer {
 
     pub fn title(&self, title: &str) {
         self.update(|item| item.title = title.into());
+    }
+
+    pub fn duration(&self, duration: Option<u64>) {
+        self.update(|item| {
+            if duration.is_some() {
+                item.duration_seconds = duration;
+            }
+        });
+    }
+
+    pub fn skipped(&self, reason: &str) {
+        self.update(|item| {
+            item.phase = Phase::Skipped;
+            item.reason = Some(reason.into());
+        });
     }
 
     pub fn error(&self, error: &anyhow::Error) {

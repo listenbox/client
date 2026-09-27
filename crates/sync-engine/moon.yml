@@ -10,6 +10,7 @@ fileGroups:
     - tests/**/*
     - examples/**/*.rs
     - Cargo.toml
+    - build.rs
 tasks:
   build:
     deps: [client:prerequisites, client-youtubei:build]

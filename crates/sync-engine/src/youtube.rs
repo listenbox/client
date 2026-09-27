@@ -1,7 +1,7 @@
 use crate::{
     api::{Api, PaymentRequired, string},
     download::download,
-    innertube::{PlaylistSnapshot, YouTube},
+    innertube::{Playback, PlaylistSnapshot, Video, YouTube},
     publicapi as p,
 };
 use anyhow::{Context, Result, ensure};
@@ -104,14 +104,20 @@ pub async fn import(
             id.len() == 11 && valid_youtube_id(&id),
             "invalid YouTube video ID"
         );
-        let media = youtube
-            .media(api, &id)
-            .await?
-            .context("YouTube playback unavailable")?;
+        let media = match youtube.media(api, &id).await? {
+            Playback::Available(media) => media,
+            Playback::Unavailable(reason) => {
+                anyhow::bail!("YouTube playback unavailable: {reason}")
+            }
+        };
         (
             PlaylistSnapshot {
-                title: media.title,
-                present: vec![id.clone()],
+                title: media.title.clone(),
+                present: vec![Video {
+                    id: id.clone(),
+                    title: media.title,
+                    duration_seconds: media.duration_seconds,
+                }],
                 estimated_seconds: media.estimated_seconds,
                 can_remove: true,
             },
@@ -172,7 +178,7 @@ pub(crate) struct VideoImport<'a> {
 
 pub(crate) enum ImportOutcome {
     Published,
-    Skipped,
+    Skipped(String),
 }
 
 pub(crate) async fn import_video(
@@ -213,13 +219,13 @@ pub(crate) async fn import_video(
                     std::fs::remove_file(path)?;
                 }
             }
-            let Some(media) = youtube.media(api, id).await? else {
-                // No package has been admitted. Keep any download checkpoint
-                // for a future scan, without retrying this video in this pass.
-                return Ok(ImportOutcome::Skipped);
+            let media = match youtube.media(api, id).await? {
+                Playback::Available(media) => media,
+                Playback::Unavailable(reason) => return Ok(ImportOutcome::Skipped(reason)),
             };
             if let Some(transfer) = transfer {
                 transfer.title(&media.title);
+                transfer.duration(media.duration_seconds);
             }
             if audio {
                 download(

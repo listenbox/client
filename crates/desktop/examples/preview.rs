@@ -82,6 +82,19 @@ mod workspace {
         }
         view.loaded = true;
         view.select(Some("field-notes".into()), window, cx);
+        if let Some(cancel) = view.episode_cancel.take() {
+            cancel.cancel();
+        }
+        view.episode_request += 1;
+        view.episode_loading = false;
+        view.episodes = vec![
+            serde_json::from_value(serde_json::json!({
+                "id":"ep_0123456789abcdef", "show_id":"shw_0123456789abcdef",
+                "title":"A conversation about making things", "duration_seconds":1934,
+                "status":"published"
+            }))
+            .unwrap(),
+        ];
         let manager = view.client.downloads();
         let work = manager.enqueue(
             "field-notes",
