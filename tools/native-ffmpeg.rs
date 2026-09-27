@@ -127,6 +127,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             "--disable-autodetect",
             "--disable-programs",
             "--disable-doc",
+            "--disable-htmlpages",
+            "--disable-manpages",
+            "--disable-podpages",
+            "--disable-txtpages",
             "--disable-debug",
             "--disable-network",
             "--disable-shared",
@@ -145,12 +149,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             "--enable-bsf=aac_adtstoasc,h264_mp4toannexb",
             "--disable-x86asm",
         ]))?;
+    // The default install target copies doc/examples even with docs disabled.
+    // These targets build and install the libraries, headers, and pkg-config files.
     run(unix_command("make", msys2_bin.as_deref())
         .current_dir(&source)
-        .arg(format!("-j{}", std::thread::available_parallelism()?)))?;
-    run(unix_command("make", msys2_bin.as_deref())
-        .current_dir(&source)
-        .arg("install"))?;
+        .arg(format!("-j{}", std::thread::available_parallelism()?))
+        .args(["install-libs", "install-headers"]))?;
     fs::copy(
         source.join("COPYING.LGPLv2.1"),
         prefix.join("COPYING.LGPLv2.1"),
