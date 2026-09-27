@@ -85,11 +85,38 @@ tasks:
       mkdir -p .cache
       rustc --edition 2024 tools/package-macos.rs -o .cache/package-macos
       .cache/package-macos
-    outputs: [dist/macos/*.dmg]
+    outputs: [dist/macos/*.dmg, dist/macos/image/Listenbox.app/**/*]
     options:
       os: macos
       cache: false
       runInCI: false
+  macos-reinstall:
+    description: Build the release and replace /Applications/Listenbox.app after gracefully stopping the installed copy.
+    deps: [~:dmg]
+    inputs: [project://client?group=macos-install-tools]
+    script: |-
+      set -euo pipefail
+      cd ../..
+      mkdir -p .cache
+      xcrun swiftc -warnings-as-errors -parse-as-library tools/reinstall-macos.swift -o .cache/reinstall-macos
+      .cache/reinstall-macos crates/desktop/dist/macos/image/Listenbox.app /Applications/Listenbox.app
+    options:
+      os: macos
+      cache: false
+      runInCI: false
+  test-macos-reinstall:
+    description: Verify macOS installation, replacement, graceful shutdown, and failure preservation in isolated bundles.
+    inputs: [project://client?group=macos-install-tools]
+    script: |-
+      set -euo pipefail
+      cd ../..
+      mkdir -p .cache
+      xcrun swiftc -warnings-as-errors -parse-as-library tools/reinstall-macos-fixture.swift -o .cache/reinstall-macos-fixture
+      xcrun swiftc -warnings-as-errors -parse-as-library -D REINSTALL_TESTS tools/reinstall-macos.swift tools/reinstall-macos-tests.swift -o .cache/reinstall-macos-tests
+      .cache/reinstall-macos-tests .cache/reinstall-macos-fixture
+    options:
+      os: macos
+      timeout: 30
   build-release-windows-x64:
     description: Build and package a Windows x64 release, also runnable through Windows 11 ARM emulation.
     deps: [client:codegen, client:native-ffmpeg-windows-x64]

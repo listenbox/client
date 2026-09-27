@@ -106,6 +106,14 @@ The desktop task runs independently of the parent `scripts/dev.ts` and never sta
 
 Open the Apple Silicon DMG from the [desktop release](https://github.com/listenbox/client/releases) and drag Listenbox to Applications. Current bundles are ad-hoc signed; Developer ID signing and Apple notarization require distribution credentials. Local builds can set `LISTENBOX_SIGNING_IDENTITY` for a configured Developer ID certificate.
 
+To build and reinstall the release locally, run this from either the parent monorepo or the client checkout:
+
+```sh
+moonx desktop:macos-reinstall
+```
+
+This reuses the release/DMG packaging, verifies the staged app, gracefully stops the copy running from `/Applications/Listenbox.app`, and atomically replaces that bundle. It also handles a first install. A failed build, copy, signature check, or shutdown leaves the installed bundle intact. The task never force-kills the app, changes its profile or credentials, or starts it afterward; open Listenbox from Applications when ready. Installation always runs, even with cached build outputs.
+
 ## Connect and sync
 
 The desktop's sign-in button opens Listenbox in your browser. `listenbox login` uses the same authorization flow. Both save and read one private credential in `~/.config/listenbox/auth.json`; signing in through either authorizes both.
