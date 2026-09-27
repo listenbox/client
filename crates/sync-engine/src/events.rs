@@ -1,6 +1,7 @@
 use crate::api::Api;
 use anyhow::{Result, bail, ensure};
-use reqwest::{RequestBuilder, Response};
+use reqwest::Response;
+use reqwest_middleware::RequestBuilder;
 use serde_json::Value;
 
 pub struct Events {

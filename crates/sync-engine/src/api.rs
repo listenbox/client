@@ -1,6 +1,7 @@
 use crate::{auth::StoredAuth, config::Config};
 use anyhow::{Context, Result, bail, ensure};
-use reqwest::{Client, RequestBuilder, Response};
+use reqwest::{Client, Response};
+use reqwest_middleware::{ClientWithMiddleware, RequestBuilder};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::{future::Future, time::Duration};
@@ -19,7 +20,7 @@ impl std::error::Error for AuthenticationRequired {}
 pub struct Api {
     pub config: Config,
     pub credential: Option<String>,
-    pub http: Client,
+    pub http: ClientWithMiddleware,
     pub cancel: CancellationToken,
 }
 
@@ -42,7 +43,7 @@ impl Api {
         Ok(Self {
             config,
             credential,
-            http: builder.build()?,
+            http: reqwest_middleware::ClientBuilder::new(builder.build()?).build(),
             cancel,
         })
     }

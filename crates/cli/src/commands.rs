@@ -285,7 +285,7 @@ pub async fn import_rss(api: &Api, source: &str, slug: Option<&str>) -> Result<(
 
 pub async fn delete_events(
     api: &Api,
-    request: reqwest::RequestBuilder,
+    request: reqwest_middleware::RequestBuilder,
     kind: &str,
     identity_key: &str,
     identity: &str,
