@@ -3,7 +3,7 @@ use crate::{
     database::Database,
     downloads::DownloadManager,
     events::Events,
-    innertube::YouTube,
+    innertube::{PlaylistSnapshot, YouTube},
     publicapi as p,
     youtube::ImportOutcome,
 };
@@ -101,6 +101,26 @@ impl Engine {
     }
 
     pub async fn once(&self, api: &Api, slug: &str) -> Result<Report> {
+        self.sync(api, slug, None).await
+    }
+
+    /// The initial sync consumes the exact listing used for creation admission.
+    pub(crate) async fn import_snapshot(
+        &self,
+        api: &Api,
+        slug: &str,
+        source: &str,
+        snapshot: PlaylistSnapshot,
+    ) -> Result<Report> {
+        self.sync(api, slug, Some((source, snapshot))).await
+    }
+
+    async fn sync(
+        &self,
+        api: &Api,
+        slug: &str,
+        scanned: Option<(&str, PlaylistSnapshot)>,
+    ) -> Result<Report> {
         std::fs::create_dir_all(&api.config.directory)?;
         let lock_key = hex::encode(Sha256::digest(format!("{}\0{slug}", api.config.api_origin)));
         let lock = OpenOptions::new()
@@ -124,25 +144,31 @@ impl Engine {
         )?;
         let source = url::Url::parse(collection)?;
         let youtube = YouTube::new(api).await?;
-        let snapshot =
-            if let Some((_, playlist)) = source.query_pairs().find(|(key, _)| key == "list") {
-                youtube.snapshot(api, &playlist).await?
-            } else {
-                let id = source
-                    .query_pairs()
-                    .find(|(key, _)| key == "v")
-                    .map(|(_, id)| id.into_owned())
-                    .context("Show source has no video ID")?;
-                crate::innertube::PlaylistSnapshot {
-                    title: before.show.title.clone(),
-                    present: vec![crate::innertube::Video {
-                        title: format!("YouTube video {id}"),
-                        id,
-                        duration_seconds: None,
-                    }],
-                    can_remove: true,
-                }
-            };
+        let snapshot = if let Some((scanned_source, snapshot)) = scanned {
+            ensure!(
+                collection == scanned_source,
+                "Show source differs from the admitted playlist"
+            );
+            snapshot
+        } else if let Some((_, playlist)) = source.query_pairs().find(|(key, _)| key == "list") {
+            youtube.snapshot(api, &playlist).await?
+        } else {
+            let id = source
+                .query_pairs()
+                .find(|(key, _)| key == "v")
+                .map(|(_, id)| id.into_owned())
+                .context("Show source has no video ID")?;
+            crate::innertube::PlaylistSnapshot {
+                title: before.show.title.clone(),
+                present: vec![crate::innertube::Video {
+                    title: format!("YouTube video {id}"),
+                    id,
+                    duration_seconds: None,
+                }],
+                estimated_seconds: 0,
+                can_remove: true,
+            }
+        };
         let ordered_urls: Vec<String> = snapshot
             .present
             .iter()

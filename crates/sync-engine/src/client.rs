@@ -42,8 +42,8 @@ impl Client {
         self.api(CancellationToken::new())
             .is_ok_and(|api| api.credential.is_some())
     }
-    pub fn dashboard_url(&self) -> &str {
-        &self.config.dashboard_origin
+    pub fn upgrade_url(&self, team: &str) -> Result<String> {
+        self.config.upgrade_url(team)
     }
     pub fn show_url(&self, show: &p::Show) -> Result<String> {
         self.config.show_url(&show.team_id, &show.id)

@@ -1539,6 +1539,28 @@ impl GetEpisodeUploadSessionResponse {
     }
 }
 
+#[derive(Debug)]
+pub enum GetImportCapacityResponse {
+    Status200(ImportCapacity),
+    Status400(ValidationErr),
+    Status401(()),
+    Status403(()),
+    Status404(()),
+    Unexpected(reqwest::Response),
+}
+impl GetImportCapacityResponse {
+    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+        Ok(match response.status().as_u16() {
+            200 => Self::Status200(response.json().await?),
+            400 => Self::Status400(response.json().await?),
+            401 => Self::Status401(()),
+            403 => Self::Status403(()),
+            404 => Self::Status404(()),
+            _ => Self::Unexpected(response),
+        })
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct GetSyncInventoryParams {
     pub show_slug: ShowSlug,
@@ -1618,6 +1640,25 @@ pub enum ImageAssetContentType {
 pub type ImageAssetID = std::string::String;
 
 pub type ImageUploadObjectKey = std::string::String;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImportCapacity {
+    #[serde(rename = "has_active_subscription")]
+    pub has_active_subscription: bool,
+    #[serde(rename = "team_id")]
+    pub team_id: TeamID,
+    #[serde(rename = "video_allowed")]
+    pub video_allowed: bool,
+    #[serde(rename = "video_limit_seconds")]
+    pub video_limit_seconds: i64,
+    #[serde(rename = "video_remaining_seconds")]
+    pub video_remaining_seconds: i64,
+    #[serde(rename = "video_reserved_seconds")]
+    pub video_reserved_seconds: i64,
+    #[serde(rename = "video_retained_seconds")]
+    pub video_retained_seconds: i64,
+}
 
 #[derive(Clone, Debug)]
 pub struct ImportRSSParams {
@@ -3197,6 +3238,11 @@ impl Client {
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         request.json(&params.body)
+    }
+    pub fn get_import_capacity(&self) -> reqwest_middleware::RequestBuilder {
+        let path = "/s/import-capacity".to_owned();
+        let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
+        match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
     }
     pub fn import_rss(&self, params: ImportRSSParams) -> reqwest_middleware::RequestBuilder {
         let path = "/s/rss-imports".to_owned();

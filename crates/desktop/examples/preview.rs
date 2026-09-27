@@ -17,12 +17,26 @@ mod workspace {
 
     pub fn show_error(view: &mut Workspace) {
         view.import_open = true;
-        view.error = Some("Enter a public YouTube playlist URL.".into());
+        view.error = Some("Enter a public YouTube playlist URL.".to_owned().into());
         view.catalog.shows[0].image_url = Some("https://artwork.example.test/missing.png".into());
     }
 
     pub fn show_import(view: &mut Workspace) {
         view.import_open = true;
+    }
+
+    pub fn show_payment_required(view: &mut Workspace, quota: bool) {
+        view.import_open = true;
+        view.import_kind = ShowSourceKind::Video;
+        view.catalog.shows.clear();
+        view.selected = None;
+        view.error = Some(ErrorNotice::import(
+            PaymentRequired(if quota { "This playlist needs about 96.00 hours of video storage. Your team has 72.00 hours available. Upgrade your plan, then try again." } else { "A paid podcast plan is required for YouTube imports. Choose a plan, then try again." }.into()).into(),
+            &view.client,
+            view.catalog.import_team.as_deref(),
+            false,
+            &view.import_kind,
+        ));
     }
 
     pub fn show_selected_team(view: &mut Workspace) {
@@ -159,6 +173,10 @@ fn main() -> anyhow::Result<()> {
         ("import-light", ThemeMode::Light, 1080., 760., true, false),
         ("import-dark", ThemeMode::Dark, 840., 600., true, false),
         ("import-error", ThemeMode::Light, 840., 600., true, false),
+        ("payment-light", ThemeMode::Light, 1080., 760., true, false),
+        ("payment-dark", ThemeMode::Dark, 840., 600., true, false),
+        ("quota-light", ThemeMode::Light, 1080., 760., true, false),
+        ("quota-dark", ThemeMode::Dark, 840., 600., true, false),
         ("quit-light", ThemeMode::Light, 1080., 760., false, true),
         ("quit-dark", ThemeMode::Dark, 840., 600., true, true),
     ] {
@@ -183,6 +201,9 @@ fn main() -> anyhow::Result<()> {
                 }
                 if name == "import-error" {
                     workspace::show_error(&mut view);
+                }
+                if name.starts_with("payment-") || name.starts_with("quota-") {
+                    workspace::show_payment_required(&mut view, name.starts_with("quota-"));
                 }
                 if name == "team-menu" {
                     workspace::show_team_menu(&mut view);

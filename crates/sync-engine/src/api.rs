@@ -16,6 +16,15 @@ impl std::fmt::Display for AuthenticationRequired {
 }
 impl std::error::Error for AuthenticationRequired {}
 
+#[derive(Debug)]
+pub struct PaymentRequired(pub String);
+impl std::fmt::Display for PaymentRequired {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "HTTP 402: {}", self.0)
+    }
+}
+impl std::error::Error for PaymentRequired {}
+
 #[derive(Clone)]
 pub struct Api {
     pub config: Config,
@@ -112,6 +121,9 @@ impl Api {
                     .map(str::to_owned)
             })
             .unwrap_or_else(|| String::from_utf8_lossy(&raw).trim().to_owned());
+        if status == 402 {
+            return PaymentRequired(message).into();
+        }
         let hint = match status {
             403 => "permission denied",
             _ => &message,

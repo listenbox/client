@@ -65,6 +65,14 @@ impl Config {
         Ok(Self { values, directory })
     }
 
+    pub fn upgrade_url(&self, team: &str) -> Result<String> {
+        ensure!(
+            crate::valid_id(team, "team_"),
+            "invalid upgrade team identifier"
+        );
+        Ok(format!("{}/{team}/upgrade", self.dashboard_origin))
+    }
+
     pub fn show_url(&self, team: &str, show: &str) -> Result<String> {
         ensure!(
             crate::valid_id(team, "team_") && crate::valid_id(show, "shw_"),
