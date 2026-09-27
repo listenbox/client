@@ -37,9 +37,7 @@ pub fn prepare(directory: &Path, separate_audio: bool, cancel: &CancellationToke
         options.set("hls_fmp4_init_filename", "init.mp4");
         options.set(
             "hls_segment_filename",
-            root.join("segment-%05d.m4s")
-                .to_str()
-                .context("non-UTF-8 media path")?,
+            &hls_path(&root.join("segment-%05d.m4s"))?,
         );
         remux(&mut input, &mp4, &output, kind, options, cancel)?;
     }
@@ -176,6 +174,14 @@ fn next_packet(
     }
 }
 
+fn hls_path(path: &Path) -> Result<String> {
+    // FFmpeg's HLS muxer locates init.mp4 using '/' even on Windows.
+    Ok(path
+        .to_str()
+        .context("non-UTF-8 media path")?
+        .replace(std::path::MAIN_SEPARATOR, "/"))
+}
+
 fn remux(
     input: &mut format::context::Input,
     source: &Path,
@@ -185,7 +191,7 @@ fn remux(
     cancel: &CancellationToken,
 ) -> Result<()> {
     *input = format::input(source)?;
-    let mut output = format::output_as(destination, "hls")?;
+    let mut output = format::output_as(hls_path(destination)?, "hls")?;
     let mapping = add_stream(input, &mut output, kind)?;
     output.write_header_with(options)?;
     packets(input, &mut output, mapping, cancel)?;

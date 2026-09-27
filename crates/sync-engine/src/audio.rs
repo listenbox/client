@@ -85,8 +85,9 @@ fn header(output: &mut format::context::Output) -> Result<()> {
     Ok(())
 }
 fn waiting(error: ffmpeg::Error) -> bool {
+    // FFmpeg returns C errno values, not the Win32 codes std::io::Error expects on Windows.
     matches!(error, ffmpeg::Error::Eof)
-        || matches!(error, ffmpeg::Error::Other { errno } if std::io::Error::from_raw_os_error(errno).kind() == std::io::ErrorKind::WouldBlock)
+        || matches!(error, ffmpeg::Error::Other { errno } if errno == libc::EAGAIN)
 }
 
 struct Transcoder {

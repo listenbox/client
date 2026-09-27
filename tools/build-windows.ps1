@@ -56,9 +56,6 @@ $env:FFMPEG_DIR = Join-Path $root ".cache/ffmpeg-$target"
 
 if ($Stage -eq 'FFmpeg') {
     New-Item -ItemType Directory -Force '.cache' | Out-Null
-    $tests = ".cache/native-ffmpeg-tests-$Architecture.exe"
-    Invoke-Checked rustc @('--edition', '2024', '--test', 'tools/native-ffmpeg.rs', '-o', $tests)
-    Invoke-Checked $tests @('--nocapture')
     $builder = ".cache/native-ffmpeg-$Architecture.exe"
     Invoke-Checked rustc @('--edition', '2024', 'tools/native-ffmpeg.rs', '-o', $builder)
     Invoke-Checked $builder @($target)
@@ -69,6 +66,8 @@ if ($Stage -eq 'FFmpeg') {
 # downloadable executable does not need a separately installed VC runtime.
 $targetKey = $target.Replace('-', '_').ToUpperInvariant()
 Set-Item "Env:CARGO_TARGET_${targetKey}_RUSTFLAGS" '-C target-feature=+crt-static'
+# Exercise the release-linked media runtime on every run, including cache hits.
+Invoke-Checked cargo @('nextest', 'run', '--locked', '--release', '--profile', 'ci', '--success-output', 'immediate', '--target', $target, '-p', 'listenbox-sync-engine', '-E', 'test(native_media_tests::) or binary(native_build)')
 Invoke-Checked cargo @('build', '--locked', '--release', '--target', $target, '-p', 'listenbox-desktop')
 
 $dist = Join-Path $root 'crates/desktop/dist'

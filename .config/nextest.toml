@@ -1,0 +1,9 @@
+[profile.default]
+retries = 0
+slow-timeout = { period = "10s", terminate-after = 3, grace-period = "0s" }
+
+[profile.ci]
+fail-fast = false
+
+[profile.ci.junit]
+path = "junit.xml"

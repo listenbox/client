@@ -11,6 +11,7 @@ chrono = { version = "0.4", default-features = false, features = ["std"] }
 futures-util = "0.3"
 hex = "0.4"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+libc = "0.2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls-native-roots"] }
 reqwest-middleware = { version = "0.4.2", features = ["json"] }
 serde = { version = "1", features = ["derive"] }

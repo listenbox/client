@@ -55,13 +55,22 @@ rebuilding the restored libraries. Native preparation remains a prerequisite:
 missing archives or changed task inputs still run the real build. Windows keeps
 its separate FFmpeg cache and existing save-before-Rust-build behavior.
 
+### Native media acceptance
+
+`moon run client-engine:test-media` runs the production media preparation code
+against local AAC, Opus, and AVC fixtures. It decodes M4A, MP4, and HLS output and
+checks invalid input, cancellation before preparation, and native tool paths.
+Tests have a hard 30-second timeout and no retries. See
+[the build comparison](docs/ffmpeg-build.md) for why the existing minimal builder
+remains in use.
+
 ### Desktop releases
 
 Every push to `master` builds and publishes one prerelease on [GitHub Releases](https://github.com/listenbox/client/releases) containing an Apple Silicon DMG and Windows x64 and ARM64 builds. Its version is the desktop package version resolved by Cargo plus the first 12 characters of the commit SHA, such as `0.1.0+abcdef123456`, with release tag `desktop-v0.1.0+abcdef123456`. Choose the DMG for Apple Silicon Macs, `listenbox-desktop-windows-x64.zip` for Intel/AMD PCs or `listenbox-desktop-windows-arm64.zip` for native Windows ARM64, including Windows 11 ARM in VMware Fusion on Apple Silicon. Both Windows archives include the executable and license notices; matching `.exe` assets are also available to run directly. Windows 11 ARM can also run the x64 version through emulation. The Windows executables are unsigned; signing is not configured. Each Windows build checks its architecture, runtime DLL dependencies and `--help` startup. Interactive Windows testing remains necessary.
 
-Release builds run only on pushes to `master`. Pull requests run the regular Moon checks, including debug builds and tests. On Windows, FFmpeg is cached separately and saved before the Rust build, so subsequent attempts can reuse it even after a Rust compilation failure. Release runs also upload build logs, FFmpeg configuration diagnostics, and Moon reports for troubleshooting without a local Windows machine.
+Pull requests build and package the same desktop applications on macOS ARM64, Windows x64, and Windows ARM64. Every runner executes release-linked media tests before packaging, including after native cache hits; only pushes to `master` publish releases. Linux retains the regular Moon checks. On Windows, FFmpeg is cached separately and saved before the Rust build, so subsequent attempts can reuse it even after a Rust compilation failure. Release runs also upload build logs, FFmpeg configuration diagnostics, and Moon reports for troubleshooting without a local Windows machine.
 
-The same builds can run on native Windows machines of the matching architecture with Rust, Moon, Visual Studio's C++ tools for that architecture and Windows SDK, host-native LLVM, and MSYS2 (`make`, `diffutils`, `tar`, `xz`, `openssl`). Set `MSYS2_LOCATION` to the MSYS2 installation directory and, if LLVM is not installed at `C:\Program Files\LLVM`, set `LIBCLANG_PATH` to the directory containing `libclang.dll`:
+The same builds can run on native Windows machines of the matching architecture with Rust, Moon, Visual Studio's C++ tools for that architecture and Windows SDK, host-native LLVM, cargo-nextest, and MSYS2 (`make`, `diffutils`, `tar`, `xz`, `openssl`). Set `MSYS2_LOCATION` to the MSYS2 installation directory and, if LLVM is not installed at `C:\Program Files\LLVM`, set `LIBCLANG_PATH` to the directory containing `libclang.dll`:
 
 ```powershell
 $env:MSYS2_LOCATION = 'C:\msys64'
@@ -176,4 +185,4 @@ Run `moon run client:secrets` before publishing changes. It uses [Gitleaks](http
 
 Keep credentials, sync databases, downloaded media, and logs in the client profile, outside tracked source. The development profile already lives in ignored `.cache/dev`. Local environment files, credentials, SQLite journals, logs, and signing keys are also ignored. Use synthetic data for fixtures and screenshots, and review images manually: a text scanner cannot establish that an image contains no private information.
 
-See `crates/desktop/DESIGN.md` for native tokens and component conventions, and [bench/README.md](bench/README.md) for the historical import benchmark.
+See `crates/desktop/DESIGN.md` for native tokens and component conventions.
