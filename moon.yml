@@ -102,27 +102,16 @@ tasks:
     options:
       runInCI: false
   build-release:
-    deps: [~:prerequisites]
+    deps: [desktop:build-release]
     inputs: ['@group(sources)']
     script: |-
       set -euo pipefail
-      pkgx +llvm.org +cmake.org cargo build --locked --release -p listenbox -p listenbox-desktop
+      pkgx +llvm.org +cmake.org cargo build --locked --release -p listenbox
       mkdir -p dist/release
-      cp target/release/listenbox target/release/listenbox-desktop dist/release/
+      cp target/release/listenbox dist/release/
+      cp crates/desktop/dist/release/listenbox-desktop dist/release/listenbox-desktop
     outputs: [dist/release/listenbox, dist/release/listenbox-desktop]
     options:
-      runInCI: false
-  dmg:
-    deps: [~:build-release]
-    inputs: ['@group(sources)', LICENSE, THIRD-PARTY-NOTICES.txt]
-    script: |-
-      set -euo pipefail
-      rustc --edition 2024 tools/package-macos.rs -o .cache/package-macos
-      .cache/package-macos
-    outputs: [dist/macos/*.dmg]
-    options:
-      os: macos
-      cache: false
       runInCI: false
   outdated:
     command: cargo update --dry-run
