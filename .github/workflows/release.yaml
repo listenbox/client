@@ -22,14 +22,17 @@ jobs:
       - name: Cache Rust builds and Moon outputs
         uses: actions/cache@v6
         with:
+          # Save each commit's progress, then restore the closest compatible build.
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
             .moon/cache/outputs
             ~/.pkgx
-          key: native-pr-macos-arm64-v1-${{ hashFiles('.cargo/config.toml', 'rust-toolchain.toml', 'tools/native-ffmpeg.rs') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'moon.yml', '.moon/**/*.yml', '.github/workflows/ci.yaml', '.github/workflows/release.yaml') }}
-          restore-keys: native-pr-macos-arm64-v1-${{ hashFiles('.cargo/config.toml', 'rust-toolchain.toml', 'tools/native-ffmpeg.rs') }}-
+          key: rust-v4-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.cargo/config.toml', 'rust-toolchain.toml', 'tools/native-ffmpeg.rs') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', '**/moon.yml', '.moon/**/*.yml', '.github/workflows/ci.yaml', '.github/workflows/release.yaml') }}-${{ github.sha }}
+          restore-keys: |
+            rust-v4-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.cargo/config.toml', 'rust-toolchain.toml', 'tools/native-ffmpeg.rs') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', '**/moon.yml', '.moon/**/*.yml', '.github/workflows/ci.yaml', '.github/workflows/release.yaml') }}-
+            rust-v4-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.cargo/config.toml', 'rust-toolchain.toml', 'tools/native-ffmpeg.rs') }}-
       - name: Test release-linked media on Apple Silicon
         run: moon exec --ignore-ci-checks client-engine:test-media
       - name: Build Apple Silicon DMG
@@ -127,12 +130,15 @@ jobs:
       - name: Cache Rust builds
         uses: actions/cache@v6
         with:
+          # Keep MSVC/native compatibility fixed while refreshing Cargo per commit.
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: windows-rust-v3-${{ matrix.target }}-${{ steps.version.outputs.native-toolchain }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'tools/native-ffmpeg.rs', 'tools/build-windows.ps1') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}
-          restore-keys: windows-rust-v3-${{ matrix.target }}-${{ steps.version.outputs.native-toolchain }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'tools/native-ffmpeg.rs', 'tools/build-windows.ps1') }}-
+          key: windows-rust-v4-${{ matrix.target }}-${{ steps.version.outputs.native-toolchain }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'tools/native-ffmpeg.rs', 'tools/build-windows.ps1') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}-${{ github.sha }}
+          restore-keys: |
+            windows-rust-v4-${{ matrix.target }}-${{ steps.version.outputs.native-toolchain }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'tools/native-ffmpeg.rs', 'tools/build-windows.ps1') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}-
+            windows-rust-v4-${{ matrix.target }}-${{ steps.version.outputs.native-toolchain }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'tools/native-ffmpeg.rs', 'tools/build-windows.ps1') }}-
       - name: Restore FFmpeg
         id: ffmpeg-cache
         uses: actions/cache/restore@v6

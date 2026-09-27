@@ -26,8 +26,8 @@ previously built `ffmpeg-sys-the-third` dependency. A local vendored replacement
 was rejected because its maintenance and source-size cost outweighed the cleanup.
 Cargo integration is deferred until the dependency offers a suitable build hook.
 
-This PR removes the unrelated Go-versus-Rust benchmark and adds PR acceptance on
-macOS ARM64, Windows x64, and Windows ARM64: real media preparation and decoding,
+PR acceptance covers macOS ARM64, Windows x64, and Windows ARM64:
+real media preparation and decoding,
 application packaging, architecture/linkage checks, and Windows startup. Tests run
 on cache hits too. Only master pushes publish releases. Existing native preparation
 and caches remain; no Cargo migration or Windows success is claimed here.

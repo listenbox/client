@@ -1,6 +1,9 @@
 language: rust
+layer: library
 toolchains:
-  default: system
+  default: rust
+env:
+  CARGO_TERM_COLOR: always
 dependsOn: ['client']
 taskOptions:
   cache: true

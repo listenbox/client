@@ -1,7 +1,10 @@
 language: rust
+layer: library
 toolchains:
-  default: system
-dependsOn: ['client', 'client-youtubei']
+  default: rust
+env:
+  CARGO_TERM_COLOR: always
+dependsOn: ['client']
 taskOptions:
   cache: true
 fileGroups:
@@ -10,7 +13,6 @@ fileGroups:
     - tests/**/*
     - examples/**/*.rs
     - Cargo.toml
-    - build.rs
 tasks:
   build:
     deps: [client:prerequisites, client-youtubei:build]

@@ -101,11 +101,6 @@ copying strings into owned Rust values still have a cost. Batch extraction avoid
 repeated context access and intermediate persistent handles. Audio selection is
 entirely over cached Rust fields, with the live format retained for deciphering.
 
-Run `cargo run --release --example boundary_bench` in this crate to compare
-identical snapshots of a parsed 100-item classic playlist. It checks equality,
-warms both paths, and alternates 31 samples of 20 reads each. Startup, parsing and
-network time are excluded; this measures the boundary, not end-to-end downloads.
-
 The dynamic escape hatch is explicit: `as_value()` on handles, or
 `Engine::exports` / `export`, with
 `JsValue::get`, `set`, `call`, `apply`, and `construct`. Method calls preserve

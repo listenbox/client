@@ -1,6 +1,9 @@
 language: rust
+layer: configuration
 toolchains:
-  default: system
+  default: rust
+env:
+  CARGO_TERM_COLOR: always
 tags: [client-workspace]
 fileGroups:
   notices: [LICENSE, THIRD-PARTY-NOTICES.txt]
@@ -18,6 +21,7 @@ fileGroups:
     - rust-toolchain.toml
     - .cargo/config.toml
     - .config/nextest.toml
+    - .moon/**/*.yml
     - moon.yml
 taskOptions:
   cache: true
@@ -71,8 +75,11 @@ tasks:
   build:
     deps: [cli:build, desktop:build]
     inputs: []
+  test:
+    deps: [cli:test, client-engine:test, client-youtubei:test, desktop:test]
+    inputs: []
   check:
-    deps: [~:secrets, ~:lint, cli:test, client-engine:test, client-youtubei:test, desktop:test, ~:build]
+    deps: [~:secrets, ~:lint, ~:test, ~:build]
     inputs: []
     options:
       runInCI: false
