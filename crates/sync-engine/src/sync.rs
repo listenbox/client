@@ -67,7 +67,7 @@ pub async fn inventory(api: &Api, slug: &str) -> Result<p::SyncInventory> {
             Some(result) => {
                 ensure!(
                     result.show.id == page.show.id
-                        && result.show.youtube_source_url == page.show.youtube_source_url,
+                        && result.show.youtube_source() == page.show.youtube_source(),
                     "Show source changed while reading inventory"
                 );
                 result.episodes.extend(page.episodes);
@@ -84,23 +84,18 @@ pub async fn inventory(api: &Api, slug: &str) -> Result<p::SyncInventory> {
     }
 }
 
-pub async fn set_source(api: &Api, slug: &str, source: Option<String>) -> Result<p::Show> {
-    Ok(serde_json::from_value(
-        api.json(
-            api.client().set_you_tube_source(p::SetYouTubeSourceParams {
-                show_slug: slug.into(),
-                body: p::SetYouTubeSource { source_url: source },
-            }),
-            &[200],
-        )
-        .await?,
-    )?)
-}
-
 impl Engine {
     fn next_scan_at(&self) -> tokio::time::Instant {
         let periods = self.scan_anchor.elapsed().as_secs() / WATCH_INTERVAL.as_secs();
         self.scan_anchor + Duration::from_secs((periods + 1) * WATCH_INTERVAL.as_secs())
+    }
+
+    pub async fn next_scan(&self, cancel: &tokio_util::sync::CancellationToken) -> bool {
+        tokio::select! {
+            biased;
+            _ = cancel.cancelled() => false,
+            _ = tokio::time::sleep_until(self.next_scan_at()) => true,
+        }
     }
 
     pub async fn once(&self, api: &Api, slug: &str) -> Result<Report> {
@@ -122,22 +117,26 @@ impl Engine {
             saved.as_ref().context("Missing sync journal")?.clone()
         };
         let before = inventory(api, slug).await?;
-        let collection = before
-            .show
-            .youtube_source_url
-            .as_deref()
-            .context("This show has no YouTube source. Configure its playlist first.")?;
-        ensure!(
-            !before.show.youtube_destination,
-            "A show cannot have both a YouTube source and destination"
-        );
-        let playlist = url::Url::parse(collection)?
-            .query_pairs()
-            .find(|(key, _)| key == "list")
-            .map(|(_, id)| id.into_owned())
-            .context("Show source has no playlist ID")?;
+        let collection = before.show.youtube_source().context(
+            "This podcast has no YouTube import. Import a playlist to create a new podcast.",
+        )?;
+        let source = url::Url::parse(collection)?;
         let youtube = YouTube::new(api).await?;
-        let snapshot = youtube.snapshot(api, &playlist).await?;
+        let snapshot =
+            if let Some((_, playlist)) = source.query_pairs().find(|(key, _)| key == "list") {
+                youtube.snapshot(api, &playlist).await?
+            } else {
+                let id = source
+                    .query_pairs()
+                    .find(|(key, _)| key == "v")
+                    .map(|(_, id)| id.into_owned())
+                    .context("Show source has no video ID")?;
+                crate::innertube::PlaylistSnapshot {
+                    title: before.show.title.clone(),
+                    present: vec![id.clone()],
+                    playable: vec![id],
+                }
+            };
         let mut unique = HashSet::new();
         let ordered_urls: Vec<String> = snapshot
             .present
@@ -203,9 +202,9 @@ impl Engine {
                     crate::youtube::VideoImport {
                         slug,
                         id,
-                        collection: Some(collection),
+                        collection,
                         transfer: Some(&transfer),
-                        journal: Some(journal),
+                        journal,
                         audio,
                     },
                 )
@@ -239,17 +238,15 @@ impl Engine {
         }
 
         for episode in &before.episodes {
-            if episode.source_collection_url.as_deref() == Some(collection)
-                && !remote.contains(&episode.source_url)
-            {
-                delete(api, slug, collection, &episode.id).await?;
+            if !remote.contains(&episode.source_url) {
+                delete(api, slug, &episode.id).await?;
                 journal.forget(&api.config.api_origin, slug, &episode.source_url)?;
                 report.removed += 1;
             }
         }
         let after = inventory(api, slug).await?;
         ensure!(
-            after.show.youtube_source_url.as_deref() == Some(collection),
+            after.show.youtube_source() == Some(collection),
             "Show source changed during sync"
         );
         let episodes: HashMap<_, _> = after
@@ -270,7 +267,6 @@ impl Engine {
                 api,
                 slug,
                 ordered.iter().map(|episode| episode.id.clone()).collect(),
-                Some(collection.into()),
             )
             .await?;
             report.reordered = true;
@@ -293,25 +289,19 @@ impl Engine {
                 return Ok(());
             }
             report(&result?);
-            tokio::select! { _ = api.cancel.cancelled() => return Ok(()), _ = tokio::time::sleep_until(self.next_scan_at()) => {} }
+            if !self.next_scan(&api.cancel).await {
+                return Ok(());
+            }
         }
     }
 }
 
-pub async fn set_order(
-    api: &Api,
-    slug: &str,
-    episode_ids: Vec<String>,
-    source_collection_url: Option<String>,
-) -> Result<p::EpisodeOrder> {
+pub async fn set_order(api: &Api, slug: &str, episode_ids: Vec<String>) -> Result<p::EpisodeOrder> {
     Ok(serde_json::from_value(
         api.json(
             api.client().set_episode_order(p::SetEpisodeOrderParams {
                 show_slug: slug.into(),
-                body: p::SetEpisodeOrder {
-                    episode_ids,
-                    source_collection_url,
-                },
+                body: p::SetEpisodeOrder { episode_ids },
             }),
             &[200],
         )
@@ -319,16 +309,13 @@ pub async fn set_order(
     )?)
 }
 
-async fn delete(api: &Api, slug: &str, source: &str, episode: &str) -> Result<()> {
+async fn delete(api: &Api, slug: &str, episode: &str) -> Result<()> {
     let result = api
         .json(
             api.client()
                 .create_sync_episode_deletion(p::CreateSyncEpisodeDeletionParams {
                     show_slug: slug.into(),
                     episode_id: episode.into(),
-                    body: p::SyncEpisodeDeletion {
-                        source_collection_url: source.into(),
-                    },
                 }),
             &[202],
         )
@@ -362,6 +349,22 @@ async fn delete(api: &Api, slug: &str, source: &str, episode: &str) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn automatic_scan_wait_uses_shared_clock_and_cancels_promptly() {
+        let engine = Engine::default();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let waiting = engine.next_scan(&cancel);
+        tokio::pin!(waiting);
+        assert!(futures_util::poll!(&mut waiting).is_pending());
+        tokio::time::advance(WATCH_INTERVAL).await;
+        assert!(waiting.await);
+        let next = engine.next_scan(&cancel);
+        tokio::pin!(next);
+        assert!(futures_util::poll!(&mut next).is_pending());
+        cancel.cancel();
+        assert!(!next.await);
+    }
 
     #[tokio::test(start_paused = true)]
     async fn all_shows_use_one_hourly_clock_and_skip_missed_ticks() {

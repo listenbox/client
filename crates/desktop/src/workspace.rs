@@ -1,6 +1,7 @@
+use crate::artwork::{ArtworkCache, artwork};
 use crate::tokens::{self, Tokens};
 use gpui_kit::component::{
-    Disableable, Sizable,
+    Disableable, Icon, Sizable,
     button::{Button, ButtonVariants},
     input::{Input, InputState},
     progress::Progress,
@@ -11,7 +12,7 @@ use gpui_kit::*;
 use listenbox_sync_engine::{
     client::{Catalog, Client},
     downloads::{Phase, Snapshot},
-    publicapi::Show,
+    publicapi::{Show, ShowSourceKind},
     sync::Report,
 };
 use std::{collections::HashMap, sync::Arc};
@@ -34,7 +35,13 @@ pub struct Workspace {
     loaded: bool,
     loading: bool,
     authenticating: bool,
-    saving: bool,
+    importing: bool,
+    auto_sync: bool,
+    import_open: bool,
+    import_kind: ShowSourceKind,
+    import_cancel: Option<CancellationToken>,
+    import_slug: Option<String>,
+    artwork_cache: Entity<ArtworkCache>,
     team: Option<String>,
     team_picker: bool,
     selected: Option<String>,
@@ -56,9 +63,11 @@ enum Message {
     Open(String),
     Catalog(anyhow::Result<Catalog>),
     Login(anyhow::Result<()>),
-    Source(anyhow::Result<Show>),
+    ImportCreated(Show),
+    Imported(anyhow::Result<(Show, Report)>),
     Report(String, Report),
     Finished(String, anyhow::Result<()>),
+    SyncDue,
 }
 
 impl Workspace {
@@ -118,7 +127,13 @@ impl Workspace {
             loaded: false,
             loading: false,
             authenticating: false,
-            saving: false,
+            importing: false,
+            auto_sync: false,
+            import_open: false,
+            import_kind: ShowSourceKind::Audio,
+            import_cancel: None,
+            import_slug: None,
+            artwork_cache: ArtworkCache::new(cx),
             team: None,
             team_picker: false,
             selected: None,
@@ -274,7 +289,13 @@ impl Workspace {
                 self.stopping = None;
                 self.authenticating = false;
                 self.loading = false;
-                self.saving = false;
+                self.importing = false;
+                self.auto_sync = false;
+                self.import_open = false;
+                self.import_slug = None;
+                self.import_cancel = None;
+                self.artwork_cache
+                    .update(cx, |cache, cx| cache.clear(window, cx));
                 self.jobs.clear();
                 self.reports.clear();
                 match result {
@@ -289,11 +310,20 @@ impl Workspace {
                     Err(error) => self.error = Some(format!("Could not sign out. {error:#}")),
                 }
             }
+            Message::SyncDue => self.sync_all(false, cx),
             Message::Open(url) => cx.open_url(&url),
             Message::Catalog(result) => {
                 self.loading = false;
                 match result {
-                    Ok(catalog) => {
+                    Ok(mut catalog) => {
+                        catalog.shows.retain(|show| show.youtube_source().is_some());
+                        let urls: Vec<_> = catalog
+                            .shows
+                            .iter()
+                            .filter_map(|show| show.image_url.clone())
+                            .collect();
+                        self.artwork_cache
+                            .update(cx, |cache, cx| cache.retain(&urls, window, cx));
                         self.loaded = true;
                         self.catalog = catalog;
                         if !self
@@ -302,12 +332,21 @@ impl Workspace {
                             .iter()
                             .any(|show| self.selected.as_ref() == Some(&show.slug))
                         {
+                            let error = self.error.take();
                             self.select(
-                                self.catalog.shows.first().map(|show| show.slug.clone()),
+                                self.catalog
+                                    .shows
+                                    .iter()
+                                    .find(|show| {
+                                        self.team.as_ref().is_none_or(|team| team == &show.team_id)
+                                    })
+                                    .map(|show| show.slug.clone()),
                                 window,
                                 cx,
                             );
+                            self.error = error;
                         }
+                        self.start_auto_sync(cx);
                     }
                     Err(error) => {
                         if error.is::<listenbox_sync_engine::api::AuthenticationRequired>() {
@@ -327,22 +366,43 @@ impl Workspace {
                     Err(error) => self.error = Some(format!("Sign-in did not finish. {error:#}")),
                 }
             }
-            Message::Source(result) => {
-                self.saving = false;
+            Message::ImportCreated(show) => {
+                self.import_slug = Some(show.slug.clone());
+                if let Some(cancel) = &self.import_cancel {
+                    self.jobs.insert(show.slug.clone(), cancel.clone());
+                }
+                self.team = Some(show.team_id.clone());
+                let slug = show.slug.clone();
+                self.catalog.shows.push(show);
+                self.import_open = false;
+                self.select(Some(slug.clone()), window, cx);
+                self.reports
+                    .insert(slug, "Importing the first episodes…".into());
+            }
+            Message::Imported(result) => {
+                self.importing = false;
+                self.import_cancel = None;
+                let imported_slug = self.import_slug.take();
+                if let Some(slug) = &imported_slug {
+                    self.jobs.remove(slug);
+                }
                 match result {
-                    Ok(show) => {
-                        if let Some(existing) = self
-                            .catalog
-                            .shows
-                            .iter_mut()
-                            .find(|existing| existing.id == show.id)
-                        {
-                            *existing = show;
-                        }
-                        self.select(self.selected.clone(), window, cx);
+                    Ok((show, report)) => {
+                        self.source
+                            .update(cx, |state, cx| state.set_value("", window, cx));
+                        self.receive(Message::Report(show.slug, report), window, cx);
                     }
                     Err(error) => {
-                        self.error = Some(format!("Could not save the source. {error:#}"))
+                        if let Some(slug) = imported_slug {
+                            self.reports.insert(
+                                slug,
+                                "Import paused. Progress is saved; use Sync now to resume.".into(),
+                            );
+                        }
+                        self.error = Some(format!("Import did not finish. {error:#}"));
+                        // Creation may have committed even when its reply was lost.
+                        // A catalog reload exposes that podcast for explicit resumption.
+                        self.reload_after_import(cx);
                     }
                 }
             }
@@ -379,14 +439,9 @@ impl Workspace {
         cx.notify();
     }
 
-    fn select(&mut self, slug: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+    fn select(&mut self, slug: Option<String>, _window: &mut Window, cx: &mut Context<Self>) {
         self.selected = slug;
-        let value = self
-            .show()
-            .and_then(|show| show.youtube_source_url.clone())
-            .unwrap_or_default();
-        self.source
-            .update(cx, |state, cx| state.set_value(value, window, cx));
+        self.import_open = false;
         self.error = None;
         cx.notify();
     }
@@ -398,43 +453,103 @@ impl Workspace {
             .find(|show| Some(&show.slug) == self.selected.as_ref())
     }
 
-    fn save_source(&mut self, disconnect: bool, cx: &mut Context<Self>) {
-        if self.stopping.is_some() {
+    fn reload_after_import(&mut self, cx: &mut Context<Self>) {
+        let error = self.error.take();
+        self.reload(cx);
+        self.error = error;
+    }
+
+    fn import_playlist(&mut self, cx: &mut Context<Self>) {
+        if !self.loaded || self.importing || self.stopping.is_some() {
             return;
         }
-        let Some(show) = self.show() else {
-            return;
+        let source = self.source.read(cx).value().to_string();
+        let source = match listenbox_sync_engine::youtube::playlist_source(&source) {
+            Ok(source) => source,
+            Err(error) => {
+                self.error = Some(error.to_string());
+                cx.notify();
+                return;
+            }
         };
-        let slug = show.slug.clone();
-        let url = if disconnect {
-            None
-        } else {
-            Some(self.source.read(cx).value().to_string())
-        };
-        self.saving = true;
+        self.importing = true;
         self.error = None;
-        let (client, sender, cancel) = (
+        let cancel = self.cancel.child_token();
+        self.import_cancel = Some(cancel.clone());
+        let (client, sender, kind) = (
             self.client.clone(),
             self.sender.clone(),
-            self.cancel.child_token(),
+            self.import_kind.clone(),
         );
         self.tasks.spawn_on(
             async move {
-                let _ = sender.send(Message::Source(client.set_source(&slug, url, cancel).await));
+                let created = sender.clone();
+                let result = client
+                    .import_playlist(&source, kind, cancel, move |show| {
+                        let _ = created.send(Message::ImportCreated(show.clone()));
+                    })
+                    .await;
+                let _ = sender.send(Message::Imported(result));
             },
             self.runtime.handle(),
         );
         cx.notify();
     }
 
-    fn sync(&mut self, watch: bool, cx: &mut Context<Self>) {
+    fn start_auto_sync(&mut self, cx: &mut Context<Self>) {
+        if self.stopping.is_some() || !self.client.has_credentials() {
+            return;
+        }
+        if !self.auto_sync {
+            self.auto_sync = true;
+            let (client, cancel, sender) = (
+                self.client.clone(),
+                self.cancel.clone(),
+                self.sender.clone(),
+            );
+            self.tasks.spawn_on(
+                async move {
+                    while client.next_scan(&cancel).await {
+                        if sender.send(Message::SyncDue).is_err() {
+                            break;
+                        }
+                    }
+                },
+                self.runtime.handle(),
+            );
+        }
+        self.sync_all(true, cx);
+    }
+
+    fn sync_all(&mut self, only_new: bool, cx: &mut Context<Self>) {
+        if !self.loaded || self.stopping.is_some() {
+            return;
+        }
+        let slugs: Vec<_> = self
+            .catalog
+            .shows
+            .iter()
+            .filter(|show| {
+                show.has_active_subscription
+                    && (!only_new || !self.reports.contains_key(&show.slug))
+            })
+            .map(|show| show.slug.clone())
+            .collect();
+        for slug in slugs {
+            self.sync_show(slug, cx);
+        }
+    }
+
+    fn sync(&mut self, cx: &mut Context<Self>) {
+        if let Some(show) = self.show() {
+            self.sync_show(show.slug.clone(), cx);
+        }
+    }
+
+    fn sync_show(&mut self, slug: String, cx: &mut Context<Self>) {
         if self.stopping.is_some() {
             return;
         }
-        let Some(show) = self.show() else {
-            return;
-        };
-        let slug = show.slug.clone();
         if self.jobs.contains_key(&slug) {
             return;
         }
@@ -448,7 +563,7 @@ impl Workspace {
                 let report_slug = slug.clone();
                 let report_sender = sender.clone();
                 let result = client
-                    .sync(&slug, watch, cancel, move |report| {
+                    .sync(&slug, false, cancel, move |report| {
                         let _ = report_sender
                             .send(Message::Report(report_slug.clone(), report.clone()));
                     })
@@ -468,7 +583,7 @@ impl Workspace {
             .and_then(|id| self.catalog.teams.iter().find(|team| &team.id == id))
             .map(|team| team.name.clone())
             .unwrap_or_else(|| "All teams".into());
-        let mut rail = div()
+        let rail = div()
             .flex()
             .flex_col()
             .w(px(tokens::SIDEBAR))
@@ -476,21 +591,57 @@ impl Workspace {
             .bg(t.rail)
             .border_r_1()
             .border_color(t.divider)
-            .p(px(tokens::GAP))
-            .gap(px(tokens::GAP))
             .child(
                 div()
-                    .px(px(tokens::GAP))
-                    .py(px(tokens::GAP))
-                    .text_size(px(tokens::TITLE))
-                    .font_weight(FontWeight::BOLD)
+                    .h(px(tokens::TOOLBAR_HEIGHT))
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .px(px(tokens::SIDEBAR_INSET))
+                    .border_b_1()
+                    .border_color(t.divider)
+                    .font_weight(FontWeight::SEMIBOLD)
                     .child("Listenbox"),
-            )
+            );
+        let mut navigation = div()
+            .flex()
+            .flex_col()
+            .flex_shrink_0()
+            .px(px(tokens::NAV_ROW_INSET))
+            .py(px(tokens::SIDEBAR_INSET))
+            .gap(px(tokens::GAP))
             .child(
                 Button::new("team-picker")
-                    .label(team_name)
-                    .icon(gpui_kit::component::IconName::ChevronDown)
+                    .ghost()
+                    .accessibility_label(format!("Choose team: {team_name}"))
                     .w_full()
+                    .h(px(tokens::CONTROL_HEIGHT))
+                    .px(px(tokens::NAV_ROW_INSET))
+                    .child(
+                        div()
+                            .w_full()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_size(px(tokens::TITLE))
+                                    .font_weight(FontWeight::BOLD)
+                                    .child(team_name),
+                            )
+                            .child(
+                                Icon::new(if self.team_picker {
+                                    assets::IconName::ChevronUp
+                                } else {
+                                    assets::IconName::ChevronDown
+                                })
+                                .small()
+                                .text_color(t.muted),
+                            ),
+                    )
                     .disabled(!self.loaded)
                     .on_click(cx.listener(|view, _, _, cx| {
                         view.team_picker = !view.team_picker;
@@ -498,22 +649,37 @@ impl Workspace {
                     })),
             );
         if self.team_picker {
-            rail = rail.child(
-                Button::new("all-teams")
-                    .ghost()
-                    .label("All teams")
-                    .on_click(cx.listener(|view, _, _, cx| {
-                        view.team = None;
-                        view.team_picker = false;
-                        cx.notify();
-                    })),
-            );
+            let mut teams = div()
+                .id("team-options")
+                .flex()
+                .flex_col()
+                .gap_1()
+                .max_h(px(180.))
+                .overflow_y_scroll()
+                .child(
+                    Button::new("all-teams")
+                        .ghost()
+                        .w_full()
+                        .h(px(tokens::CONTROL_HEIGHT))
+                        .px(px(tokens::NAV_ROW_INSET))
+                        .accessibility_label("All teams")
+                        .child(div().w_full().child("All teams"))
+                        .on_click(cx.listener(|view, _, _, cx| {
+                            view.team = None;
+                            view.team_picker = false;
+                            cx.notify();
+                        })),
+                );
             for team in &self.catalog.teams {
                 let id = team.id.clone();
-                rail = rail.child(
+                teams = teams.child(
                     Button::new(SharedString::from(format!("team-{}", team.id)))
                         .ghost()
-                        .label(team.name.clone())
+                        .w_full()
+                        .h(px(tokens::CONTROL_HEIGHT))
+                        .px(px(tokens::NAV_ROW_INSET))
+                        .accessibility_label(team.name.clone())
+                        .child(div().w_full().truncate().child(team.name.clone()))
                         .on_click(cx.listener(move |view, _, window, cx| {
                             view.team = Some(id.clone());
                             view.team_picker = false;
@@ -527,39 +693,120 @@ impl Workspace {
                         })),
                 );
             }
+            navigation = navigation.child(teams);
         }
+        navigation = navigation.child(
+            div().px(px(tokens::NAV_ROW_INSET)).child(
+                Button::new("new-import")
+                    .primary()
+                    .accessibility_label("Import playlist")
+                    .w_full()
+                    .h(px(tokens::CONTROL_HEIGHT))
+                    .px(px(tokens::GAP))
+                    .child(
+                        div()
+                            .w_full()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child("Import playlist"),
+                            )
+                            .child(Icon::new(assets::IconName::Plus).small()),
+                    )
+                    .disabled(!self.loaded || self.importing || self.stopping.is_some())
+                    .on_click(cx.listener(|view, _, _, cx| {
+                        view.import_open = true;
+                        view.error = None;
+                        cx.notify();
+                    })),
+            ),
+        );
         let mut shows = div()
             .id("podcasts")
             .flex()
             .flex_col()
             .gap_1()
+            .px(px(tokens::NAV_ROW_INSET))
             .flex_1()
             .min_h_0()
             .overflow_y_scroll();
+        let mut count = 0;
         for show in self
             .catalog
             .shows
             .iter()
             .filter(|show| self.team.as_ref().is_none_or(|team| team == &show.team_id))
         {
+            count += 1;
             let slug = show.slug.clone();
-            let selected = self.selected.as_ref() == Some(&slug);
+            let selected = !self.import_open && self.selected.as_ref() == Some(&slug);
+            let status = if self.jobs.contains_key(&slug) {
+                "Syncing"
+            } else if !show.has_active_subscription {
+                "Plan required"
+            } else {
+                "Automatic sync"
+            };
             shows = shows.child(
                 Button::new(SharedString::from(format!("show-{slug}")))
                     .ghost()
-                    .label(show.title.clone())
                     .w_full()
+                    .h_auto()
+                    .p(px(tokens::NAV_ROW_INSET))
+                    .accessibility_label(format!("{}, {status}", show.title))
                     .justify_start()
                     .when(selected, |button| button.bg(t.selected))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .w_full()
+                            .child(artwork(show.image_url.as_deref(), 44., t))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .flex()
+                                    .flex_col()
+                                    .items_start()
+                                    .gap_1()
+                                    .child(
+                                        div()
+                                            .w_full()
+                                            .truncate()
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .child(show.title.clone()),
+                                    )
+                                    .child(
+                                        div().text_size(px(12.)).text_color(t.muted).child(status),
+                                    ),
+                            ),
+                    )
                     .on_click(cx.listener(move |view, _, window, cx| {
                         view.select(Some(slug.clone()), window, cx)
                     })),
             );
         }
-        rail.child(shows)
+        if count == 0 && self.loaded {
+            shows = shows.child(
+                div()
+                    .px(px(tokens::NAV_ROW_INSET))
+                    .py_4()
+                    .text_size(px(12.))
+                    .text_color(t.muted)
+                    .child("Your imported playlists will appear here."),
+            );
+        }
+        rail.child(navigation)
+            .child(shows)
             .child(
                 div()
-                    .p(px(tokens::GAP))
+                    .p(px(tokens::SIDEBAR_INSET))
                     .text_size(px(12.))
                     .text_color(t.muted)
                     .child("YouTube → Listenbox"),
@@ -567,86 +814,134 @@ impl Workspace {
             .into_any_element()
     }
 
-    fn detail(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn import_form(&self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let t = Tokens::current(cx);
-        let Some(show) = self.show() else {
-            return div().flex().flex_col().items_start().gap(px(tokens::GAP)).py(px(tokens::SPACE * 2.)).child(div().text_size(px(tokens::PAGE_TITLE)).font_weight(FontWeight::BOLD).child("Connect your podcast"))
-                .child(div().max_w(px(510.)).text_color(t.muted).child(if self.loaded { "Create a podcast in Listenbox, or ask a team owner to share one with you. Then reload your podcasts here." } else { "Sign in through Listenbox in your browser, then choose a podcast and its YouTube playlist. Syncing requires a paid audio or video plan." }))
-                .child(Button::new("welcome-action").primary().label(if self.loaded { "Open Listenbox" } else { "Sign in to Listenbox" }).disabled(self.authenticating || self.stopping.is_some()).on_click(cx.listener(|view, _, _, cx| { if view.loaded { cx.open_url(view.client.dashboard_url()); } else { view.login(cx); } }))).into_any_element();
-        };
+        let busy = self.importing || self.stopping.is_some();
+        let team = self
+            .catalog
+            .import_team
+            .as_ref()
+            .and_then(|id| self.catalog.teams.iter().find(|team| &team.id == id))
+            .map(|team| team.name.as_str())
+            .unwrap_or("your authorized team");
+        let form = div().flex().flex_col().items_start().gap(px(tokens::SPACE)).max_w(px(620.)).py(px(tokens::SPACE))
+            .child(div().flex().flex_col().gap_3()
+                .child(div().text_size(px(tokens::PAGE_TITLE)).font_weight(FontWeight::BOLD).child("Import a YouTube playlist"))
+                .child(div().text_color(t.muted).child("Give your playlist a podcast home. Import it once, then keep new episodes coming with Listenbox.")))
+            .child(div().w_full().flex().flex_col().gap_2()
+                .child(div().font_weight(FontWeight::SEMIBOLD).child("Playlist URL"))
+                .child(Input::new(&self.source).id("playlist-url").disabled(busy))
+                .child(div().text_size(px(12.)).text_color(t.muted).child("Use a public playlist. Its title becomes your podcast’s name.")))
+            .child(div().flex().flex_col().gap_2()
+                .child(div().font_weight(FontWeight::SEMIBOLD).child("Podcast format"))
+                .child(div().flex().gap_2()
+                    .child(Button::new("import-audio").label("Audio").icon(assets::IconName::Headphones)
+                        .map(|button| if self.import_kind == ShowSourceKind::Audio { button.primary() } else { button.outline() }).disabled(busy)
+                        .on_click(cx.listener(|view, _, _, cx| { view.import_kind = ShowSourceKind::Audio; cx.notify(); })))
+                    .child(Button::new("import-video").label("Video").icon(assets::IconName::Video)
+                        .map(|button| if self.import_kind == ShowSourceKind::Video { button.primary() } else { button.outline() }).disabled(busy)
+                        .on_click(cx.listener(|view, _, _, cx| { view.import_kind = ShowSourceKind::Video; cx.notify(); })))))
+            .child(div().w_full().border_t_1().border_color(t.divider).pt_4().flex().flex_col().gap_2()
+                .child(format!("Creates a new podcast in {team}."))
+                .child(div().text_size(px(12.)).text_color(t.muted)
+                    .child("A paid podcast plan is required. Playlist order is preserved. On later syncs, videos removed from the playlist are removed from the podcast.")))
+            .child(div().flex().items_center().gap_3()
+                .child(Button::new("start-import").primary().label(if self.importing { "Importing…" } else { "Create podcast & import" })
+                    .disabled(busy).on_click(cx.listener(|view, _, _, cx| view.import_playlist(cx))))
+                .when(self.importing, |row| row.child(Spinner::new().small()))
+                .when(!self.importing && self.show().is_some(), |row| row.child(Button::new("cancel-import").ghost().label("Cancel")
+                    .on_click(cx.listener(|view, _, _, cx| { view.import_open = false; view.error = None; cx.notify(); })))));
+        form.into_any_element()
+    }
+
+    fn detail(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let t = Tokens::current(cx);
+        if !self.loaded {
+            return div().flex().flex_col().items_start().gap(px(tokens::SPACE)).max_w(px(600.)).py(px(tokens::SPACE * 2.))
+                .child(div().text_size(px(tokens::PAGE_TITLE)).font_weight(FontWeight::BOLD).child("Your playlists. Your podcast."))
+                .child(div().text_color(t.muted).child("Bring a public YouTube playlist to Listenbox, then keep your podcast in sync from this desktop."))
+                .child(Button::new("welcome-action").primary().label(if self.authenticating { "Finish in your browser…" } else { "Sign in to Listenbox" })
+                    .disabled(self.authenticating || self.stopping.is_some()).on_click(cx.listener(|view, _, _, cx| view.login(cx))))
+                .child(div().text_size(px(12.)).text_color(t.muted).child("Uses your Listenbox account and podcast plan.")).into_any_element();
+        }
+        if self.import_open || self.show().is_none() {
+            return self.import_form(window, cx);
+        }
+        let show = self.show().unwrap();
         let running = self.jobs.contains_key(&show.slug);
-        let disabled = running
-            || self.saving
-            || self.stopping.is_some()
-            || !show.has_active_subscription
-            || show.youtube_destination;
-        let sync_disabled = disabled || show.youtube_source_url.is_none();
-        let mut pane = div().flex().flex_col().gap(px(tokens::SPACE))
-            .child(div().flex().items_start().justify_between().gap_4()
-                .child(div().flex_1().min_w_0().child(div().text_size(px(tokens::PAGE_TITLE)).font_weight(FontWeight::BOLD).child(show.title.clone())).child(div().mt_2().text_color(t.muted).child(format!("{} podcast", if show.source_kind == listenbox_sync_engine::publicapi::ShowSourceKind::Audio { "Audio" } else { "Video" }))))
-                .child(Button::new("open-show").ghost().label("Open in Listenbox").on_click(cx.listener(|view, _, _, cx| { if let Some(url) = view.show().and_then(|show| view.client.show_url(show).ok()) { cx.open_url(&url); } }))))
-            .child(div().flex().flex_col().gap_2().child(div().font_weight(FontWeight::SEMIBOLD).child("YouTube playlist"))
-                .child(Input::new(&self.source).id("playlist-url").disabled(disabled))
-                .child(div().text_color(t.muted).text_size(px(12.)).child("New videos become episodes in playlist order. Videos removed from this playlist are removed from this podcast; other episodes stay."))
-                .child(div().flex().gap_2().mt_2()
-                    .child(Button::new("save-source").label(if self.saving { "Saving…" } else { "Save playlist" }).disabled(disabled).on_click(cx.listener(|view, _, _, cx| view.save_source(false, cx))))
-                    .child(Button::new("disconnect").ghost().label("Disconnect").disabled(disabled || show.youtube_source_url.is_none()).on_click(cx.listener(|view, _, _, cx| view.save_source(true, cx))))));
-        if show.youtube_destination {
-            pane = pane.child(div().text_color(t.muted).child("This podcast publishes to YouTube. Disconnect its YouTube destination in Listenbox before adding a source."));
-        }
+        let disabled = running || self.stopping.is_some() || !show.has_active_subscription;
+        let source = show.youtube_source().unwrap_or_default().to_owned();
+        let source_link = source.clone();
+        let is_playlist = source.contains("/playlist?");
+        let format = if show.source_kind == ShowSourceKind::Audio {
+            "Audio podcast"
+        } else {
+            "Video podcast"
+        };
+        let mut pane = div().flex().flex_col().gap(px(tokens::SPACE)).max_w(px(900.))
+            .child(div().flex().items_center().gap(px(tokens::SPACE)).py_2()
+                .child(artwork(show.image_url.as_deref(), 120., t))
+                .child(div().flex_1().min_w_0().flex().flex_col().items_start().gap_3()
+                    .child(div().text_size(px(tokens::PAGE_TITLE)).font_weight(FontWeight::BOLD).child(show.title.clone()))
+                    .child(div().text_color(t.muted).child(format))
+                    .child(Button::new("open-show").ghost().small().icon(assets::IconName::ExternalLink).label("Open in Listenbox")
+                        .on_click(cx.listener(|view, _, _, cx| { if let Some(url) = view.show().and_then(|show| view.client.show_url(show).ok()) { cx.open_url(&url); } })))))
+            .child(div().border_t_1().border_color(t.divider).pt(px(tokens::SPACE)).flex().flex_col().gap_2()
+                .child(div().font_weight(FontWeight::SEMIBOLD).child("YouTube source"))
+                .child(Button::new("open-playlist").ghost().justify_start().w_full().min_w_0().icon(assets::IconName::ExternalLink)
+                    .child(div().flex_1().min_w_0().truncate().child(source))
+                    .on_click(move |_, _, cx| cx.open_url(&source_link)))
+                .child(div().text_size(px(12.)).text_color(t.muted).child(if is_playlist { "Episodes follow the playlist’s order. Removed videos leave this podcast on the next sync." } else { "This podcast imports a YouTube video. Sync again to resume unfinished transfers." })));
         if !show.has_active_subscription {
-            pane =
-                pane.child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_2()
-                        .child("A paid audio or video plan is required to sync this podcast.")
-                        .child(Button::new("choose-plan").label("Open billing").on_click(
-                            cx.listener(|view, _, _, cx| {
-                                cx.open_url(view.client.dashboard_url());
-                            }),
-                        )),
-                );
-        }
-        pane = pane
-            .child(
+            pane = pane.child(
                 div()
                     .flex()
-                    .items_center()
+                    .flex_col()
+                    .items_start()
                     .gap_2()
+                    .child("Choose a paid audio or video plan to resume syncing.")
                     .child(
-                        Button::new("sync-now")
+                        Button::new("choose-plan")
                             .primary()
-                            .label("Sync now")
-                            .disabled(sync_disabled)
-                            .on_click(cx.listener(|view, _, _, cx| view.sync(false, cx))),
-                    )
-                    .child(
-                        Button::new("keep-syncing")
-                            .label("Keep syncing")
-                            .disabled(sync_disabled)
-                            .on_click(cx.listener(|view, _, _, cx| view.sync(true, cx))),
-                    )
-                    .when(running, |row| {
-                        row.child(Button::new("stop-sync").label("Stop").on_click(cx.listener(
-                            |view, _, _, cx| {
-                                if let Some(cancel) =
-                                    view.selected.as_ref().and_then(|slug| view.jobs.get(slug))
-                                {
-                                    cancel.cancel();
-                                }
-                                cx.notify();
-                            },
-                        )))
-                    }),
-            )
-            .child(div().text_color(t.muted).child(
-                self.reports.get(&show.slug).cloned().unwrap_or_else(|| {
-                    "Ready when you are. Keep syncing checks for changes every hour.".into()
+                            .label("Open billing")
+                            .on_click(cx.listener(|view, _, _, cx| {
+                                cx.open_url(view.client.dashboard_url())
+                            })),
+                    ),
+            );
+        }
+        pane.child(
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    Button::new("sync-now")
+                        .primary()
+                        .icon(assets::IconName::RefreshCw)
+                        .label("Sync now")
+                        .disabled(disabled)
+                        .on_click(cx.listener(|view, _, _, cx| view.sync(cx))),
+                )
+                .when(running, |row| {
+                    row.child(Button::new("stop-sync").outline().label("Stop").on_click(
+                        cx.listener(|view, _, _, cx| {
+                            if let Some(cancel) =
+                                view.selected.as_ref().and_then(|slug| view.jobs.get(slug))
+                            {
+                                cancel.cancel();
+                            }
+                            cx.notify();
+                        }),
+                    ))
                 }),
-            ));
-        pane.into_any_element()
+        )
+        .child(div().text_color(t.muted).child(
+            self.reports.get(&show.slug).cloned().unwrap_or_else(|| {
+                "Syncs automatically every hour while Listenbox is running.".into()
+            }),
+        ))
+        .into_any_element()
     }
 
     fn transfers(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -690,7 +985,7 @@ impl Workspace {
                 div()
                     .py(px(tokens::SPACE))
                     .text_color(t.muted)
-                    .child("Downloads and uploads will appear here when you start syncing."),
+                    .child("New episodes will appear here as they sync."),
             );
         }
         for item in self.progress.items.iter().rev().take(100) {
@@ -771,6 +1066,7 @@ impl Render for Workspace {
             })
         };
         div()
+            .image_cache(self.artwork_cache.clone())
             .track_focus(&self.focus)
             .capture_key_down(cx.listener(|view, event: &KeyDownEvent, _, cx| {
                 if event.keystroke.modifiers.platform && event.keystroke.key == "q" {
@@ -806,14 +1102,14 @@ impl Render for Workspace {
                     .min_w_0()
                     .child(
                         div()
-                            .h(px(56.))
+                            .h(px(tokens::TOOLBAR_HEIGHT))
                             .px(px(tokens::SPACE))
                             .flex()
                             .items_center()
                             .justify_between()
                             .border_b_1()
                             .border_color(t.divider)
-                            .child(div().text_color(t.muted).child("Podcasts"))
+                            .child(div().text_color(t.muted).child("YouTube imports"))
                             .child(
                                 div()
                                     .flex()
@@ -827,9 +1123,12 @@ impl Render for Workspace {
                                             .ghost()
                                             .label("Reload")
                                             .disabled(self.loading || self.stopping.is_some())
-                                            .on_click(
-                                                cx.listener(|view, _, _, cx| view.reload(cx)),
-                                            ),
+                                            .on_click(cx.listener(|view, _, window, cx| {
+                                                view.artwork_cache.update(cx, |cache, cx| {
+                                                    cache.clear(window, cx)
+                                                });
+                                                view.reload(cx);
+                                            })),
                                     )
                                     .child(
                                         Button::new("sign-in")
@@ -861,10 +1160,10 @@ impl Render for Workspace {
                             .min_h_0()
                             .overflow_y_scroll()
                             .p(px(tokens::SPACE))
-                            .child(self.detail(cx))
                             .when_some(self.error.clone(), |pane, error| {
-                                pane.child(div().mt_4().text_color(t.danger).child(error))
+                                pane.child(div().mb_4().text_color(t.danger).child(error))
                             })
+                            .child(self.detail(window, cx))
                             .when(self.loaded, |pane| pane.child(self.transfers(cx))),
                     ),
             )

@@ -4,6 +4,10 @@ use gpui_kit::component::{ActiveTheme, Theme, ThemeMode};
 use gpui_kit::{App, Hsla, Window, px, rgb};
 
 pub const SIDEBAR: f32 = 240.;
+pub const SIDEBAR_INSET: f32 = 16.;
+pub const NAV_ROW_INSET: f32 = 8.;
+pub const TOOLBAR_HEIGHT: f32 = 56.;
+pub const CONTROL_HEIGHT: f32 = 36.;
 pub const PAGE_TITLE: f32 = 30.;
 pub const TITLE: f32 = 18.;
 pub const BODY: f32 = 14.;
@@ -51,7 +55,7 @@ impl Tokens {
                 border: neutral(0.4349),
                 divider: neutral(0.3446),
                 selected: neutral(0.3368),
-                action: neutral(0.4532),
+                action: neutral(0.54),
                 action_ink: neutral(1.),
                 danger: rgb(0xef9a8d).into(),
             }
@@ -88,7 +92,11 @@ pub fn project(cx: &mut App) {
     theme.colors.muted = t.rail;
     theme.colors.muted_foreground = t.muted;
     theme.colors.border = t.border;
-    theme.colors.input = t.sheet;
+    theme.colors.input = if theme.is_dark() {
+        neutral(0.62)
+    } else {
+        neutral(0.6167)
+    };
     theme.colors.caret = t.ink;
     theme.colors.ring = t.action;
     theme.colors.selection = t.selected;
@@ -96,7 +104,7 @@ pub fn project(cx: &mut App) {
     theme.colors.primary_foreground = t.action_ink;
     theme.colors.button_primary = t.action;
     theme.colors.button_primary_hover = if theme.is_dark() {
-        neutral(0.52)
+        neutral(0.56)
     } else {
         t.ink
     };

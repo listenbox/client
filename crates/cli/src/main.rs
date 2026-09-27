@@ -67,23 +67,10 @@ enum ShowCommand {
         #[arg(long, value_parser = episode_id)]
         episode: Vec<String>,
     },
-    /// Reconcile a configured source with Listenbox
+    /// Sync an imported podcast by slug using its saved YouTube source
     Sync {
         #[command(subcommand)]
         command: SyncCommand,
-    },
-    /// Set or disconnect the playlist stored on a show
-    Source {
-        #[arg(long, value_parser = slug)]
-        show: String,
-        #[arg(
-            long,
-            conflicts_with = "disconnect",
-            required_unless_present = "disconnect"
-        )]
-        youtube: Option<String>,
-        #[arg(long)]
-        disconnect: bool,
     },
     Create {
         #[arg(long, value_parser = nonblank)]
@@ -107,6 +94,7 @@ enum ShowCommand {
 
 #[derive(Subcommand)]
 enum SyncCommand {
+    /// No URL needed: the source was saved when the podcast was imported
     Youtube {
         #[arg(long, value_parser = slug)]
         show: String,
@@ -298,7 +286,13 @@ async fn run(cli: Cli, cancel: CancellationToken) -> Result<()> {
                 } => auth::status(&api).await,
                 Command::Import { slug, source_url } => {
                     if youtube::is_source(&source_url) {
-                        youtube::import(&api, &source_url, slug.as_deref()).await
+                        youtube::import(&api, &listenbox_sync_engine::sync::Engine::default(), &source_url, slug.as_deref(), listenbox_sync_engine::publicapi::ShowSourceKind::Video, |show| {
+                            eprintln!("Created podcast {:?}. Resume with shows sync youtube --show {}", show.slug, show.slug);
+                        }).await.map(|(show, _)| {
+                            println!("{}", show.slug);
+                            eprintln!("100%");
+                            if let Ok(url) = api.config.show_url(&show.team_id, &show.id) { eprintln!("Open in Listenbox: {url}"); }
+                        })
                     } else {
                         commands::import_rss(&api, &source_url, slug.as_deref()).await
                     }

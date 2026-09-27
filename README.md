@@ -114,23 +114,21 @@ moonx desktop:macos-reinstall
 
 This reuses the release/DMG packaging, verifies the staged app, gracefully stops the copy running from `/Applications/Listenbox.app`, and atomically replaces that bundle. It also handles a first install. A failed build, copy, signature check, or shutdown leaves the installed bundle intact. The task never force-kills the app, changes its profile or credentials, or starts it afterward; open Listenbox from Applications when ready. Installation always runs, even with cached build outputs.
 
-## Connect and sync
+## Import and sync
 
 The desktop's sign-in button opens Listenbox in your browser. `listenbox login` uses the same authorization flow. Both save and read one private credential in `~/.config/listenbox/auth.json`; signing in through either authorizes both.
 
 ```sh
 listenbox login
 listenbox shows list
-listenbox shows create --title "Field notes" --slug field-notes --type audio --language en
-listenbox shows source --show field-notes --youtube 'https://www.youtube.com/playlist?list=PLAYLIST_ID'
+listenbox import --slug field-notes 'https://www.youtube.com/playlist?list=PLAYLIST_ID'
 listenbox shows sync youtube --show field-notes
 listenbox shows sync youtube --show field-notes --watch
-listenbox shows source --show field-notes --disconnect
 ```
 
-An active paid audio or video plan is required for synchronization. Teams and accessible shows load live, including team membership and direct collaboration. A source cannot coexist with a YouTube publishing destination; PostgreSQL enforces both directions. The backend checks permissions and video allowance when admitting work.
+An active paid audio or video plan is required for synchronization. The desktop automatically syncs on startup and every hour while running. Sync now requests an immediate pass. Its library lists only existing YouTube imports, including accessible imports shared with you. Import creates a fresh podcast; its source is fixed. A URL is needed only for import. Sync and watch need just the slug. A source cannot coexist with a YouTube publishing destination; PostgreSQL enforces both directions. The backend checks permissions and video allowance when admitting work.
 
-The engine completes the entire playlist scan before reconciling canonical item URLs. New videos become episodes. Removed videos are deleted only when owned by the current playlist. Unavailable videos and episodes from other sources are preserved. Playlist order becomes RSS order; real publication dates stay intact. Reordering does not repeat media work.
+The engine completes the entire playlist scan before reconciling canonical item URLs. New videos become episodes. Removed videos are deleted only when imported into this podcast. Unavailable videos and manually uploaded episodes are preserved. Playlist order becomes RSS order; real publication dates stay intact. Reordering does not repeat media work.
 
 For creator-managed podcasts, read or change order through the same ordering API:
 
@@ -139,7 +137,7 @@ listenbox shows order --show field-notes
 listenbox shows order --show field-notes --episode ep_0123456789abcdef --episode ep_fedcba9876543210
 ```
 
-Supplied episodes move to the front in sequence; other episodes retain their relative order. Disconnect a source before managing that podcast's order by hand.
+Supplied episodes move to the front in sequence; other episodes retain their relative order. Sync restores playlist order for imported podcasts.
 
 ## Interrupted work
 

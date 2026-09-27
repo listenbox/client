@@ -1,5 +1,7 @@
 //! Manual visual inspection of the production components with explicitly synthetic fixtures.
 #![allow(dead_code)]
+#[path = "../src/artwork.rs"]
+mod artwork;
 #[path = "../src/platform.rs"]
 mod platform;
 #[path = "../src/quit.rs"]
@@ -13,6 +15,30 @@ mod workspace {
         view.quit_notice = Some(crate::quit::QuitNotice::new(cx.background_executor().now()));
     }
 
+    pub fn show_error(view: &mut Workspace) {
+        view.import_open = true;
+        view.error = Some("Enter a public YouTube playlist URL.".into());
+        view.catalog.shows[0].image_url = Some("https://artwork.example.test/missing.png".into());
+    }
+
+    pub fn show_import(view: &mut Workspace) {
+        view.import_open = true;
+    }
+
+    pub fn show_selected_team(view: &mut Workspace) {
+        view.team = view.catalog.import_team.clone();
+    }
+
+    pub fn show_team_menu(view: &mut Workspace) {
+        view.team_picker = true;
+        view.catalog
+            .teams
+            .push(listenbox_sync_engine::publicapi::ClientTeam {
+                id: "team_fedcba9876543210".into(),
+                name: "Independent audio and video productions".into(),
+            });
+    }
+
     pub fn populate(view: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
         view.catalog.teams = vec![listenbox_sync_engine::publicapi::ClientTeam {
             id: "team_0123456789abcdef".into(),
@@ -21,9 +47,25 @@ mod workspace {
         view.catalog.shows = vec![serde_json::from_value(serde_json::json!({
             "id": "shw_0123456789abcdef", "team_id": "team_0123456789abcdef",
             "title": "Field Notes", "slug": "field-notes", "language": "en", "source_kind": "audio",
-            "has_active_subscription": true, "youtube_destination": false,
-            "youtube_source_url": "https://www.youtube.com/playlist?list=PLpreview"
+            "has_active_subscription": true, "image_url":"https://artwork.example.test/podcast.png",
+            "youtube": {"kind":"import", "source_url":"https://www.youtube.com/playlist?list=PLpreview"}
         })).unwrap()];
+        view.catalog.import_team = Some("team_0123456789abcdef".into());
+        for (id, slug, title) in [
+            (
+                "shw_0123456789abcdea",
+                "workshop",
+                "Conversations from the workshop",
+            ),
+            ("shw_0123456789abcdeb", "outside", "Outside the studio"),
+        ] {
+            let mut show = view.catalog.shows[0].clone();
+            show.id = id.into();
+            show.slug = slug.into();
+            show.title = title.into();
+            show.image_url = None;
+            view.catalog.shows.push(show);
+        }
         view.loaded = true;
         view.select(Some("field-notes".into()), window, cx);
         let manager = view.client.downloads();
@@ -71,6 +113,23 @@ fn main() -> anyhow::Result<()> {
         gpui_kit::platform::current_headless_renderer,
     );
     cx.update(gpui_kit::init);
+    cx.update(|cx| {
+        cx.set_http_client(gpui_kit::http_client::FakeHttpClient::create(
+            |request| async move {
+                if request.uri().path().ends_with("missing.png") {
+                    return Ok(gpui_kit::http_client::Response::builder()
+                        .status(404)
+                        .body(Default::default())?);
+                }
+                Ok(gpui_kit::http_client::Response::builder()
+                    .status(200)
+                    .header("Content-Type", "image/png")
+                    .body(gpui_kit::http_client::AsyncBody::from(
+                        include_bytes!("../tests/fixtures/podcast.png").to_vec(),
+                    ))?)
+            },
+        ))
+    });
     std::fs::create_dir_all("dist/preview")?;
     for (name, mode, width, height, populated, quitting) in [
         ("welcome", ThemeMode::Light, 1080., 760., false, false),
@@ -83,6 +142,10 @@ fn main() -> anyhow::Result<()> {
             false,
         ),
         ("workspace-dark", ThemeMode::Dark, 840., 760., true, false),
+        ("team-menu", ThemeMode::Light, 840., 600., true, false),
+        ("import-light", ThemeMode::Light, 1080., 760., true, false),
+        ("import-dark", ThemeMode::Dark, 840., 600., true, false),
+        ("import-error", ThemeMode::Light, 840., 600., true, false),
         ("quit-light", ThemeMode::Light, 1080., 760., false, true),
         ("quit-dark", ThemeMode::Dark, 840., 600., true, true),
     ] {
@@ -101,6 +164,18 @@ fn main() -> anyhow::Result<()> {
                 );
                 if populated {
                     workspace::populate(&mut view, window, cx);
+                }
+                if name.starts_with("import-") {
+                    workspace::show_import(&mut view);
+                }
+                if name == "import-error" {
+                    workspace::show_error(&mut view);
+                }
+                if name == "team-menu" {
+                    workspace::show_team_menu(&mut view);
+                }
+                if name == "workspace-dark" {
+                    workspace::show_selected_team(&mut view);
                 }
                 if quitting {
                     workspace::show_quit_notice(&mut view, cx);

@@ -36,6 +36,18 @@ async fn live_backend(cx: &mut TestAppContext) {
     });
     let workspace = workspace.unwrap();
     wait_for(cx, &workspace, |view| !view.loading).await;
+    // Catalog loading starts sync automatically without an opt-in control.
+    wait_for(cx, &workspace, |view| {
+        view.jobs.is_empty() && !view.reports.is_empty()
+    })
+    .await;
+    assert!(cx.update(|cx| {
+        workspace
+            .read(cx)
+            .reports
+            .values()
+            .any(|report| report.starts_with("1 added"))
+    }));
     cx.update_window(handle.into(), |_, window, cx| {
         let view = workspace.read(cx);
         assert!(view.loaded, "catalog failed: {:?}", view.error);
@@ -43,6 +55,7 @@ async fn live_backend(cx: &mut TestAppContext) {
         assert_eq!(view.catalog.shows.len(), 1);
         window.render_frame(cx);
         assert_ne!(window.find("sync-now").disabled(), Some(true));
+        assert!(window.try_find("keep-syncing").is_none());
         window.click("team-picker", cx);
         let team_id = workspace.read(cx).catalog.teams[0].id.clone();
         window.click(SharedString::from(format!("team-{team_id}")), cx);
@@ -59,7 +72,7 @@ async fn live_backend(cx: &mut TestAppContext) {
         assert!(
             view.reports
                 .values()
-                .any(|report| report.starts_with("1 added")),
+                .any(|report| report.starts_with("0 added")),
             "reports: {:?}",
             view.reports
         );
@@ -76,6 +89,84 @@ async fn live_backend(cx: &mut TestAppContext) {
     })
     .await;
     assert!(!cx.update(|cx| workspace.read(cx).client.has_credentials()));
+    cancel.cancel();
+}
+
+#[gpui_kit::test]
+#[ignore = "requires the parent workspace's ephemeral Listenbox services"]
+async fn live_import(cx: &mut TestAppContext) {
+    let runtime = Arc::new(tokio::runtime::Runtime::new().unwrap());
+    let config = Config::load(None).unwrap();
+    let source = std::fs::read_to_string(config.directory.join("test-playlist-url")).unwrap();
+    let client = Client::desktop(config).unwrap();
+    let cancel = CancellationToken::new();
+    cx.update(gpui_kit::init);
+    cx.executor().allow_parking();
+    let mut view = None;
+    let handle = cx.open_window(size(px(840.), px(600.)), |window, cx| {
+        tokens::apply(window, cx);
+        let entity = cx.new(|cx| {
+            Workspace::new(
+                client,
+                runtime.clone(),
+                cancel.clone(),
+                TaskTracker::new(),
+                window,
+                cx,
+            )
+        });
+        view = Some(entity.clone());
+        Root::new(entity, window, cx)
+    });
+    let view = view.unwrap();
+    wait_for(cx, &view, |view| !view.loading).await;
+    cx.update_window(handle.into(), |_, window, cx| {
+        assert!(view.read(cx).loaded, "{:?}", view.read(cx).error);
+        assert!(
+            view.read(cx).catalog.shows.is_empty(),
+            "ordinary podcast leaked into sync library"
+        );
+        window.render_frame(cx);
+        window.click("playlist-url", cx);
+        window.input(&source, cx);
+        window.click("start-import", cx);
+        assert!(
+            view.read(cx).importing,
+            "import did not start: {:?}",
+            view.read(cx).error
+        );
+    })
+    .unwrap();
+    wait_for(cx, &view, |view| !view.importing).await;
+    cx.update_window(handle.into(), |_, window, cx| {
+        let state = view.read(cx);
+        assert!(state.error.is_none(), "{:?}", state.error);
+        assert_eq!(state.catalog.shows.len(), 1);
+        assert_eq!(
+            state.show().unwrap().youtube_source(),
+            Some(source.as_str())
+        );
+        assert!(
+            state
+                .reports
+                .values()
+                .any(|report| report.starts_with("1 added")),
+            "{:?}",
+            state.reports
+        );
+        window.render_frame(cx);
+        assert!(window.try_find("save-source").is_none());
+        window.click("sync-now", cx);
+        assert_eq!(view.read(cx).jobs.len(), 1);
+    })
+    .unwrap();
+    wait_for(cx, &view, |view| view.jobs.is_empty()).await;
+    assert!(cx.update(|cx| {
+        view.read(cx)
+            .reports
+            .values()
+            .any(|report| report.starts_with("0 added"))
+    }));
     cancel.cancel();
 }
 
@@ -327,4 +418,70 @@ fn advance_quit_clock(cx: &TestAppContext, elapsed: Duration) {
     while cx.executor().tick() {}
     cx.executor().advance_clock(elapsed);
     while cx.executor().tick() {}
+}
+
+#[gpui_kit::test]
+fn library_filters_connections_and_shares_artwork_requests(cx: &mut TestAppContext) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let count = Arc::new(AtomicUsize::new(0));
+    let requests = count.clone();
+    cx.update(|cx| {
+        cx.set_http_client(gpui_kit::http_client::FakeHttpClient::create(move |_| {
+            requests.fetch_add(1, Ordering::SeqCst);
+            async {
+                Ok(gpui_kit::http_client::Response::builder()
+                    .status(200)
+                    .header("Content-Type", "image/png")
+                    .body(gpui_kit::http_client::AsyncBody::from(
+                        include_bytes!("../../tests/fixtures/podcast.png").to_vec(),
+                    ))?)
+            }
+        }))
+    });
+    let (_profile, handle, view) = quit_workspace(cx);
+    let shows = ["import", "none", "destination"].into_iter().map(|kind| {
+        let mut connection = serde_json::json!({"kind":kind});
+        if kind == "import" { connection["source_url"] = "https://www.youtube.com/playlist?list=PLabc".into(); }
+        serde_json::from_value(serde_json::json!({
+            "id":"shw_0123456789abcdef", "team_id":"team_0123456789abcdef", "slug":kind,
+            "title":"Podcast artwork", "language":"en", "source_kind":"audio",
+            "has_active_subscription":true, "image_url":"https://artwork.example.test/podcast.png", "youtube":connection
+        })).unwrap()
+    }).collect();
+    cx.update_window(handle.into(), |_, window, cx| {
+        view.update(cx, |view, cx| {
+            view.receive(
+                Message::Catalog(Ok(Catalog {
+                    shows,
+                    ..Default::default()
+                })),
+                window,
+                cx,
+            )
+        });
+        assert_eq!(view.read(cx).catalog.shows.len(), 1);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle.into(), |_, window, cx| window.render_frame(cx))
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        count.load(Ordering::SeqCst),
+        1,
+        "sidebar and header must share one image request"
+    );
+    cx.update_window(handle.into(), |_, window, cx| {
+        let cache = view.read(cx).artwork_cache.clone();
+        cache.update(cx, |cache, cx| cache.clear(window, cx));
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        count.load(Ordering::SeqCst),
+        2,
+        "reload must refresh stale artwork"
+    );
 }

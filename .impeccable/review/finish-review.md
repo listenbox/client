@@ -1,33 +1,52 @@
 disposition: ship
 
-## persistence
+## Scope and evidence
 
-pass — `PRODUCT.md` exists; this is the declared code-led extension with FORM seed key `existing-listenbox-native-workspace`; `DESIGN.md`, `.impeccable/design.json`, the desktop surface brief, and `docs/client-design.md` provide a consistent Listenbox native direction. No comp round or build-state packet is required for this code-led path. The three named captures are present and valid. No hook findings were supplied, and no native detector ran.
+Native GPUI desktop interface with a desktop-specific design system and shared
+Listenbox color/contrast roles. The final sidebar review inspected production
+components in light and dark appearance, a selected team, long team and podcast
+names, expanded team choices, artwork placeholders and validation feedback at
+1080px and 840px widths, including the 600px minimum height.
 
-## fidelity
+The approved direction is explicit: teams lead the hierarchy; the team heading
+is bold and left aligned; Import playlist is a charcoal button underneath.
+The application toolbar, team text, artwork and footer use aligned content
+edges. This supersedes the centered picker and quiet import action from the
+previous review. One batched capture of the updated composition was inspected;
+no additional visual corrections were needed.
 
-| Element | disposition | evidence |
-| --- | --- | --- |
-| Topology and reading order | match | The 240-point rail, toolbar, selected-show pane, source field/action row, and transfer section follow the FIRST VIEWPORT contract in both populated captures. |
-| Navigation and team picker | match | Pale/silver rail, white team control, selected show row, and live team/show affordances use the established dashboard structure. |
-| Toolbar/account actions | match | `Podcasts` title, `Reload`, and sign-in/log-out action occupy the quiet bordered toolbar with the expected hierarchy. |
-| Show configuration | match | The 30-point show title, audio descriptor, YouTube playlist field, save/disconnect actions, and paid-plan/source constraints are present and legible. |
-| Sync action hierarchy | match | `Sync now` is the charcoal primary action; `Keep syncing`, `Stop`, and queue controls remain secondary and spatially stable. |
-| Transfer queue | match | Flat divider rows align title/source copy with right-side status, measured progress, byte totals, throughput, and pause/resume queue control. |
-| Typography | match | Native system sans, weight/scale steps, and restrained supporting copy agree with DESIGN.md and the native direction. |
-| Material | match | Surfaces are flat GPUI Kit controls with tonal separation and quiet borders; no simulated texture, bevel, gradient, or Mazit visual treatment appears. |
-| Ground | match | Light captures use achromatic near-white/silver surfaces; dark capture uses neutral charcoal sheets and rail with no warm or colored cast. |
-| Native shell | adaptation | The titlebar, macOS Listenbox menu, status item, close-to-hide behavior, and Cmd-Q guard are implemented in the platform/lifecycle sources; these OS chrome details are outside the headless content captures. |
-| Added or missing elements | match | No unapproved element, signature omission, or contradicted region is visible in the supplied evidence. |
+Captures are reproducible with `moon run desktop:preview`. Current representative
+captures are committed alongside this review; the complete set lives under
+`crates/desktop/dist/preview/`.
 
-## ceiling
+## Findings resolved
 
-reached — Native system type, system light/dark appearance, titlebar/window bounds, macOS app menu/status item, tonal rail depth, quiet borders, and the queue’s live operational state are all used. The low ornament density is intentional for the Operate surface; no unused native device is material.
+- GPUI Kit's internal centered label container caused outer `.justify_start()`
+  to have no effect. Full-width child content now owns navigation alignment,
+  with explicit accessible names and trailing chevron/plus affordances.
+- The team heading has more weight than the application label. Team choices
+  remain left aligned and scroll within a bounded region. Import belongs below
+  this scope and above the podcast list.
+- Sidebar spacing now distinguishes application chrome, team controls and
+  artwork rows. Named dimensions and composition rules live in the desktop
+  DESIGN.md and tokens.rs.
+- Only YouTube imports appear. The source is read-only; sync starts automatically
+  and runs hourly. Sync now requests another pass. There is no Keep syncing.
+- Artwork has a shared cover crop at 44px and 120px, rounded corners and stable
+  loading/error placeholders. Requests are coalesced by a bounded image cache.
+- Charcoal/white primary buttons, dark-theme controls and field edges have
+  explicit contrast roles. Validation feedback precedes the form and is visible
+  at minimum height.
 
-## material_fixes
+## Verification and limits
 
-none — evidence, persistence, fidelity, contract promises, truth labeling, and the craft-floor checks are clear.
+Headless GPUI tests cover catalog filtering, controls, cache coalescing and
+refresh, automatic initial sync, fresh import and logout draining. Parent API
+E2E scenarios exercise real Rust clients against isolated local services and
+verify published state, immutable ownership and interruption recovery.
+Engine clock tests use controllable time rather than production waits.
 
-## keep
-
-Keep the 240-point rail, achromatic semantic token projection, quiet border depth, native system typography, and flat transfer hierarchy intact while integrating the remaining product documentation and release work.
+Preview data and artwork are synthetic fixtures; raster provenance is recorded
+in `crates/desktop/tests/fixtures/README.md`. Native OS titlebar/menu/status-item
+behavior is outside the headless visual review. No blanket web contrast audit
+is claimed; the shared design files record the cross-surface contrast contract.
