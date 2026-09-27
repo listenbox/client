@@ -42,14 +42,18 @@ and parent checkouts. Existing artifacts are not automatically removed. After
 stopping builds in a worktree, `cargo clean` from this directory reclaims its
 build artifacts. FFmpeg's native build remains in this checkout's `.cache/ffmpeg`.
 
-CI and release jobs cache Cargo downloads separately from compiled artifacts.
-The download key uses the OS, target triple, and `Cargo.lock`, with a prefix
-restore to reuse unchanged crates after dependency updates. Each job fetches
-only its target's locked dependencies and saves the cache before compiling, so
-later build or test failures do not discard the downloads. The cache contains
-registry indexes, compressed crates, and Git databases; unpacked sources are
-recreated locally. Toolchain, build configuration, and FFmpeg changes invalidate
-build caches without invalidating downloads.
+CI and release jobs restore Cargo downloads, unpacked sources, and compiled
+artifacts together. Cargo fetches dependencies as the selected Moon tasks need
+them; there is no workspace-wide prefetch step. Cache prefixes keep the platform,
+Rust toolchain, and native build configuration fixed while allowing unchanged
+dependencies to be reused after lockfile updates. Windows also keys on the MSVC
+toolchain version.
+
+Linux CI and macOS releases also retain Moon's content-hashed output archives.
+Moon can restore a matching FFmpeg build into a fresh checkout instead of
+rebuilding the restored libraries. Native preparation remains a prerequisite:
+missing archives or changed task inputs still run the real build. Windows keeps
+its separate FFmpeg cache and existing save-before-Rust-build behavior.
 
 ### Desktop releases
 
