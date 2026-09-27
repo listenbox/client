@@ -4444,14 +4444,17 @@ name = "listenbox-desktop"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "embed-resource",
  "futures-util",
  "gpui-kit",
+ "image",
  "listenbox-sync-engine",
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
  "objc2-core-graphics",
  "parking_lot",
  "raw-window-handle",
+ "resvg 0.46.0",
  "serde_json",
  "tempfile",
  "tokio",

@@ -72,7 +72,9 @@ moon run desktop:build-release-windows-arm64
 
 Outputs are in `crates/desktop/dist/`. FFmpeg and the MSVC runtime are linked statically. Each Windows target has its own FFmpeg cache, separate from the native macOS/Linux build. GPUI compiles its release shaders using the Windows SDK, so these tasks must run on Windows. The client profile is `%USERPROFILE%\.config\listenbox` on Windows; `LISTENBOX_PROFILE_DIR` overrides it on all platforms.
 
-Listenbox opens without a console window and keeps a system tray icon while running. Closing the window with X hides it and keeps synchronization running. Click the tray icon to reopen the window, or right-click it for Open Listenbox, Log out, and Quit Listenbox. Quit waits for active work to shut down cleanly. Windows may place the icon in the tray's hidden-icons overflow.
+Listenbox opens without a console window and keeps a system tray icon while running. Closing the window with X hides it and keeps synchronization running. Click the tray icon to reopen the window, or right-click it for Open Listenbox and Quit Listenbox. The macOS menu-bar icon offers the same two actions. Quit waits for active work to shut down cleanly. Windows may place the icon in the tray's hidden-icons overflow.
+
+Desktop icon artwork lives in `crates/desktop/assets/icon.png`. macOS packages it directly; the desktop Cargo build generates a multi-resolution Windows ICO from the same image and embeds it as resource 1 for Explorer, the window, and the taskbar. `assets/tray.svg` adapts the shared web favicon's L-and-dot geometry without its tile background. The build renders a 36px macOS template (18pt at Retina scale) and a 32px Windows mark with a contrasting outline for light and dark taskbars. Generated ICO, PNG previews, and embedded RGBA pixels live in Cargo's build output directory; edit the source artwork to regenerate them.
 
 ## Desktop development
 
@@ -135,7 +137,7 @@ Supplied episodes move to the front in sequence; other episodes retain their rel
 
 Both interfaces use the engine's persistent sync path. It opens `~/.config/listenbox/sync.sqlite` only for sync work and keeps media under `~/.config/listenbox/transfers`. Refinery applies embedded SQL migrations with strict history validation. Neither interface accesses SQLite directly.
 
-One writer connection serializes changes; pooled read-only connections read concurrently through WAL. FULL synchronous commits and macOS full-fsync preserve acknowledged checkpoints. Closing the desktop window leaves sync running. The menu-bar icon reopens it; Log out and Quit cancel active work and wait for admitted writes and processing to finish. A second ⌘Q press within one second or holding it for two seconds confirms keyboard quit; quitting waits for key release. Log out removes the shared credential, keeping resumable work.
+One writer connection serializes changes; pooled read-only connections read concurrently through WAL. FULL synchronous commits and macOS full-fsync preserve acknowledged checkpoints. Closing the desktop window leaves sync running. The menu-bar icon offers Open Listenbox and Quit Listenbox. Quit cancels active work and waits for admitted writes and processing to finish. A second ⌘Q press within one second or holding it for two seconds confirms keyboard quit; quitting waits for key release. Log out from the account controls also drains active work and removes the shared credential, keeping resumable work.
 
 Verified download ranges, prepared files, transfer UUIDs, upload sessions and acknowledged parts survive interruption. Restarting checks saved work against the live backend before resuming. An OS lock per server and show prevents simultaneous CLI and desktop work on that show. Slots adapt to measured throughput across podcasts. Pausing stops new admissions; stopping a sync preserves its work.
 

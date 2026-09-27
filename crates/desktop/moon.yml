@@ -6,6 +6,8 @@ taskOptions:
   cache: true
 fileGroups:
   sources:
+    - assets/**/*
+    - build.rs
     - src/**/*.rs
     - tests/**/*
     - examples/**/*.rs

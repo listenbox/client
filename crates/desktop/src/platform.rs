@@ -90,11 +90,9 @@ mod status_item {
     pub(super) fn install(view: &Entity<Workspace>, cx: &mut App) {
         let menu = TrayMenu::new();
         let open = TrayMenuItem::new("Open Listenbox", true, None);
-        let logout = TrayMenuItem::new("Log out", true, None);
         let quit = TrayMenuItem::new("Quit Listenbox", true, None);
-        menu.append_items(&[&open, &logout, &quit])
-            .expect("status menu");
-        let (open, logout, quit) = (open.id().clone(), logout.id().clone(), quit.id().clone());
+        menu.append_items(&[&open, &quit]).expect("status menu");
+        let (open, quit) = (open.id().clone(), quit.id().clone());
         let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
         #[cfg(target_os = "windows")]
         {
@@ -123,8 +121,6 @@ mod status_item {
                 cx.update(|cx| {
                     if id == open {
                         super::show_window(cx);
-                    } else if id == logout {
-                        view.update(cx, |view, cx| view.shutdown(Shutdown::Logout, cx));
                     } else if id == quit {
                         view.update(cx, |view, cx| view.shutdown(Shutdown::Quit, cx));
                     }
@@ -132,23 +128,20 @@ mod status_item {
             }
         })
         .detach();
-        // macOS supplies the template color. Windows uses a blue waveform that
-        // remains visible on both light and dark taskbars.
-        let mut pixels = vec![0; 22 * 22 * 4];
-        for (x, height) in [(3, 6), (7, 12), (11, 18), (15, 10), (19, 4)] {
-            for y in (22 - height) / 2..(22 + height) / 2 {
-                for dx in 0..2 {
-                    let offset = (y * 22 + x + dx) * 4;
-                    #[cfg(target_os = "windows")]
-                    pixels[offset..offset + 3].copy_from_slice(&[105, 126, 249]);
-                    pixels[offset + 3] = 255;
-                }
-            }
-        }
+        #[cfg(target_os = "macos")]
+        let (pixels, size) = (
+            include_bytes!(concat!(env!("OUT_DIR"), "/tray-macos.rgba")).as_slice(),
+            36,
+        );
+        #[cfg(target_os = "windows")]
+        let (pixels, size) = (
+            include_bytes!(concat!(env!("OUT_DIR"), "/tray-windows.rgba")).as_slice(),
+            32,
+        );
         let builder = TrayIconBuilder::new()
             .with_menu(Box::new(menu))
             .with_tooltip("Listenbox — YouTube to podcast sync")
-            .with_icon(Icon::from_rgba(pixels, 22, 22).expect("status icon pixels"));
+            .with_icon(Icon::from_rgba(pixels.to_vec(), size, size).expect("status icon pixels"));
         #[cfg(target_os = "macos")]
         let builder = builder.with_icon_as_template(true);
         #[cfg(target_os = "windows")]

@@ -4,6 +4,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[build-dependencies]
+embed-resource = "3"
+image = { version = "0.25", default-features = false, features = ["ico", "png"] }
+resvg = { version = "0.46", default-features = false }
+
 [dependencies]
 listenbox-sync-engine = { path = "../sync-engine" }
 gpui-kit = "=0.6.6"

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="36 36 128 128">
+  <!-- Favicon geometry, cropped for a legible standalone menu-bar mark. -->
+  <path d="M64 44h8a14 14 0 0 1 14 14v54a8 8 0 0 0 8 8h42a14 14 0 0 1 14 14v8a14 14 0 0 1-14 14H64a14 14 0 0 1-14-14V58a14 14 0 0 1 14-14Z" />
+  <rect x="114" y="44" width="36" height="36" rx="12" />
+</svg>
