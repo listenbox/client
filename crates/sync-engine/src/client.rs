@@ -55,7 +55,12 @@ impl Client {
         cancel: CancellationToken,
         open_browser: impl FnMut(&str),
     ) -> Result<()> {
-        auth::login_with(&mut self.api(cancel)?, open_browser).await
+        auth::login_with(
+            &mut self.api(cancel)?,
+            p::AuthorizationClient::Desktop,
+            open_browser,
+        )
+        .await
     }
     pub async fn catalog(&self, cancel: CancellationToken) -> Result<Catalog> {
         let api = self.api(cancel)?;
