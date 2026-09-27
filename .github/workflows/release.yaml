@@ -18,15 +18,17 @@ jobs:
         with:
           moon-version: '2.5.5'
       - run: rustup toolchain install 1.98.1 --profile minimal
-      - uses: actions/cache@v6
+      - name: Cache Rust builds and Moon outputs
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
-            .cache/ffmpeg
+            .moon/cache/outputs
             ~/.pkgx
-          key: release-macos-arm64-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'tools/native-ffmpeg.rs') }}
+          key: release-macos-arm64-v3-${{ hashFiles('.cargo/config.toml', 'rust-toolchain.toml', 'tools/native-ffmpeg.rs') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'moon.yml', '.moon/**/*.yml', '.github/workflows/ci.yaml', '.github/workflows/release.yaml') }}
+          restore-keys: release-macos-arm64-v3-${{ hashFiles('.cargo/config.toml', 'rust-toolchain.toml', 'tools/native-ffmpeg.rs') }}-
       - name: Build Apple Silicon DMG
         run: moon exec --ignore-ci-checks desktop:dmg
       - uses: actions/upload-artifact@v7
@@ -94,19 +96,15 @@ jobs:
           $vsVersion = & $vswhere -latest -products '*' -requires "Microsoft.VisualStudio.Component.VC.Tools.$component" -property installationVersion
           if ($LASTEXITCODE -ne 0 -or -not $vsVersion) { throw 'Visual Studio build tools are missing.' }
           "native-toolchain=$vsVersion" >> $env:GITHUB_OUTPUT
-      - name: Cache Cargo downloads
+      - name: Cache Rust builds
         uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: windows-cargo-downloads-${{ hashFiles('Cargo.lock') }}
-          restore-keys: windows-cargo-downloads-
-      - name: Cache compiled Rust dependencies
-        uses: actions/cache@v6
-        with:
-          path: target
-          key: windows-rust-${{ matrix.target }}-${{ steps.version.outputs.native-toolchain }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', '.cargo/config.toml', 'tools/native-ffmpeg.rs', 'tools/build-windows.ps1') }}
+            target
+          key: windows-rust-v3-${{ matrix.target }}-${{ steps.version.outputs.native-toolchain }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'tools/native-ffmpeg.rs', 'tools/build-windows.ps1') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}
+          restore-keys: windows-rust-v3-${{ matrix.target }}-${{ steps.version.outputs.native-toolchain }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'tools/native-ffmpeg.rs', 'tools/build-windows.ps1') }}-
       - name: Restore FFmpeg
         id: ffmpeg-cache
         uses: actions/cache/restore@v6

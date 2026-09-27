@@ -19,15 +19,19 @@ jobs:
         with:
           moon-version: "2.5.5"
       - run: rustup toolchain install 1.98.1 --profile minimal --component clippy,rustfmt
-      - uses: actions/cache@v6
+      - name: Cache Rust builds and Moon outputs
+        uses: actions/cache@v6
         with:
+          # Restore sources with their compiled artifacts; Cargo fetches only
+          # what the affected tasks need. Moon hydrates matching native outputs.
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
-            .cache/ffmpeg
+            .moon/cache/outputs
             ~/.pkgx
-          key: rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'tools/native-ffmpeg.rs') }}
+          key: rust-v3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.cargo/config.toml', 'rust-toolchain.toml', 'tools/native-ffmpeg.rs') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'moon.yml', '.moon/**/*.yml', '.github/workflows/ci.yaml') }}
+          restore-keys: rust-v3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.cargo/config.toml', 'rust-toolchain.toml', 'tools/native-ffmpeg.rs') }}-
       - name: Check affected tasks
         id: ci
         run: moon ci

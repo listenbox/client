@@ -24,6 +24,37 @@ The debug app is `crates/desktop/dist/listenbox-desktop`; the terminal executabl
 
 FFmpeg 9.0.2 is built from verified source by `tools/native-ffmpeg.rs`, linked with `ffmpeg-the-third`, and never run as a subprocess. The physical `youtubei` crate embeds a verified upstream bundle in QuickJS. Both applications are self-contained. See `THIRD-PARTY-NOTICES.txt` and the packaged FFmpeg source/license notice.
 
+### Worktree disk usage
+
+Cargo downloads are shared through `registry` and `git` under `CARGO_HOME`
+(normally `~/.cargo`). Build artifacts stay in this checkout's `target/` so
+different worktrees can compile independently. Do not share `CARGO_TARGET_DIR`
+or `build.build-dir`: Cargo's build-directory lock would queue those builds.
+
+`.cargo/config.toml` disables incremental compilation to avoid its extra disk
+state. Cargo still reuses unchanged dependencies and crate artifacts; editing a
+crate can take longer to rebuild. The development profile already disables debug
+information. Compiler wrappers such as `sccache` save compilation time but still
+materialize artifacts in each worktree, so they do not eliminate disk duplication.
+
+The policy applies to both direct Cargo commands and Moon tasks, in standalone
+and parent checkouts. Existing artifacts are not automatically removed. After
+stopping builds in a worktree, `cargo clean` from this directory reclaims its
+build artifacts. FFmpeg's native build remains in this checkout's `.cache/ffmpeg`.
+
+CI and release jobs restore Cargo downloads, unpacked sources, and compiled
+artifacts together. Cargo fetches dependencies as the selected Moon tasks need
+them; there is no workspace-wide prefetch step. Cache prefixes keep the platform,
+Rust toolchain, and native build configuration fixed while allowing unchanged
+dependencies to be reused after lockfile updates. Windows also keys on the MSVC
+toolchain version.
+
+Linux CI and macOS releases also retain Moon's content-hashed output archives.
+Moon can restore a matching FFmpeg build into a fresh checkout instead of
+rebuilding the restored libraries. Native preparation remains a prerequisite:
+missing archives or changed task inputs still run the real build. Windows keeps
+its separate FFmpeg cache and existing save-before-Rust-build behavior.
+
 ### Desktop releases
 
 Every push to `master` builds and publishes one prerelease on [GitHub Releases](https://github.com/listenbox/client/releases) containing an Apple Silicon DMG and Windows x64 and ARM64 builds. Its version is the desktop package version resolved by Cargo plus the first 12 characters of the commit SHA, such as `0.1.0+abcdef123456`, with release tag `desktop-v0.1.0+abcdef123456`. Choose the DMG for Apple Silicon Macs, `listenbox-desktop-windows-x64.zip` for Intel/AMD PCs or `listenbox-desktop-windows-arm64.zip` for native Windows ARM64, including Windows 11 ARM in VMware Fusion on Apple Silicon. Both Windows archives include the executable and license notices; matching `.exe` assets are also available to run directly. Windows 11 ARM can also run the x64 version through emulation. The Windows executables are unsigned; signing is not configured. Each Windows build checks its architecture, runtime DLL dependencies and `--help` startup. Interactive Windows testing remains necessary.
@@ -59,7 +90,7 @@ moonx desktop:dev
 
 This follows [Mazit's watchexec workflow](https://github.com/meoyawn/mazit/blob/main/Taskfile.yaml): source changes rebuild and restart the debug app after a 300 ms debounce. Changes to engine and YouTube code, migrations, assets, Cargo manifests, and local config are watched too. Failed builds leave the watcher running for the next edit. Quit Listenbox ends the watcher; closing the window keeps the app running. Ctrl-C stops the watcher and app. Restart signals use the app's normal cancel-and-drain path, with a five-second force-stop guard; the engine recovers interrupted work from its journal.
 
-The watched crate directories come from `cargo metadata`, following the desktop's transitive local dependencies. There is no hand-maintained crate list, and CLI source edits do not restart the desktop. Cargo handles incremental compilation through `desktop:build`. Restart `moonx desktop:dev` after adding or removing a local crate dependency so it discovers the changed dependency graph.
+The watched crate directories come from `cargo metadata`, following the desktop's transitive local dependencies. There is no hand-maintained crate list, and CLI source edits do not restart the desktop. Cargo reuses unchanged crate artifacts through `desktop:build`. Restart `moonx desktop:dev` after adding or removing a local crate dependency so it discovers the changed dependency graph.
 
 `config/dev.yaml` points at `http://localhost:8080` (public API) and `http://localhost:5174` (dashboard sign-in), with API trace IDs enabled. The watcher sets `LISTENBOX_PROFILE_DIR` to this checkout's `.cache/dev`, isolating credentials and resumable work from the normal production profile. To use the same dev login from the CLI, run from the client repository:
 

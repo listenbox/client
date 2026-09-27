@@ -1,5 +1,7 @@
 [build]
 jobs = 8
+# Keep worktree builds independent without retaining extra incremental artifacts.
+incremental = false
 
 [env]
 FFMPEG_DIR = { value = ".cache/ffmpeg", relative = true }
