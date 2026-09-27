@@ -42,6 +42,15 @@ and parent checkouts. Existing artifacts are not automatically removed. After
 stopping builds in a worktree, `cargo clean` from this directory reclaims its
 build artifacts. FFmpeg's native build remains in this checkout's `.cache/ffmpeg`.
 
+CI and release jobs cache Cargo downloads separately from compiled artifacts.
+The download key uses the OS, target triple, and `Cargo.lock`, with a prefix
+restore to reuse unchanged crates after dependency updates. Each job fetches
+only its target's locked dependencies and saves the cache before compiling, so
+later build or test failures do not discard the downloads. The cache contains
+registry indexes, compressed crates, and Git databases; unpacked sources are
+recreated locally. Toolchain, build configuration, and FFmpeg changes invalidate
+build caches without invalidating downloads.
+
 ### Desktop releases
 
 Every push to `master` builds and publishes one prerelease on [GitHub Releases](https://github.com/listenbox/client/releases) containing an Apple Silicon DMG and Windows x64 and ARM64 builds. Its version is the desktop package version resolved by Cargo plus the first 12 characters of the commit SHA, such as `0.1.0+abcdef123456`, with release tag `desktop-v0.1.0+abcdef123456`. Choose the DMG for Apple Silicon Macs, `listenbox-desktop-windows-x64.zip` for Intel/AMD PCs or `listenbox-desktop-windows-arm64.zip` for native Windows ARM64, including Windows 11 ARM in VMware Fusion on Apple Silicon. Both Windows archives include the executable and license notices; matching `.exe` assets are also available to run directly. Windows 11 ARM can also run the x64 version through emulation. The Windows executables are unsigned; signing is not configured. Each Windows build checks its architecture, runtime DLL dependencies and `--help` startup. Interactive Windows testing remains necessary.

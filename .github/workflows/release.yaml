@@ -18,15 +18,17 @@ jobs:
         with:
           moon-version: '2.5.5'
       - run: rustup toolchain install 1.98.1 --profile minimal
-      - uses: actions/cache@v6
+      - uses: ./.github/actions/cargo-downloads
+        with:
+          target: aarch64-apple-darwin
+      - name: Cache build artifacts
+        uses: actions/cache@v6
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
             target
             .cache/ffmpeg
             ~/.pkgx
-          key: release-macos-arm64-${{ hashFiles('.cargo/config.toml', 'Cargo.lock', 'rust-toolchain.toml', 'tools/native-ffmpeg.rs') }}
+          key: release-macos-arm64-build-v2-${{ hashFiles('.cargo/config.toml', 'Cargo.lock', 'rust-toolchain.toml', 'tools/native-ffmpeg.rs') }}
       - name: Build Apple Silicon DMG
         run: moon exec --ignore-ci-checks desktop:dmg
       - uses: actions/upload-artifact@v7
@@ -95,13 +97,9 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or -not $vsVersion) { throw 'Visual Studio build tools are missing.' }
           "native-toolchain=$vsVersion" >> $env:GITHUB_OUTPUT
       - name: Cache Cargo downloads
-        uses: actions/cache@v6
+        uses: ./.github/actions/cargo-downloads
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: windows-cargo-downloads-${{ hashFiles('Cargo.lock') }}
-          restore-keys: windows-cargo-downloads-
+          target: ${{ matrix.target }}
       - name: Cache compiled Rust dependencies
         uses: actions/cache@v6
         with:
