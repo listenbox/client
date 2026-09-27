@@ -52,12 +52,7 @@ pub struct Stream {
 
 impl YouTube {
     pub async fn new(api: &Api) -> Result<Self> {
-        let cookie = crate::cookies::header(&api.config)?;
-        let playback_client = if cookie.is_some() {
-            Client::Web
-        } else {
-            Client::VisionOs
-        };
+        let playback_client = Client::VisionOs;
         let engine = Engine::with_options(EngineOptions::default()).await?;
         let cancel = api.cancel.clone();
         engine
@@ -111,9 +106,12 @@ impl YouTube {
                 lang: Some("en".into()),
                 location: Some("US".into()),
                 cache: Some(cache.as_cache()),
-                cookie,
                 fetch: Some(fetch),
-                ..SessionOptions::local()
+                generate_session_locally: Some(false),
+                fail_fast: Some(true),
+                retrieve_player: Some(false),
+                retrieve_innertube_config: Some(false),
+                ..Default::default()
             },
         )
         .await
@@ -278,7 +276,7 @@ impl YouTube {
             match status.status.as_str() {
                 "OK" => {},
                 "UNPLAYABLE" => return Ok(Playback::Unavailable(status.reason.clone().unwrap_or_else(|| "Video unavailable".into()))),
-                "LOGIN_REQUIRED" => bail!("YouTube requires authentication for {id}: {}. Import YouTube cookies in Settings or run listenbox youtube-cookies import --browser chrome, then sync again", status.reason.as_deref().unwrap_or("Sign in required")),
+                "LOGIN_REQUIRED" => bail!("YouTube rejected anonymous playback for {id}: {}. Check YouTube access on your current network before syncing again", status.reason.as_deref().unwrap_or("Sign in required")),
                 _ => bail!("YouTube could not resolve {id} ({}): {}", status.status, status.reason.as_deref().unwrap_or("No reason supplied")),
             }
             if data.basic_info.is_live.unwrap_or(false) || data.basic_info.is_upcoming.unwrap_or(false) {
@@ -319,7 +317,14 @@ impl YouTube {
                         .context("YouTube video has no audio stream")?,
                 )
             };
-            let published = match data.microformat {
+            // VISIONOS supplies downloadable streams but omits publication dates.
+            // WEB still supplies that metadata when its own playback is unavailable.
+            let metadata = self.client.get_basic_info(id, GetVideoInfoOptions {
+                client: Some(Client::Web),
+                ..Default::default()
+            }).await?.data().await?;
+            ensure!(metadata.basic_info.id.as_deref() == Some(id), "YouTube metadata video ID differs from the requested video");
+            let published = match metadata.microformat {
                 Some(Microformat::PlayerMicroformat(metadata)) => metadata
                     .publish_date
                     .filter(|date| !date.is_empty())

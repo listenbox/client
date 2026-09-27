@@ -35,7 +35,7 @@ tasks:
       export LISTENBOX_DEV_WATCHER_PID=$$
       exec pkgx watchexec@2.7.3 --restart --debounce 300ms --stop-timeout 5s \
         --project-origin . --watch-file .cache/desktop-watch-paths \
-        --watch crates/browser-cookies --watch config --watch tools \
+        --watch config --watch tools \
         --watch Cargo.toml --watch Cargo.lock --watch rust-toolchain.toml \
         --watch .cargo --watch moon.yml --watch .moon/workspace.yml \
         --ignore '**/dist/**' --shell none -- sh tools/dev-desktop.sh

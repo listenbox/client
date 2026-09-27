@@ -11,10 +11,6 @@ mod tokens;
 mod workspace {
     include!("../src/workspace.rs");
 
-    pub fn show_settings(view: &mut Workspace) {
-        view.settings_open = true;
-    }
-
     pub fn show_quit_notice(view: &mut Workspace, cx: &App) {
         view.quit_notice = Some(crate::quit::QuitNotice::new(cx.background_executor().now()));
     }
@@ -149,7 +145,6 @@ fn main() -> anyhow::Result<()> {
     });
     std::fs::create_dir_all("dist/preview")?;
     for (name, mode, width, height, populated, quitting) in [
-        ("settings", ThemeMode::Light, 1080., 960., false, false),
         ("welcome", ThemeMode::Light, 1080., 760., false, false),
         (
             "workspace-light",
@@ -188,9 +183,6 @@ fn main() -> anyhow::Result<()> {
                 }
                 if name == "import-error" {
                     workspace::show_error(&mut view);
-                }
-                if name == "settings" {
-                    workspace::show_settings(&mut view);
                 }
                 if name == "team-menu" {
                     workspace::show_team_menu(&mut view);

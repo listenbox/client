@@ -431,54 +431,6 @@ fn quit_workspace(
     (profile, window, view.unwrap())
 }
 
-#[gpui_kit::test]
-fn settings_imports_scoped_json_and_preserves_session_on_invalid_input(cx: &mut TestAppContext) {
-    let (_profile, handle, workspace) = quit_workspace(cx);
-    cx.update_window(handle.into(), |_, window, cx| {
-        window.click("settings", cx);
-        window.render_frame(cx);
-        assert!(workspace.read(cx).settings_open);
-        workspace.update(cx, |view, cx| view.cookie_json.update(cx, |input, cx| input.set_value(
-            r#"[{"name":"SAPISID","value":"synthetic-ui-session","domain":".youtube.com"},{"name":"unrelated","value":"must-not-save","domain":"example.com"}]"#, window, cx)));
-        window.render_frame(cx);
-        window.dispatch_event(gpui_kit::ScrollWheelEvent {
-            position: point(px(720.), px(420.)),
-            delta: gpui_kit::ScrollDelta::Pixels(point(px(0.), px(-1600.))),
-            ..Default::default()
-        }.to_platform_input(), cx);
-        window.render_frame(cx);
-        window.click("import-json-cookies", cx);
-        let view = workspace.read(cx);
-        assert_eq!(view.cookie_status.as_ref().unwrap().count, 1);
-        assert!(view.cookie_json.read(cx).value().is_empty());
-        workspace.update(cx, |view, cx| view.cookie_json.update(cx, |input, cx| input.set_value("private-invalid-json", window, cx)));
-        window.render_frame(cx);
-        window.dispatch_event(gpui_kit::ScrollWheelEvent {
-            position: point(px(720.), px(420.)),
-            delta: gpui_kit::ScrollDelta::Pixels(point(px(0.), px(-1600.))),
-            ..Default::default()
-        }.to_platform_input(), cx);
-        window.render_frame(cx);
-        window.click("import-json-cookies", cx);
-        let view = workspace.read(cx);
-        assert_eq!(view.client.youtube_cookies().unwrap().unwrap().count, 1);
-        assert!(view.cookie_error.is_some());
-        assert!(!view.cookie_error.as_ref().unwrap().contains("private-invalid-json"));
-        window.render_frame(cx);
-        window.dispatch_event(gpui_kit::ScrollWheelEvent {
-            position: point(px(720.), px(420.)),
-            delta: gpui_kit::ScrollDelta::Pixels(point(px(0.), px(-1600.))),
-            ..Default::default()
-        }.to_platform_input(), cx);
-        window.render_frame(cx);
-        window.click("clear-youtube-cookies", cx);
-        assert!(workspace.read(cx).client.youtube_cookies().unwrap().is_none());
-        window.click("close-settings", cx);
-        assert!(!workspace.read(cx).settings_open);
-        assert!(workspace.read(cx).cookie_json.read(cx).value().is_empty());
-    }).unwrap();
-}
-
 fn advance_quit_clock(cx: &TestAppContext, elapsed: Duration) {
     // Drain runnable tasks without advancing to future timers automatically.
     while cx.executor().tick() {}

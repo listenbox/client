@@ -6,10 +6,8 @@ fileGroups:
   notices: [LICENSE, THIRD-PARTY-NOTICES.txt]
   macos-install-tools: [tools/reinstall-macos*.swift]
   sources:
-    - crates/**/*.json
     - crates/**/*.rs
     - crates/**/*.sql
-    - crates/**/Cargo.lock
     - crates/**/Cargo.toml
     - crates/**/tests/**/*
     - tools/**/*.rs
@@ -67,10 +65,8 @@ tasks:
     script: |-
       set -euo pipefail
       cargo fmt --all
-      cargo fmt --manifest-path crates/browser-cookies/Cargo.toml
       rustfmt --edition 2024 tools/*.rs
       pkgx shellcheck tools/*.sh
-      cargo clippy --locked --manifest-path crates/browser-cookies/Cargo.toml -- -D warnings
       pkgx +llvm.org +cmake.org cargo clippy --locked --workspace --all-targets -- -D warnings
   build:
     deps: [cli:build, desktop:build]

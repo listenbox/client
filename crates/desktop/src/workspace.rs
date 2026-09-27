@@ -3,9 +3,8 @@ use crate::tokens::{self, Tokens};
 use gpui_kit::component::{
     Disableable, Icon, Sizable,
     button::{Button, ButtonVariants},
-    input::{Input, InputState, TextareaState},
+    input::{Input, InputState},
     progress::Progress,
-    select::SelectState,
     spinner::Spinner,
 };
 use gpui_kit::prelude::FluentBuilder;
@@ -22,18 +21,8 @@ use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
 #[path = "workspace/episodes.rs"]
 mod episodes;
-#[path = "workspace/settings.rs"]
-mod settings;
 
 pub struct Workspace {
-    settings_open: bool,
-    cookie_browser: Entity<SelectState<Vec<SharedString>>>,
-    cookie_profile: Entity<InputState>,
-    cookie_json: Entity<TextareaState>,
-    cookie_status: Option<listenbox_sync_engine::cookies::Status>,
-    cookie_busy: bool,
-    cookie_error: Option<String>,
-    cookie_cancel: Option<CancellationToken>,
     episodes: Vec<listenbox_sync_engine::publicapi::EpisodeListItem>,
     episode_cursor: Option<String>,
     episode_loading: bool,
@@ -88,7 +77,6 @@ enum Message {
     Report(String, Report),
     Finished(String, anyhow::Result<()>),
     SyncDue,
-    Cookies(anyhow::Result<listenbox_sync_engine::cookies::Status>),
     Episodes(
         u64,
         bool,
@@ -137,34 +125,7 @@ impl Workspace {
             }
         })
         .detach();
-        let cookie_browser = cx.new(|cx| {
-            SelectState::new(
-                listenbox_sync_engine::cookies::browsers()
-                    .into_iter()
-                    .map(|browser| SharedString::from(browser.name))
-                    .collect::<Vec<_>>(),
-                Some(gpui_kit::component::IndexPath::default()),
-                window,
-                cx,
-            )
-        });
-        let cookie_profile =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Default profile"));
-        let cookie_json = cx.new(|cx| {
-            TextareaState::new(window, cx)
-                .rows(5)
-                .placeholder("Paste a JSON cookie array")
-        });
-        let cookie_status = client.youtube_cookies();
         let mut view = Self {
-            settings_open: false,
-            cookie_browser,
-            cookie_profile,
-            cookie_json,
-            cookie_error: cookie_status.as_ref().err().map(|error| error.to_string()),
-            cookie_status: cookie_status.ok().flatten(),
-            cookie_busy: false,
-            cookie_cancel: None,
             episodes: vec![],
             episode_cursor: None,
             episode_loading: false,
@@ -338,7 +299,6 @@ impl Workspace {
             return;
         }
         match message {
-            Message::Cookies(result) => self.cookies_received(result, window, cx),
             Message::Episodes(request, append, result) => {
                 self.episodes_received(request, append, result)
             }
@@ -353,10 +313,6 @@ impl Workspace {
                 self.authenticating = false;
                 self.loading = false;
                 self.importing = false;
-                self.cookie_busy = false;
-                self.cookie_cancel = None;
-                self.cookie_json
-                    .update(cx, |input, cx| input.set_value("", window, cx));
                 self.auto_sync = false;
                 self.import_open = false;
                 self.import_slug = None;
@@ -515,11 +471,8 @@ impl Workspace {
         cx.notify();
     }
 
-    fn select(&mut self, slug: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+    fn select(&mut self, slug: Option<String>, _window: &mut Window, cx: &mut Context<Self>) {
         self.selected = slug;
-        self.cookie_json
-            .update(cx, |input, cx| input.set_value("", window, cx));
-        self.settings_open = false;
         self.import_open = false;
         self.load_episodes(false, cx);
         self.error = None;
@@ -1180,7 +1133,7 @@ impl Render for Workspace {
             .bg(t.background)
             .text_color(t.ink)
             .text_size(px(tokens::BODY))
-            .when(!self.settings_open, |view| view.child(self.sidebar(cx)))
+            .child(self.sidebar(cx))
             .child(
                 div()
                     .flex()
@@ -1202,15 +1155,6 @@ impl Render for Workspace {
                                     .flex()
                                     .items_center()
                                     .gap_2()
-                                    .child(
-                                        Button::new("settings")
-                                            .ghost()
-                                            .label("Settings")
-                                            .disabled(self.stopping.is_some())
-                                            .on_click(cx.listener(|view, _, window, cx| {
-                                                view.open_settings(window, cx)
-                                            })),
-                                    )
                                     .when(self.loading || self.authenticating, |row| {
                                         row.child(Spinner::new().small())
                                     })
@@ -1259,12 +1203,8 @@ impl Render for Workspace {
                             .when_some(self.error.clone(), |pane, error| {
                                 pane.child(div().mb_4().text_color(t.danger).child(error))
                             })
-                            .child(if self.settings_open {
-                                self.settings(window, cx)
-                            } else {
-                                self.detail(window, cx)
-                            })
-                            .when(self.loaded && !self.settings_open, |pane| {
+                            .child(self.detail(window, cx))
+                            .when(self.loaded, |pane| {
                                 pane.child(self.episode_list(cx)).child(self.transfers(cx))
                             }),
                     ),

@@ -11,7 +11,6 @@ include = ["/src/**", "/build.rs", "/examples/**", "/README.md", "/LICENSE", "/T
 version = "18.1.0"
 archive-sha256 = "e42d35258a29eadff84b2b9bf1f3a7b4d56f037bd5243cb4c9fc6fbb7cf3d387"
 bundle-sha256 = "0125535bab0cd963dde0994bade8c1b0e719ff03edb4072a83bab8a14a2e38ae"
-runtime-bundle-sha256 = "917d5bb2eaa1252c261cad43c2b818ac548c4e9dd8bffac2a67fd45da5432f28"
 
 
 [dependencies]

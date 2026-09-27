@@ -6,7 +6,6 @@ pub mod auth;
 #[rustfmt::skip]
 mod clientconfig;
 pub mod config;
-pub mod cookies;
 pub mod episodes;
 pub mod events;
 pub mod innertube;

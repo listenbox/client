@@ -48,23 +48,6 @@ impl Client {
     pub fn show_url(&self, show: &p::Show) -> Result<String> {
         self.config.show_url(&show.team_id, &show.id)
     }
-    pub fn youtube_cookies(&self) -> Result<Option<crate::cookies::Status>> {
-        crate::cookies::status(&self.config)
-    }
-    pub fn import_cookie_json(&self, json: &str) -> Result<crate::cookies::Status> {
-        crate::cookies::import_json(&self.config, json)
-    }
-    pub fn clear_youtube_cookies(&self) -> Result<()> {
-        crate::cookies::clear(&self.config)
-    }
-    pub async fn import_browser_cookies(
-        &self,
-        browser: &str,
-        profile: Option<&str>,
-        cancel: CancellationToken,
-    ) -> Result<crate::cookies::Status> {
-        crate::cookies::import(&self.config, browser, profile, cancel).await
-    }
     pub async fn episodes(
         &self,
         slug: String,

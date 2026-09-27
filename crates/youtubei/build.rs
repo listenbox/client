@@ -14,7 +14,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let output =
         PathBuf::from(env::var_os("OUT_DIR").ok_or("Cargo must set OUT_DIR")?).join("youtubei.js");
     println!("cargo:rerun-if-changed={}", output.display());
-    if fs::read(&output).is_ok_and(|bytes| checksum(&bytes) == field("runtime-bundle-sha256")) {
+    if fs::read(&output).is_ok_and(|bytes| checksum(&bytes) == field("bundle-sha256")) {
         return Ok(());
     }
 
@@ -44,17 +44,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         entry.take(8 * 1024 * 1024 + 1).read_to_end(&mut bundle)?;
         if checksum(&bundle) != field("bundle-sha256") {
             return Err("youtubei.js CF-worker bundle SHA-256 mismatch".into());
-        }
-        // YouTube.js 18.1.0 ToggleFormField omits its Text import. The bundle's
-        // actual Text class is Text2; fix this binding, not the parser error policy.
-        let bundle = String::from_utf8(bundle)?;
-        let missing_import = "this.label = new Text(data.label);";
-        if bundle.matches(missing_import).count() != 1 {
-            return Err("ToggleFormField bundle correction no longer matches".into());
-        }
-        let bundle = bundle.replace(missing_import, "this.label = new Text2(data.label);");
-        if checksum(bundle.as_bytes()) != field("runtime-bundle-sha256") {
-            return Err("corrected youtubei.js bundle SHA-256 mismatch".into());
         }
         // Write only the verified bundle; never unpack archive paths onto disk.
         fs::write(output, bundle)?;

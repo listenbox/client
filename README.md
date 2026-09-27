@@ -7,7 +7,6 @@ A Rust monorepo for the Listenbox desktop app, CLI and shared synchronization en
 | `crates/desktop` | Native GPUI Kit interface, live teams and podcasts, transfer progress |
 | `crates/cli` | Commands, terminal progress and foreground watch service |
 | `crates/sync-engine` | Authentication, generated public API, reconciliation, durable transfers, FFmpeg and SQLite |
-| `crates/browser-cookies` | Bundled native Rust browser cookie reader using Rookie |
 | `crates/youtubei` | Embedded YouTube.js bindings, checked-in Rust source |
 
 ## Build
@@ -102,7 +101,7 @@ moonx desktop:dev
 
 This follows [Mazit's watchexec workflow](https://github.com/meoyawn/mazit/blob/main/Taskfile.yaml): source changes rebuild and restart the debug app after a 300 ms debounce. Changes to engine and YouTube code, migrations, assets, Cargo manifests, and local config are watched too. Failed builds leave the watcher running for the next edit. Quit Listenbox ends the watcher; closing the window keeps the app running. Ctrl-C stops the watcher and app. Restart signals use the app's normal cancel-and-drain path, with a five-second force-stop guard; the engine recovers interrupted work from its journal.
 
-The watched crate directories come from `cargo metadata`, following the desktop's transitive local dependencies. The standalone native cookie reader is watched explicitly; CLI source edits do not restart the desktop. Cargo reuses unchanged crate artifacts through `desktop:build`. Restart `moonx desktop:dev` after adding or removing a local crate dependency so it discovers the changed dependency graph.
+The watched crate directories come from `cargo metadata`, following the desktop's transitive local dependencies. There is no hand-maintained crate list, and CLI source edits do not restart the desktop. Cargo reuses unchanged crate artifacts through `desktop:build`. Restart `moonx desktop:dev` after adding or removing a local crate dependency so it discovers the changed dependency graph.
 
 `config/dev.yaml` points at `http://localhost:8080` (public API) and `http://localhost:5174` (dashboard sign-in), with API trace IDs enabled. The watcher sets `LISTENBOX_PROFILE_DIR` to this checkout's `.cache/dev`, isolating credentials and resumable work from the normal production profile. To use the same dev login from the CLI, run from the client repository:
 
@@ -138,7 +137,7 @@ listenbox shows sync youtube --show field-notes --watch
 
 An active paid audio or video plan is required for synchronization. The desktop automatically syncs on startup and every hour while running. Sync now requests an immediate pass. Its library lists only existing YouTube imports, including accessible imports shared with you. Import creates a fresh podcast; its source is fixed. A URL is needed only for import. Sync and watch need just the slug. A source cannot coexist with a YouTube publishing destination; PostgreSQL enforces both directions. The backend checks permissions and video allowance when admitting work.
 
-The engine requests a listing that includes hidden videos and follows every continuation before reconciling canonical item URLs. Each new video ID gets one playback check per sync, even when playlist metadata labels it unavailable. Playable videos become episodes; unavailable videos are skipped without retries until the next sync. Authentication challenges fail the sync with instructions to import a YouTube session; they never count as skipped videos. A playlist with no playable videos can still be imported and populated later. Informational and warning alerts allow imports but prevent deleting missing episodes because YouTube may have hidden them. Removed videos are deleted only after an alert-free scan and only when imported into this podcast. Unavailable videos and manually uploaded episodes are preserved. Playlist order becomes RSS order; real publication dates stay intact. Reordering does not repeat media work.
+The engine requests a listing that includes hidden videos and follows every continuation before reconciling canonical item URLs. Each new video ID gets one playback check per sync, even when playlist metadata labels it unavailable. Playable videos become episodes; unavailable videos are skipped without retries until the next sync. A playlist with no playable videos can still be imported and populated later. Informational and warning alerts allow imports but prevent deleting missing episodes because YouTube may have hidden them. Removed videos are deleted only after an alert-free scan and only when imported into this podcast. Unavailable videos and manually uploaded episodes are preserved. Playlist order becomes RSS order; real publication dates stay intact. Reordering does not repeat media work.
 
 For creator-managed podcasts, read or change order through the same ordering API:
 
@@ -148,53 +147,6 @@ listenbox shows order --show field-notes --episode ep_0123456789abcdef --episode
 ```
 
 Supplied episodes move to the front in sequence; other episodes retain their relative order. Sync restores playlist order for imported podcasts.
-
-## YouTube cookies
-
-In desktop **Settings → YouTube**, select a browser and optionally a profile, then
-import. The shared engine uses that session for subsequent syncs in both clients.
-Episode and transfer rows show titles and durations; skipped transfers include
-the reason YouTube returned.
-
-```sh
-listenbox youtube-cookies browsers
-listenbox youtube-cookies import --browser chrome
-listenbox youtube-cookies import --browser firefox --profile default-release
-listenbox youtube-cookies import-json --file youtube-cookies.json
-listenbox youtube-cookies status
-listenbox youtube-cookies clear
-```
-
-The browser list matches Sweetcookie's catalogue, filtered for the current OS:
-Chrome, Chromium, Edge, Brave, Vivaldi, Opera, Whale, Arc, Comet, Dia, Atlas,
-Helium, Firefox, Zen, Floorp, Waterfox, LibreWolf and Safari. Profiles can be names,
-directories or database paths. OS access permissions and keychain prompts still
-apply. Windows Chromium app-bound cookies cannot be imported; use Firefox or
-manual JSON there.
-
-For precise scope without browser access, paste a cookie export array into the
-Settings JSON field, or use `import-json`:
-
-```json
-[{"name":"SAPISID","value":"your-cookie-value","domain":".youtube.com","path":"/","secure":true}]
-```
-
-Only unexpired, unpartitioned cookies applicable to `https://www.youtube.com/`
-are saved. Host-only cookies for `youtube.com` are not widened to `www.youtube.com`.
-An optional `expirationDate` is a Unix timestamp in seconds. Common export fields
-(`session`, `hostOnly`, `httpOnly`, `sameSite`, `storeId`, `id`) are accepted;
-partition keys and unknown fields are rejected. Failed imports preserve the
-previous session. Values are never printed. JSON import reads no browser files.
-
-Cookies live in the client profile's private `youtube-cookies.json`, shared by
-CLI and desktop. They go only to YouTube API requests, never Listenbox or media
-CDNs. Remove them in Settings or with `clear`; signing out of Listenbox does not
-sign out of YouTube. Reimport after expiry or a YouTube authentication challenge.
-
-Extraction uses [rookie-cookies](https://github.com/teng-lin/rookie-cookies) in a
-bundled native Rust executable. Its separate Cargo workspace accommodates its
-Rusqlite version without changing the sync journal. No Go runtime is included.
-See [the reader design](crates/browser-cookies/README.md).
 
 ## Interrupted work
 
