@@ -30,7 +30,7 @@ jobs:
             target
             .cache/ffmpeg
             ~/.pkgx
-          key: release-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'tools/native-ffmpeg.rs') }}
+          key: release-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.cargo/config.toml', 'Cargo.lock', 'rust-toolchain.toml', 'tools/native-ffmpeg.rs') }}
       - run: moon ci
       - run: moon run client:dmg client:package
       - run: mv dist/listenbox-client.tar.gz "dist/listenbox-client-macos-$(uname -m).tar.gz"

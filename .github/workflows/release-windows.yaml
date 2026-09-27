@@ -63,7 +63,7 @@ jobs:
             ~/.cargo/git
             target
             .cache/ffmpeg-${{ matrix.target }}
-          key: windows-${{ matrix.architecture }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'tools/native-ffmpeg.rs', 'tools/build-windows.ps1') }}
+          key: windows-${{ matrix.architecture }}-${{ hashFiles('.cargo/config.toml', 'Cargo.lock', 'rust-toolchain.toml', 'tools/native-ffmpeg.rs', 'tools/build-windows.ps1') }}
       - name: Build and verify release
         env:
           MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}

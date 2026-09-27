@@ -27,7 +27,7 @@ jobs:
             target
             .cache/ffmpeg
             ~/.pkgx
-          key: rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'tools/native-ffmpeg.rs') }}
+          key: rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.cargo/config.toml', 'Cargo.lock', 'rust-toolchain.toml', 'tools/native-ffmpeg.rs') }}
       - name: Check affected tasks
         id: ci
         run: moon ci
