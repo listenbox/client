@@ -4451,11 +4451,13 @@ dependencies = [
  "objc2-app-kit 0.3.2",
  "objc2-core-graphics",
  "parking_lot",
+ "raw-window-handle",
  "serde_json",
  "tempfile",
  "tokio",
  "tokio-util",
  "tray-icon",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

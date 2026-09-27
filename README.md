@@ -28,6 +28,8 @@ FFmpeg 9.0.2 is built from verified source by `tools/native-ffmpeg.rs`, linked w
 
 Every push to `master` builds and publishes one prerelease on [GitHub Releases](https://github.com/listenbox/client/releases) containing an Apple Silicon DMG and Windows x64 and ARM64 builds. Its version is the desktop package version resolved by Cargo plus the first 12 characters of the commit SHA, such as `0.1.0+abcdef123456`, with release tag `desktop-v0.1.0+abcdef123456`. Choose the DMG for Apple Silicon Macs, `listenbox-desktop-windows-x64.zip` for Intel/AMD PCs or `listenbox-desktop-windows-arm64.zip` for native Windows ARM64, including Windows 11 ARM in VMware Fusion on Apple Silicon. Both Windows archives include the executable and license notices; matching `.exe` assets are also available to run directly. Windows 11 ARM can also run the x64 version through emulation. The Windows executables are unsigned; signing is not configured. Each Windows build checks its architecture, runtime DLL dependencies and `--help` startup. Interactive Windows testing remains necessary.
 
+The same release workflow checks macOS Apple Silicon and both Windows architectures on pull requests and can be run manually from GitHub Actions. Pull requests build and verify release packages without uploading Actions artifacts or publishing GitHub releases; logs remain available in the job output. Manual runs upload packages without publishing a release. On Windows, FFmpeg is cached separately and saved before the Rust build, so subsequent attempts can reuse it even after a Rust compilation failure. Push and manual runs also upload build logs, FFmpeg configuration diagnostics, and Moon reports for troubleshooting without a local Windows machine.
+
 The same builds can run on native Windows machines of the matching architecture with Rust, Moon, Visual Studio's C++ tools for that architecture and Windows SDK, host-native LLVM, and MSYS2 (`make`, `diffutils`, `tar`, `xz`, `openssl`). Set `MSYS2_LOCATION` to the MSYS2 installation directory and, if LLVM is not installed at `C:\Program Files\LLVM`, set `LIBCLANG_PATH` to the directory containing `libclang.dll`:
 
 ```powershell
@@ -38,6 +40,8 @@ moon run desktop:build-release-windows-arm64
 ```
 
 Outputs are in `crates/desktop/dist/`. FFmpeg and the MSVC runtime are linked statically. Each Windows target has its own FFmpeg cache, separate from the native macOS/Linux build. GPUI compiles its release shaders using the Windows SDK, so these tasks must run on Windows. The client profile is `%USERPROFILE%\.config\listenbox` on Windows; `LISTENBOX_PROFILE_DIR` overrides it on all platforms.
+
+Listenbox opens without a console window and keeps a system tray icon while running. Closing the window with X hides it and keeps synchronization running. Click the tray icon to reopen the window, or right-click it for Open Listenbox, Log out, and Quit Listenbox. Quit waits for active work to shut down cleanly. Windows may place the icon in the tray's hidden-icons overflow.
 
 ## Desktop development
 

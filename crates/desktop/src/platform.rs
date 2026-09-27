@@ -1,6 +1,10 @@
 use crate::workspace::{Shutdown, Workspace};
 use gpui_kit::{App, Entity, Menu, MenuItem, Window, actions};
 
+#[cfg(target_os = "windows")]
+#[path = "platform/windows.rs"]
+mod windows;
+
 actions!(listenbox, [Logout, Quit]);
 
 /// Query the actual shortcut key while its quit attempt is active. macOS can
@@ -29,12 +33,12 @@ pub fn quit_key_state() -> Option<Box<dyn Fn() -> bool>> {
 
 pub fn install(view: &Entity<Workspace>, window: &mut Window, cx: &mut App) {
     install_actions(view, cx);
-    window.on_window_should_close(cx, |_, cx| {
-        hide_window(cx);
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    status_item::install(view, cx);
+    window.on_window_should_close(cx, |window, cx| {
+        hide_window(window, cx);
         false
     });
-    #[cfg(target_os = "macos")]
-    macos::install_status_item(view, cx);
 }
 
 pub fn install_actions(view: &Entity<Workspace>, cx: &mut App) {
@@ -54,22 +58,25 @@ pub fn install_actions(view: &Entity<Workspace>, cx: &mut App) {
 pub fn show_window(cx: &mut App) {
     #[cfg(target_os = "macos")]
     macos::show_window();
+    #[cfg(target_os = "windows")]
+    windows::show_window(cx);
     cx.activate(true);
 }
 
-fn hide_window(cx: &mut App) {
+fn hide_window(window: &Window, cx: &mut App) {
     #[cfg(target_os = "macos")]
     macos::hide_window();
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    windows::hide_window(window, cx);
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     cx.hide();
-    let _ = cx;
+    let _ = (window, cx);
 }
 
-#[cfg(target_os = "macos")]
-mod macos {
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+mod status_item {
     use super::*;
     use gpui_kit::Global;
-    use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
     use tray_icon::{
         Icon, TrayIcon, TrayIconBuilder,
         menu::{Menu as TrayMenu, MenuEvent, MenuItem as TrayMenuItem},
@@ -80,7 +87,7 @@ mod macos {
     }
     impl Global for StatusItem {}
 
-    pub(super) fn install_status_item(view: &Entity<Workspace>, cx: &mut App) {
+    pub(super) fn install(view: &Entity<Workspace>, cx: &mut App) {
         let menu = TrayMenu::new();
         let open = TrayMenuItem::new("Open Listenbox", true, None);
         let logout = TrayMenuItem::new("Log out", true, None);
@@ -89,6 +96,24 @@ mod macos {
             .expect("status menu");
         let (open, logout, quit) = (open.id().clone(), logout.id().clone(), quit.id().clone());
         let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        #[cfg(target_os = "windows")]
+        {
+            use tray_icon::{MouseButton, MouseButtonState, TrayIconEvent};
+            let sender = sender.clone();
+            let open = open.clone();
+            TrayIconEvent::set_event_handler(Some(move |event: TrayIconEvent| {
+                if matches!(
+                    event,
+                    TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    }
+                ) {
+                    let _ = sender.send(open.clone());
+                }
+            }));
+        }
         MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
             let _ = sender.send(event.id);
         }));
@@ -107,25 +132,35 @@ mod macos {
             }
         })
         .detach();
-        // A small monochrome waveform, drawn as a macOS template image so the
-        // system supplies the correct menu-bar color in light and dark appearances.
+        // macOS supplies the template color. Windows uses a blue waveform that
+        // remains visible on both light and dark taskbars.
         let mut pixels = vec![0; 22 * 22 * 4];
         for (x, height) in [(3, 6), (7, 12), (11, 18), (15, 10), (19, 4)] {
             for y in (22 - height) / 2..(22 + height) / 2 {
                 for dx in 0..2 {
-                    pixels[(y * 22 + x + dx) * 4 + 3] = 255;
+                    let offset = (y * 22 + x + dx) * 4;
+                    #[cfg(target_os = "windows")]
+                    pixels[offset..offset + 3].copy_from_slice(&[105, 126, 249]);
+                    pixels[offset + 3] = 255;
                 }
             }
         }
-        let icon = TrayIconBuilder::new()
+        let builder = TrayIconBuilder::new()
             .with_menu(Box::new(menu))
             .with_tooltip("Listenbox — YouTube to podcast sync")
-            .with_icon(Icon::from_rgba(pixels, 22, 22).expect("status icon pixels"))
-            .with_icon_as_template(true)
-            .build()
-            .expect("Listenbox status icon");
+            .with_icon(Icon::from_rgba(pixels, 22, 22).expect("status icon pixels"));
+        #[cfg(target_os = "macos")]
+        let builder = builder.with_icon_as_template(true);
+        #[cfg(target_os = "windows")]
+        let builder = builder.with_menu_on_left_click(false);
+        let icon = builder.build().expect("Listenbox status icon");
         cx.set_global(StatusItem { _icon: icon });
     }
+}
+
+#[cfg(target_os = "macos")]
+mod macos {
+    use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
 
     pub(super) fn hide_window() {
         let app = NSApplication::sharedApplication(
