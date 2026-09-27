@@ -1,7 +1,7 @@
 use crate::{
-    api::{Api, string},
+    api::{Api, PaymentRequired, string},
     download::download,
-    innertube::YouTube,
+    innertube::{PlaylistSnapshot, YouTube},
     publicapi as p,
 };
 use anyhow::{Context, Result, ensure};
@@ -80,14 +80,14 @@ pub async fn import(
         "Podcast {slug:?} already exists. Use sync to resume an imported podcast, or choose a new slug."
     );
     let youtube = YouTube::new(api).await?;
-    let (title, canonical) = if let Some(collection) = &collection {
+    let (snapshot, canonical) = if let Some(collection) = &collection {
         let id = Url::parse(collection)?
             .query_pairs()
             .find(|(key, _)| key == "list")
             .unwrap()
             .1
             .into_owned();
-        (youtube.snapshot(api, &id).await?.title, collection.clone())
+        (youtube.snapshot(api, &id).await?, collection.clone())
     } else {
         let id = if url.host_str() == Some("youtu.be") {
             url.path().trim_matches('/').to_owned()
@@ -104,25 +104,51 @@ pub async fn import(
             id.len() == 11 && valid_youtube_id(&id),
             "invalid YouTube video ID"
         );
+        let media = youtube
+            .media(api, &id)
+            .await?
+            .context("YouTube playback unavailable")?;
         (
-            youtube
-                .media(api, &id)
-                .await?
-                .context("YouTube playback unavailable")?
-                .title,
+            PlaylistSnapshot {
+                title: media.title,
+                present: vec![id.clone()],
+                estimated_seconds: media.estimated_seconds,
+                can_remove: true,
+            },
             format!("https://www.youtube.com/watch?v={id}"),
         )
     };
+    let capacity: p::ImportCapacity =
+        serde_json::from_value(api.json(api.client().get_import_capacity(), &[200]).await?)?;
+    if !capacity.has_active_subscription {
+        return Err(PaymentRequired(
+            "A paid podcast plan is required for YouTube imports. Choose a plan, then try again."
+                .into(),
+        )
+        .into());
+    }
+    if kind == p::ShowSourceKind::Video {
+        if !capacity.video_allowed {
+            return Err(PaymentRequired("A video podcast plan is required to import this playlist as video. Upgrade your plan, then try again.".into()).into());
+        }
+        if snapshot.estimated_seconds > capacity.video_remaining_seconds {
+            return Err(PaymentRequired(format!(
+                "This playlist needs about {:.2} hours of video storage. Your team has {:.2} hours available. Upgrade your plan, then try again.",
+                snapshot.estimated_seconds as f64 / 3600.0,
+                capacity.video_remaining_seconds as f64 / 3600.0,
+            )).into());
+        }
+    }
     let show: p::Show = serde_json::from_value(api.json(api.client().create_show(p::CreateShowParams {
         body: p::CreateShow {
             id: format!("shw_{}", &uuid::Uuid::new_v4().simple().to_string()[..16]),
-            title, slug: slug.clone(), source_kind: kind.clone(), language: "en".into(),
-            image_asset_id: None, youtube_source_url: Some(canonical),
+            title: snapshot.title.clone(), slug: slug.clone(), source_kind: kind.clone(), language: "en".into(),
+            image_asset_id: None, youtube_source_url: Some(canonical.clone()),
         },
     }), &[201]).await.with_context(|| format!("Create podcast {slug:?}. If creation completed but its reply was lost, reload your podcasts and resume with sync."))?)?;
     created(&show);
     let report = engine
-        .once(api, &slug)
+        .import_snapshot(api, &slug, &canonical, snapshot)
         .await
         .with_context(|| format!("Podcast {slug:?} was created. Resume it with sync."))?;
     Ok((show, report))

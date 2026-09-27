@@ -171,6 +171,133 @@ async fn live_import(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+#[ignore = "requires the parent workspace's ephemeral Listenbox services"]
+async fn live_import_payment_required(cx: &mut TestAppContext) {
+    let runtime = Arc::new(tokio::runtime::Runtime::new().unwrap());
+    let config = Config::load(None).unwrap();
+    let source = std::fs::read_to_string(config.directory.join("test-playlist-url")).unwrap();
+    let dashboard = config.dashboard_origin.clone();
+    let client = Client::desktop(config).unwrap();
+    let cancel = CancellationToken::new();
+    cx.update(gpui_kit::init);
+    cx.executor().allow_parking();
+    let mut view = None;
+    let handle = cx.open_window(size(px(840.), px(600.)), |window, cx| {
+        tokens::apply(window, cx);
+        let entity = cx.new(|cx| {
+            Workspace::new(
+                client,
+                runtime,
+                cancel.clone(),
+                TaskTracker::new(),
+                window,
+                cx,
+            )
+        });
+        view = Some(entity.clone());
+        Root::new(entity, window, cx)
+    });
+    let view = view.unwrap();
+    wait_for(cx, &view, |view| !view.loading).await;
+    let team = cx.update(|cx| {
+        let state = view.read(cx);
+        assert!(state.loaded, "catalog failed: {:?}", state.error);
+        assert!(state.catalog.shows.is_empty());
+        assert!(state.team.is_none(), "test must import from All teams");
+        state.catalog.import_team.clone().unwrap()
+    });
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("upgrade-plan").is_none());
+        window.click("playlist-url", cx);
+        window.input(&source, cx);
+        window.click("import-video", cx);
+        window.click("start-import", cx);
+        assert!(view.read(cx).importing, "import did not start");
+    })
+    .unwrap();
+    wait_for(cx, &view, |view| !view.importing && !view.loading).await;
+    cx.update_window(handle.into(), |_, window, cx| {
+        let state = view.read(cx);
+        assert!(
+            state.error.is_some(),
+            "unpaid import unexpectedly succeeded"
+        );
+        assert!(
+            state
+                .error
+                .as_ref()
+                .unwrap()
+                .message
+                .starts_with("Could not create podcast.")
+        );
+        assert!(state.catalog.shows.is_empty());
+        assert_eq!(state.source.read(cx).value().as_str(), source);
+        window.render_frame(cx);
+        assert!(
+            window.try_find("upgrade-plan").is_some(),
+            "payment error has no upgrade action: {:?}",
+            view.read(cx).error
+        );
+        window.click("upgrade-plan", cx);
+    })
+    .unwrap();
+    assert_eq!(
+        cx.opened_url(),
+        Some(format!("{dashboard}/{team}/upgrade?family=video_hd"))
+    );
+    cx.update_window(handle.into(), |_, window, cx| {
+        view.read(cx)
+            .source
+            .clone()
+            .update(cx, |state, cx| state.set_value("invalid", window, cx));
+        window.scroll(
+            "playlist-url",
+            ScrollDelta::Pixels(point(px(0.), px(-300.))),
+            cx,
+        );
+        window.click("start-import", cx);
+        window.scroll(
+            "start-import",
+            ScrollDelta::Pixels(point(px(0.), px(300.))),
+            cx,
+        );
+        window.render_frame(cx);
+        assert!(view.read(cx).error.is_some());
+        assert!(
+            window.try_find("upgrade-plan").is_none(),
+            "validation retained the previous payment action"
+        );
+    })
+    .unwrap();
+    cancel.cancel();
+}
+
+#[gpui_kit::test]
+fn unpaid_podcast_opens_its_teams_upgrade_page(cx: &mut TestAppContext) {
+    let (_profile, handle, view) = quit_workspace(cx);
+    cx.update_window(handle.into(), |_, window, cx| {
+        view.update(cx, |view, cx| {
+            view.loaded = true;
+            view.catalog.import_team = Some("team_0123456789abcdef".into());
+            view.catalog.shows = vec![serde_json::from_value(serde_json::json!({
+                "id": "shw_0123456789abcdef", "team_id": "team_fedcba9876543210",
+                "title": "Podcast", "slug": "podcast", "language": "en", "source_kind": "audio",
+                "has_active_subscription": false,
+                "youtube": {"kind":"import", "source_url":"https://www.youtube.com/playlist?list=PLtest"}
+            })).unwrap()];
+            view.select(Some("podcast".into()), window, cx);
+        });
+        window.render_frame(cx);
+        window.click("choose-plan", cx);
+    }).unwrap();
+    assert_eq!(
+        cx.opened_url(),
+        Some("https://web.listenbox.app/team_fedcba9876543210/upgrade".into())
+    );
+}
+
+#[gpui_kit::test]
 fn quit_hint_expires_without_a_key_up_event(cx: &mut TestAppContext) {
     let (_profile, window, view) = quit_workspace(cx);
     cx.dispatch_keystroke(window.into(), Keystroke::parse("cmd-q").unwrap());
