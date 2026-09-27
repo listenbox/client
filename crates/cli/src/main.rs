@@ -288,8 +288,9 @@ async fn run(cli: Cli, cancel: CancellationToken) -> Result<()> {
                     if youtube::is_source(&source_url) {
                         youtube::import(&api, &listenbox_sync_engine::sync::Engine::default(), &source_url, slug.as_deref(), listenbox_sync_engine::publicapi::ShowSourceKind::Video, |show| {
                             eprintln!("Created podcast {:?}. Resume with shows sync youtube --show {}", show.slug, show.slug);
-                        }).await.map(|(show, _)| {
+                        }).await.map(|(show, report)| {
                             println!("{}", show.slug);
+                            eprintln!("{} added, {} skipped", report.added, report.skipped);
                             eprintln!("100%");
                             if let Ok(url) = api.config.show_url(&show.team_id, &show.id) { eprintln!("Open in Listenbox: {url}"); }
                         })

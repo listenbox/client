@@ -87,8 +87,7 @@ pub async fn import(
             .unwrap()
             .1
             .into_owned();
-        let (title, _) = youtube.playlist(api, &id).await?;
-        (title, collection.clone())
+        (youtube.snapshot(api, &id).await?.title, collection.clone())
     } else {
         let id = if url.host_str() == Some("youtu.be") {
             url.path().trim_matches('/').to_owned()
@@ -106,7 +105,11 @@ pub async fn import(
             "invalid YouTube video ID"
         );
         (
-            youtube.media(api, &id).await?.title,
+            youtube
+                .media(api, &id)
+                .await?
+                .context("YouTube playback unavailable")?
+                .title,
             format!("https://www.youtube.com/watch?v={id}"),
         )
     };
@@ -141,11 +144,16 @@ pub(crate) struct VideoImport<'a> {
     pub audio: bool,
 }
 
+pub(crate) enum ImportOutcome {
+    Published,
+    Skipped,
+}
+
 pub(crate) async fn import_video(
     api: &Api,
     youtube: &YouTube,
     work: VideoImport<'_>,
-) -> Result<()> {
+) -> Result<ImportOutcome> {
     let VideoImport {
         slug,
         id,
@@ -179,7 +187,11 @@ pub(crate) async fn import_video(
                     std::fs::remove_file(path)?;
                 }
             }
-            let media = youtube.media(api, id).await?;
+            let Some(media) = youtube.media(api, id).await? else {
+                // No package has been admitted. Keep any download checkpoint
+                // for a future scan, without retrying this video in this pass.
+                return Ok(ImportOutcome::Skipped);
+            };
             if let Some(transfer) = transfer {
                 transfer.title(&media.title);
             }
@@ -273,7 +285,7 @@ pub(crate) async fn import_video(
     let session: p::EpisodePackage = api.decode(response).await?;
     if session.status == p::EpisodePackageStatus::Completed {
         journal.forget(&api.config.api_origin, slug, &source_url)?;
-        return Ok(());
+        return Ok(ImportOutcome::Published);
     }
     journal.session(&manifest.operation_id, &session.upload_session_id)?;
     let result: Result<()> = async {
@@ -351,7 +363,7 @@ pub(crate) async fn import_video(
     // Failure and cancellation preserve this operation for the next explicit sync.
     result?;
     journal.forget(&api.config.api_origin, slug, &source_url)?;
-    Ok(())
+    Ok(ImportOutcome::Published)
 }
 
 async fn inventory(root: &Path, audio: bool) -> Result<Vec<p::PreparedMediaObject>> {

@@ -3,9 +3,9 @@ use crate::api::{Api, read_bounded};
 use anyhow::{Context, Result, bail, ensure};
 use std::collections::HashSet;
 use youtubei::{
-    Client, Engine, EngineOptions, FetchRequest, FetchResponse, Format, GetVideoInfoOptions,
-    Innertube, Player, SessionOptions, UniversalCache,
-    models::{LockupContentType, Microformat, PlaylistItem},
+    BrowseOptions, Client, Engine, EngineOptions, FetchRequest, FetchResponse, Format,
+    GetVideoInfoOptions, Innertube, Player, Playlist, SessionOptions, UniversalCache,
+    models::{LockupContentType, Microformat, PlaylistAlert, PlaylistItem},
 };
 
 pub struct YouTube {
@@ -16,7 +16,8 @@ pub struct YouTube {
 pub struct PlaylistSnapshot {
     pub title: String,
     pub present: Vec<String>,
-    pub playable: Vec<String>,
+    /// Missing IDs prove removal only when the full scan has no warnings.
+    pub can_remove: bool,
 }
 
 pub struct Media {
@@ -104,34 +105,41 @@ impl YouTube {
         })
     }
 
-    pub async fn playlist(&self, api: &Api, id: &str) -> Result<(String, Vec<String>)> {
-        let snapshot = self.snapshot(api, id).await?;
-        ensure!(
-            !snapshot.playable.is_empty(),
-            "YouTube playlist has no public videos"
-        );
-        Ok((snapshot.title, snapshot.playable))
-    }
-
     pub async fn snapshot(&self, api: &Api, id: &str) -> Result<PlaylistSnapshot> {
         api.wait(async {
             self.parse_failed.set(false);
-            let mut page = self.client.get_playlist(id).await?;
+            let actions = self.client.actions().await?;
+            let response = actions
+                .browse(BrowseOptions {
+                    browse_id: format!("VL{id}"),
+                    // Ask YouTube to include entries hidden by its default view.
+                    params: Some("wgYCCAA=".into()),
+                })
+                .await?;
+            let mut page = Playlist::new(&actions, &response, false).await?;
             let mut title = None;
-            let mut videos = Vec::new();
             let mut present = Vec::new();
             let mut seen = HashSet::new();
             let mut pages = 0;
+            let mut can_remove = true;
             loop {
                 let data = page.data().await?;
                 ensure!(
                     !self.parse_failed.get(),
                     "YouTube playlist could not be parsed completely; no changes were made"
                 );
-                ensure!(
-                    data.alerts.is_empty(),
-                    "YouTube reported a playlist warning; the source scan may be incomplete"
-                );
+                for alert in data.alerts {
+                    match alert {
+                        PlaylistAlert::Alert(alert) | PlaylistAlert::AlertWithButton(alert)
+                            if matches!(alert.alert_type.as_str(), "INFO" | "WARNING") =>
+                        {
+                            // Returned IDs can be checked, but an alert may mean
+                            // omitted IDs are hidden rather than removed.
+                            can_remove = false;
+                        }
+                        _ => bail!("YouTube could not list this playlist"),
+                    }
+                }
                 if title.is_none() {
                     title = data.info.title;
                 }
@@ -142,14 +150,6 @@ impl YouTube {
                                 valid_video_id(&video.id),
                                 "Playlist contains an unidentified unavailable item"
                             );
-                            present.push(video.id.clone());
-                            if !video.is_playable
-                                || video.is_live
-                                || video.is_upcoming
-                                || video.upcoming.is_some()
-                            {
-                                continue;
-                            }
                             video.id
                         }
                         PlaylistItem::LockupView(video)
@@ -162,20 +162,12 @@ impl YouTube {
                                 valid_video_id(&video.content_id),
                                 "Playlist contains an invalid video ID"
                             );
-                            present.push(video.content_id.clone());
-                            if !video
-                                .metadata
-                                .and_then(|m| m.title)
-                                .is_some_and(|title| !title.as_str().is_empty())
-                            {
-                                continue;
-                            }
                             video.content_id
                         }
                         _ => bail!("Unsupported playlist item; listing is incomplete"),
                     };
                     if seen.insert(id.clone()) {
-                        videos.push(id);
+                        present.push(id);
                     }
                 }
                 pages += 1;
@@ -191,15 +183,15 @@ impl YouTube {
                     .filter(|title| !title.is_empty())
                     .context("YouTube playlist missing title")?,
                 present,
-                playable: videos,
+                can_remove,
             })
         })
         .await
     }
 
-    pub async fn media(&self, api: &Api, id: &str) -> Result<Media> {
+    pub async fn media(&self, api: &Api, id: &str) -> Result<Option<Media>> {
         api.wait(async {
-            let info = self
+            let info = match self
                 .client
                 .get_basic_info(
                     id,
@@ -208,19 +200,32 @@ impl YouTube {
                         ..Default::default()
                     },
                 )
-                .await?;
+                .await
+            {
+                Ok(info) => info,
+                // YouTube.js throws for ERROR player responses before exposing
+                // VideoInfo. Inspect its structured status, never error wording.
+                Err(error)
+                    if error
+                        .info
+                        .as_ref()
+                        .is_some_and(|info| info["status"] == "ERROR") =>
+                {
+                    return Ok(None);
+                }
+                Err(error) => return Err(error.into()),
+            };
             let data = info.data().await?;
-            ensure!(
-                data.playability_status
-                    .as_ref()
-                    .is_some_and(|s| s.status == "OK")
-                    && !data.basic_info.is_live.unwrap_or(false)
-                    && !data.basic_info.is_upcoming.unwrap_or(false),
-                "YouTube playback unavailable: {}",
-                data.playability_status
-                    .and_then(|s| s.reason)
-                    .unwrap_or_else(|| "not a public recorded video".into())
-            );
+            let status = data
+                .playability_status
+                .as_ref()
+                .context("YouTube player response missing playability status")?;
+            if status.status != "OK"
+                || data.basic_info.is_live.unwrap_or(false)
+                || data.basic_info.is_upcoming.unwrap_or(false)
+            {
+                return Ok(None);
+            }
             let mut formats = info.formats().await?;
             formats.extend(info.adaptive_formats().await?);
             formats.retain(|format| {
@@ -275,7 +280,7 @@ impl YouTube {
                 })
                 .context("YouTube publication date is invalid")?
                 .timestamp_millis();
-            Ok(Media {
+            Ok(Some(Media {
                 title: data.basic_info.title.unwrap_or_else(|| id.into()),
                 description: data.basic_info.short_description.unwrap_or_default(),
                 published_at,
@@ -284,7 +289,7 @@ impl YouTube {
                     Some(format) => Some(self.stream(format, &data.cpn).await?),
                     None => None,
                 },
-            })
+            }))
         })
         .await
     }

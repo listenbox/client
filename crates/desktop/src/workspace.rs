@@ -410,10 +410,11 @@ impl Workspace {
                 self.reports.insert(
                     slug,
                     format!(
-                        "{} added · {} removed · {} unchanged{}",
+                        "{} added · {} removed · {} unchanged · {} skipped{}",
                         report.added,
                         report.removed,
                         report.unchanged,
+                        report.skipped,
                         if report.reordered {
                             " · Order updated"
                         } else {

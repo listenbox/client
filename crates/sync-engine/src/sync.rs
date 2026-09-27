@@ -5,6 +5,7 @@ use crate::{
     events::Events,
     innertube::YouTube,
     publicapi as p,
+    youtube::ImportOutcome,
 };
 use anyhow::{Context, Result, bail, ensure};
 use futures_util::{StreamExt, stream};
@@ -22,6 +23,7 @@ pub struct Report {
     pub added: usize,
     pub removed: usize,
     pub unchanged: usize,
+    pub skipped: usize,
     pub reordered: bool,
 }
 
@@ -133,18 +135,18 @@ impl Engine {
                     .context("Show source has no video ID")?;
                 crate::innertube::PlaylistSnapshot {
                     title: before.show.title.clone(),
-                    present: vec![id.clone()],
-                    playable: vec![id],
+                    present: vec![id],
+                    can_remove: true,
                 }
             };
-        let mut unique = HashSet::new();
         let ordered_urls: Vec<String> = snapshot
             .present
             .iter()
-            .filter(|id| unique.insert(*id))
             .map(|id| format!("https://www.youtube.com/watch?v={id}"))
             .collect();
-        journal.snapshot(&api.config.api_origin, slug, collection, &ordered_urls)?;
+        if snapshot.can_remove {
+            journal.snapshot(&api.config.api_origin, slug, collection, &ordered_urls)?;
+        }
         let remote: HashSet<String> = snapshot
             .present
             .iter()
@@ -159,7 +161,7 @@ impl Engine {
             .map(|episode| (episode.source_url.as_str(), episode))
             .collect();
         let additions: Vec<_> = snapshot
-            .playable
+            .present
             .iter()
             .filter(|id| {
                 !existing.contains_key(format!("https://www.youtube.com/watch?v={id}").as_str())
@@ -209,6 +211,9 @@ impl Engine {
                     },
                 )
                 .await;
+                if matches!(result, Ok(ImportOutcome::Skipped)) {
+                    transfer.phase(crate::downloads::Phase::Skipped);
+                }
                 let outcome = result
                     .as_ref()
                     .map(|_| ())
@@ -220,12 +225,16 @@ impl Engine {
         .buffer_unordered(crate::downloads::MAX_TRANSFERS);
         let mut failures = Vec::new();
         let mut report = Report {
-            unchanged: existing.keys().filter(|url| remote.contains(**url)).count(),
+            unchanged: existing
+                .keys()
+                .filter(|url| !snapshot.can_remove || remote.contains(**url))
+                .count(),
             ..Report::default()
         };
         while let Some(result) = work.next().await {
             match result {
-                Ok(()) => report.added += 1,
+                Ok(ImportOutcome::Published) => report.added += 1,
+                Ok(ImportOutcome::Skipped) => report.skipped += 1,
                 Err(error) => failures.push(format!("{error:#}")),
             }
         }
@@ -238,7 +247,7 @@ impl Engine {
         }
 
         for episode in &before.episodes {
-            if !remote.contains(&episode.source_url) {
+            if snapshot.can_remove && !remote.contains(&episode.source_url) {
                 delete(api, slug, &episode.id).await?;
                 journal.forget(&api.config.api_origin, slug, &episode.source_url)?;
                 report.removed += 1;

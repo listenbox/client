@@ -37,10 +37,11 @@ pub async fn shows(api: &Api, command: ShowCommand) -> Result<()> {
             ));
             let report = |report: &listenbox_sync_engine::sync::Report| {
                 println!(
-                    "{} added, {} removed, {} unchanged{}",
+                    "{} added, {} removed, {} unchanged, {} skipped{}",
                     report.added,
                     report.removed,
                     report.unchanged,
+                    report.skipped,
                     if report.reordered {
                         "; feed order updated"
                     } else {

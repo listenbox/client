@@ -7,6 +7,8 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub struct Error {
     pub message: String,
     pub stack: Option<String>,
+    /// Structured upstream exception details, such as a player status.
+    pub info: Option<serde_json::Value>,
 }
 
 impl Error {
@@ -17,6 +19,7 @@ impl Error {
         Self {
             message: message.into(),
             stack: None,
+            info: None,
         }
     }
 
@@ -26,10 +29,30 @@ impl Error {
         }
         let value = ctx.catch();
         let stack = value.as_exception().and_then(|e| e.stack());
+        let info = (|| -> rquickjs::Result<Option<serde_json::Value>> {
+            let Some(object) = value.as_object() else {
+                return Ok(None);
+            };
+            let info: rquickjs::Value = object.get("info")?;
+            let Some(json) = ctx.json_stringify(info)? else {
+                return Ok(None);
+            };
+            Ok(serde_json::from_str(&json.to_string()?).ok())
+        })();
+        let info = info.unwrap_or_else(|_| {
+            // A non-serializable detail must not replace the original error or
+            // leave a second exception pending in the reusable engine.
+            ctx.catch();
+            None
+        });
         let message = Coerced::<String>::from_js(ctx, value)
             .map(|s| s.0)
             .unwrap_or_else(|_| "JavaScript exception".into());
-        Self { message, stack }
+        Self {
+            message,
+            stack,
+            info,
+        }
     }
 }
 
