@@ -22,6 +22,11 @@ struct Cli {
 enum Command {
     /// Authorize this CLI with Listenbox
     Login,
+    /// Import or remove the YouTube browser session shared with desktop
+    YoutubeCookies {
+        #[command(subcommand)]
+        command: CookieCommand,
+    },
     /// Show current CLI authorization
     Auth {
         #[command(subcommand)]
@@ -48,6 +53,29 @@ enum Command {
         #[command(subcommand)]
         command: MemberCommand,
     },
+}
+
+#[derive(Subcommand)]
+enum CookieCommand {
+    /// List browsers supported on this operating system
+    Browsers,
+    /// Import a scoped JSON cookie array without reading browser storage
+    ImportJson {
+        #[arg(long)]
+        file: std::path::PathBuf,
+    },
+    /// Import only YouTube cookies from a browser (may prompt for keychain access)
+    Import {
+        #[arg(long)]
+        browser: String,
+        /// Browser profile name, directory, or cookie database path
+        #[arg(long)]
+        profile: Option<String>,
+    },
+    /// Show import metadata without exposing cookie values
+    Status,
+    /// Remove the saved YouTube browser session
+    Clear,
 }
 
 #[derive(Subcommand)]
@@ -273,6 +301,56 @@ async fn run(cli: Cli, cancel: CancellationToken) -> Result<()> {
     let mut api = api::Api::new(config, cancel)?;
     match cli.command {
         Command::Login => auth::login(&mut api).await,
+        Command::YoutubeCookies { command } => {
+            use listenbox_sync_engine::cookies;
+            match command {
+                CookieCommand::Browsers => {
+                    for browser in cookies::browsers() {
+                        println!("{}\t{}", browser.id, browser.name);
+                    }
+                }
+                CookieCommand::ImportJson { file } => {
+                    use std::io::Read;
+                    let mut json = String::new();
+                    std::fs::File::open(file)?
+                        .take((1 << 20) + 1)
+                        .read_to_string(&mut json)?;
+                    let status = cookies::import_json(&api.config, &json)?;
+                    println!(
+                        "Imported {} YouTube cookies from JSON. Sync again to use this session.",
+                        status.count
+                    );
+                }
+                CookieCommand::Import { browser, profile } => {
+                    let status = cookies::import(
+                        &api.config,
+                        &browser,
+                        profile.as_deref(),
+                        api.cancel.clone(),
+                    )
+                    .await?;
+                    println!(
+                        "Imported {} YouTube cookies from {}. Sync again to use this session.",
+                        status.count, status.browser
+                    );
+                    for warning in status.warnings {
+                        eprintln!("{warning}");
+                    }
+                }
+                CookieCommand::Status => match cookies::status(&api.config)? {
+                    Some(status) => println!(
+                        "{} usable YouTube cookies imported from {}",
+                        status.count, status.browser
+                    ),
+                    None => println!("No YouTube cookies imported"),
+                },
+                CookieCommand::Clear => {
+                    cookies::clear(&api.config)?;
+                    println!("YouTube cookies removed");
+                }
+            }
+            Ok(())
+        }
         Command::Auth {
             command: AuthCommand::Logout,
         } => auth::logout(&api.config),
@@ -301,7 +379,8 @@ async fn run(cli: Cli, cancel: CancellationToken) -> Result<()> {
                 Command::Shows { command } => commands::shows(&api, command).await,
                 Command::Episodes { command } => episodes::run(&api, command).await,
                 Command::Members { command } => commands::members(&api, command).await,
-                Command::Login
+                Command::YoutubeCookies { .. }
+                | Command::Login
                 | Command::Auth {
                     command: AuthCommand::Logout,
                 } => unreachable!(),

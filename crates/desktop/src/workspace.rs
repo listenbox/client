@@ -3,8 +3,9 @@ use crate::tokens::{self, Tokens};
 use gpui_kit::component::{
     Disableable, Icon, Sizable,
     button::{Button, ButtonVariants},
-    input::{Input, InputState},
+    input::{Input, InputState, TextareaState},
     progress::Progress,
+    select::SelectState,
     spinner::Spinner,
 };
 use gpui_kit::prelude::FluentBuilder;
@@ -19,7 +20,26 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
+#[path = "workspace/episodes.rs"]
+mod episodes;
+#[path = "workspace/settings.rs"]
+mod settings;
+
 pub struct Workspace {
+    settings_open: bool,
+    cookie_browser: Entity<SelectState<Vec<SharedString>>>,
+    cookie_profile: Entity<InputState>,
+    cookie_json: Entity<TextareaState>,
+    cookie_status: Option<listenbox_sync_engine::cookies::Status>,
+    cookie_busy: bool,
+    cookie_error: Option<String>,
+    cookie_cancel: Option<CancellationToken>,
+    episodes: Vec<listenbox_sync_engine::publicapi::EpisodeListItem>,
+    episode_cursor: Option<String>,
+    episode_loading: bool,
+    episode_error: Option<String>,
+    episode_request: u64,
+    episode_cancel: Option<CancellationToken>,
     client: Client,
     runtime: Arc<tokio::runtime::Runtime>,
     cancel: CancellationToken,
@@ -68,6 +88,12 @@ enum Message {
     Report(String, Report),
     Finished(String, anyhow::Result<()>),
     SyncDue,
+    Cookies(anyhow::Result<listenbox_sync_engine::cookies::Status>),
+    Episodes(
+        u64,
+        bool,
+        anyhow::Result<listenbox_sync_engine::publicapi::EpisodePage>,
+    ),
 }
 
 impl Workspace {
@@ -111,7 +137,40 @@ impl Workspace {
             }
         })
         .detach();
+        let cookie_browser = cx.new(|cx| {
+            SelectState::new(
+                listenbox_sync_engine::cookies::browsers()
+                    .into_iter()
+                    .map(|browser| SharedString::from(browser.name))
+                    .collect::<Vec<_>>(),
+                Some(gpui_kit::component::IndexPath::default()),
+                window,
+                cx,
+            )
+        });
+        let cookie_profile =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Default profile"));
+        let cookie_json = cx.new(|cx| {
+            TextareaState::new(window, cx)
+                .rows(5)
+                .placeholder("Paste a JSON cookie array")
+        });
+        let cookie_status = client.youtube_cookies();
         let mut view = Self {
+            settings_open: false,
+            cookie_browser,
+            cookie_profile,
+            cookie_json,
+            cookie_error: cookie_status.as_ref().err().map(|error| error.to_string()),
+            cookie_status: cookie_status.ok().flatten(),
+            cookie_busy: false,
+            cookie_cancel: None,
+            episodes: vec![],
+            episode_cursor: None,
+            episode_loading: false,
+            episode_error: None,
+            episode_request: 0,
+            episode_cancel: None,
             client,
             runtime,
             lifetime: cancel.clone(),
@@ -279,6 +338,10 @@ impl Workspace {
             return;
         }
         match message {
+            Message::Cookies(result) => self.cookies_received(result, window, cx),
+            Message::Episodes(request, append, result) => {
+                self.episodes_received(request, append, result)
+            }
             Message::Drained(mode, result) => {
                 if mode == Shutdown::Quit {
                     cx.quit();
@@ -290,6 +353,10 @@ impl Workspace {
                 self.authenticating = false;
                 self.loading = false;
                 self.importing = false;
+                self.cookie_busy = false;
+                self.cookie_cancel = None;
+                self.cookie_json
+                    .update(cx, |input, cx| input.set_value("", window, cx));
                 self.auto_sync = false;
                 self.import_open = false;
                 self.import_slug = None;
@@ -345,6 +412,8 @@ impl Workspace {
                                 cx,
                             );
                             self.error = error;
+                        } else {
+                            self.load_episodes(false, cx);
                         }
                         self.start_auto_sync(cx);
                     }
@@ -407,6 +476,9 @@ impl Workspace {
                 }
             }
             Message::Report(slug, report) => {
+                if self.selected.as_ref() == Some(&slug) {
+                    self.load_episodes(false, cx);
+                }
                 self.reports.insert(
                     slug,
                     format!(
@@ -424,6 +496,9 @@ impl Workspace {
                 );
             }
             Message::Finished(slug, result) => {
+                if result.is_err() && self.selected.as_ref() == Some(&slug) {
+                    self.load_episodes(false, cx);
+                }
                 let stopped = self
                     .jobs
                     .remove(&slug)
@@ -440,9 +515,13 @@ impl Workspace {
         cx.notify();
     }
 
-    fn select(&mut self, slug: Option<String>, _window: &mut Window, cx: &mut Context<Self>) {
+    fn select(&mut self, slug: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
         self.selected = slug;
+        self.cookie_json
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.settings_open = false;
         self.import_open = false;
+        self.load_episodes(false, cx);
         self.error = None;
         cx.notify();
     }
@@ -1002,14 +1081,18 @@ impl Workspace {
                         .flex()
                         .justify_between()
                         .gap_4()
-                        .child(
-                            div().flex_1().min_w_0().child(item.title.clone()).child(
-                                div()
-                                    .text_size(px(12.))
-                                    .text_color(t.muted)
-                                    .child(item.source_title.clone()),
+                        .child(div().flex_1().min_w_0().child(item.title.clone()).child(
+                            div().text_size(px(12.)).text_color(t.muted).child(
+                                match item.duration_seconds {
+                                    Some(seconds) => format!(
+                                        "{} · {}",
+                                        item.source_title,
+                                        episodes::duration(seconds)
+                                    ),
+                                    None => item.source_title.clone(),
+                                },
                             ),
-                        )
+                        ))
                         .child(
                             div()
                                 .text_color(if item.phase == Phase::Failed {
@@ -1038,6 +1121,9 @@ impl Workspace {
                         item.total as f64 / 1_000_000.,
                         item.bytes_per_second() as f64 / 1_000_000.
                     )));
+            }
+            if let Some(reason) = &item.reason {
+                row = row.child(div().text_color(t.muted).child(reason.clone()));
             }
             if let Some(error) = &item.error {
                 row = row.child(div().text_color(t.danger).child(error.clone()));
@@ -1094,7 +1180,7 @@ impl Render for Workspace {
             .bg(t.background)
             .text_color(t.ink)
             .text_size(px(tokens::BODY))
-            .child(self.sidebar(cx))
+            .when(!self.settings_open, |view| view.child(self.sidebar(cx)))
             .child(
                 div()
                     .flex()
@@ -1116,6 +1202,15 @@ impl Render for Workspace {
                                     .flex()
                                     .items_center()
                                     .gap_2()
+                                    .child(
+                                        Button::new("settings")
+                                            .ghost()
+                                            .label("Settings")
+                                            .disabled(self.stopping.is_some())
+                                            .on_click(cx.listener(|view, _, window, cx| {
+                                                view.open_settings(window, cx)
+                                            })),
+                                    )
                                     .when(self.loading || self.authenticating, |row| {
                                         row.child(Spinner::new().small())
                                     })
@@ -1164,8 +1259,14 @@ impl Render for Workspace {
                             .when_some(self.error.clone(), |pane, error| {
                                 pane.child(div().mb_4().text_color(t.danger).child(error))
                             })
-                            .child(self.detail(window, cx))
-                            .when(self.loaded, |pane| pane.child(self.transfers(cx))),
+                            .child(if self.settings_open {
+                                self.settings(window, cx)
+                            } else {
+                                self.detail(window, cx)
+                            })
+                            .when(self.loaded && !self.settings_open, |pane| {
+                                pane.child(self.episode_list(cx)).child(self.transfers(cx))
+                            }),
                     ),
             )
             .when_some(quit_notice, |workspace, (instruction, opacity)| {

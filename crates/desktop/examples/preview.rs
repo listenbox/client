@@ -11,6 +11,10 @@ mod tokens;
 mod workspace {
     include!("../src/workspace.rs");
 
+    pub fn show_settings(view: &mut Workspace) {
+        view.settings_open = true;
+    }
+
     pub fn show_quit_notice(view: &mut Workspace, cx: &App) {
         view.quit_notice = Some(crate::quit::QuitNotice::new(cx.background_executor().now()));
     }
@@ -68,6 +72,19 @@ mod workspace {
         }
         view.loaded = true;
         view.select(Some("field-notes".into()), window, cx);
+        if let Some(cancel) = view.episode_cancel.take() {
+            cancel.cancel();
+        }
+        view.episode_request += 1;
+        view.episode_loading = false;
+        view.episodes = vec![
+            serde_json::from_value(serde_json::json!({
+                "id":"ep_0123456789abcdef", "show_id":"shw_0123456789abcdef",
+                "title":"A conversation about making things", "duration_seconds":1934,
+                "status":"published"
+            }))
+            .unwrap(),
+        ];
         let manager = view.client.downloads();
         let work = manager.enqueue(
             "field-notes",
@@ -132,6 +149,7 @@ fn main() -> anyhow::Result<()> {
     });
     std::fs::create_dir_all("dist/preview")?;
     for (name, mode, width, height, populated, quitting) in [
+        ("settings", ThemeMode::Light, 1080., 960., false, false),
         ("welcome", ThemeMode::Light, 1080., 760., false, false),
         (
             "workspace-light",
@@ -170,6 +188,9 @@ fn main() -> anyhow::Result<()> {
                 }
                 if name == "import-error" {
                     workspace::show_error(&mut view);
+                }
+                if name == "settings" {
+                    workspace::show_settings(&mut view);
                 }
                 if name == "team-menu" {
                     workspace::show_team_menu(&mut view);

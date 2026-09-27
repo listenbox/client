@@ -5,22 +5,38 @@ use std::collections::HashSet;
 use youtubei::{
     BrowseOptions, Client, Engine, EngineOptions, FetchRequest, FetchResponse, Format,
     GetVideoInfoOptions, Innertube, Player, Playlist, SessionOptions, UniversalCache,
-    models::{LockupContentType, Microformat, PlaylistAlert, PlaylistItem},
+    models::{
+        ContentImage, LockupContentType, Microformat, PlaylistAlert, PlaylistItem, ThumbnailOverlay,
+    },
 };
 
 pub struct YouTube {
     client: Innertube,
     parse_failed: std::rc::Rc<std::cell::Cell<bool>>,
+    playback_client: Client,
 }
 
 pub struct PlaylistSnapshot {
     pub title: String,
-    pub present: Vec<String>,
+    pub present: Vec<Video>,
     /// Missing IDs prove removal only when the full scan has no warnings.
     pub can_remove: bool,
 }
 
+#[derive(Clone)]
+pub struct Video {
+    pub id: String,
+    pub title: String,
+    pub duration_seconds: Option<u64>,
+}
+
+pub enum Playback {
+    Available(Media),
+    Unavailable(String),
+}
+
 pub struct Media {
+    pub duration_seconds: Option<u64>,
     pub title: String,
     pub description: String,
     pub published_at: i64,
@@ -36,11 +52,13 @@ pub struct Stream {
 
 impl YouTube {
     pub async fn new(api: &Api) -> Result<Self> {
-        let engine = Engine::with_options(EngineOptions {
-            memory_limit: 256 * 1024 * 1024,
-            stack_size: 4 * 1024 * 1024,
-        })
-        .await?;
+        let cookie = crate::cookies::header(&api.config)?;
+        let playback_client = if cookie.is_some() {
+            Client::Web
+        } else {
+            Client::VisionOs
+        };
+        let engine = Engine::with_options(EngineOptions::default()).await?;
         let cancel = api.cancel.clone();
         engine
             .set_interrupt_handler(move || cancel.is_cancelled())
@@ -93,6 +111,7 @@ impl YouTube {
                 lang: Some("en".into()),
                 location: Some("US".into()),
                 cache: Some(cache.as_cache()),
+                cookie,
                 fetch: Some(fetch),
                 ..SessionOptions::local()
             },
@@ -102,6 +121,7 @@ impl YouTube {
         Ok(Self {
             client,
             parse_failed,
+            playback_client,
         })
     }
 
@@ -144,13 +164,17 @@ impl YouTube {
                     title = data.info.title;
                 }
                 for item in data.items {
-                    let id = match item {
+                    let video = match item {
                         PlaylistItem::PlaylistVideo(video) => {
                             ensure!(
                                 valid_video_id(&video.id),
                                 "Playlist contains an unidentified unavailable item"
                             );
-                            video.id
+                            Video {
+                                id: video.id,
+                                title: video.title.into_string(),
+                                duration_seconds: duration_seconds(video.duration.seconds),
+                            }
                         }
                         PlaylistItem::LockupView(video)
                             if matches!(
@@ -162,12 +186,43 @@ impl YouTube {
                                 valid_video_id(&video.content_id),
                                 "Playlist contains an invalid video ID"
                             );
-                            video.content_id
+                            let duration = match video.content_image {
+                                Some(ContentImage::ThumbnailView { overlays }) => {
+                                    overlays.into_iter().find_map(|overlay| {
+                                        let badges = match overlay {
+                                            ThumbnailOverlay::ThumbnailOverlayBadgeView {
+                                                badges,
+                                            }
+                                            | ThumbnailOverlay::ThumbnailBottomOverlayView {
+                                                badges,
+                                            } => badges,
+                                            _ => return None,
+                                        };
+                                        badges
+                                            .into_iter()
+                                            .filter_map(|badge| badge.text)
+                                            .find_map(|text| parse_duration(&text))
+                                    })
+                                }
+                                _ => None,
+                            };
+                            Video {
+                                title: video
+                                    .metadata
+                                    .and_then(|metadata| metadata.title)
+                                    .map(|title| title.into_string())
+                                    .filter(|title| !title.trim().is_empty())
+                                    .unwrap_or_else(|| {
+                                        format!("YouTube video {}", video.content_id)
+                                    }),
+                                id: video.content_id,
+                                duration_seconds: duration,
+                            }
                         }
                         _ => bail!("Unsupported playlist item; listing is incomplete"),
                     };
-                    if seen.insert(id.clone()) {
-                        present.push(id);
+                    if seen.insert(video.id.clone()) {
+                        present.push(video);
                     }
                 }
                 pages += 1;
@@ -189,14 +244,14 @@ impl YouTube {
         .await
     }
 
-    pub async fn media(&self, api: &Api, id: &str) -> Result<Option<Media>> {
+    pub async fn media(&self, api: &Api, id: &str) -> Result<Playback> {
         api.wait(async {
             let info = match self
                 .client
                 .get_basic_info(
                     id,
                     GetVideoInfoOptions {
-                        client: Some(Client::VisionOs),
+                        client: Some(self.playback_client),
                         ..Default::default()
                     },
                 )
@@ -211,7 +266,7 @@ impl YouTube {
                         .as_ref()
                         .is_some_and(|info| info["status"] == "ERROR") =>
                 {
-                    return Ok(None);
+                    return Ok(Playback::Unavailable(error.info.as_ref().and_then(|info| info["reason"].as_str()).unwrap_or("Video unavailable").to_owned()));
                 }
                 Err(error) => return Err(error.into()),
             };
@@ -220,11 +275,14 @@ impl YouTube {
                 .playability_status
                 .as_ref()
                 .context("YouTube player response missing playability status")?;
-            if status.status != "OK"
-                || data.basic_info.is_live.unwrap_or(false)
-                || data.basic_info.is_upcoming.unwrap_or(false)
-            {
-                return Ok(None);
+            match status.status.as_str() {
+                "OK" => {},
+                "UNPLAYABLE" => return Ok(Playback::Unavailable(status.reason.clone().unwrap_or_else(|| "Video unavailable".into()))),
+                "LOGIN_REQUIRED" => bail!("YouTube requires authentication for {id}: {}. Import YouTube cookies in Settings or run listenbox youtube-cookies import --browser chrome, then sync again", status.reason.as_deref().unwrap_or("Sign in required")),
+                _ => bail!("YouTube could not resolve {id} ({}): {}", status.status, status.reason.as_deref().unwrap_or("No reason supplied")),
+            }
+            if data.basic_info.is_live.unwrap_or(false) || data.basic_info.is_upcoming.unwrap_or(false) {
+                return Ok(Playback::Unavailable("Live or upcoming video; sync after it has finished".into()));
             }
             let mut formats = info.formats().await?;
             formats.extend(info.adaptive_formats().await?);
@@ -280,7 +338,8 @@ impl YouTube {
                 })
                 .context("YouTube publication date is invalid")?
                 .timestamp_millis();
-            Ok(Some(Media {
+            Ok(Playback::Available(Media {
+                duration_seconds: data.basic_info.duration.and_then(duration_seconds),
                 title: data.basic_info.title.unwrap_or_else(|| id.into()),
                 description: data.basic_info.short_description.unwrap_or_default(),
                 published_at,
@@ -310,7 +369,8 @@ impl YouTube {
                 None,
                 None,
             )
-            .await?;
+            .await
+            .context("Load YouTube player for stream deciphering")?;
             session.set_player(&player).await?;
         }
         let mut url = url::Url::parse(&format.decipher(session.player().await?.as_ref()).await?)?;
@@ -318,17 +378,18 @@ impl YouTube {
         Ok(Stream {
             identity: format!("{}:{}:{:?}", info.itag, info.mime_type, info.content_length),
             url: url.into(),
-            user_agent: Client::VisionOs
+            user_agent: self
+                .playback_client
                 .user_agent(self.client.engine())
                 .await?
-                .context("YouTube VISIONOS user agent missing")?,
+                .unwrap_or_else(|| "Mozilla/5.0".into()),
         })
     }
 }
 
 async fn fetch(api: &Api, input: FetchRequest) -> Result<FetchResponse> {
     let url = url::Url::parse(&input.url)?;
-    let host = url.host_str().unwrap_or("");
+    let host = url.host_str().unwrap_or("").to_owned();
     ensure!(
         url.scheme() == "https"
             && [
@@ -344,7 +405,11 @@ async fn fetch(api: &Api, input: FetchRequest) -> Result<FetchResponse> {
     );
     let mut request = api.http.request(input.method.parse()?, url);
     for (name, value) in input.headers {
-        if !["host", "content-length", "cookie"].contains(&name.to_ascii_lowercase().as_str()) {
+        let name_lower = name.to_ascii_lowercase();
+        if matches!(name_lower.as_str(), "cookie" | "authorization") && host != "www.youtube.com" {
+            continue;
+        }
+        if !["host", "content-length"].contains(&name_lower.as_str()) {
             request = request.header(name, value);
         }
     }
@@ -376,4 +441,25 @@ fn valid_video_id(id: &str) -> bool {
         && id
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+}
+
+fn duration_seconds(seconds: f64) -> Option<u64> {
+    (seconds.is_finite() && seconds > 0.0 && seconds <= 7.0 * 24.0 * 3600.0)
+        .then_some(seconds as u64)
+}
+
+fn parse_duration(text: &str) -> Option<u64> {
+    let parts: Vec<_> = text.split(':').collect();
+    if !(2..=3).contains(&parts.len()) {
+        return None;
+    }
+    let mut seconds = 0u64;
+    for (index, part) in parts.iter().enumerate() {
+        let value: u64 = part.parse().ok()?;
+        if index > 0 && value >= 60 {
+            return None;
+        }
+        seconds = seconds.checked_mul(60)?.checked_add(value)?;
+    }
+    duration_seconds(seconds as f64)
 }

@@ -1,4 +1,5 @@
 /target/
+/crates/browser-cookies/target/
 /.cache/
 /dist/
 /.moon/cache/

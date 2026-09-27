@@ -1,3 +1,7 @@
+The pinned youtubei.js 18.1.0 bundle corrects ToggleFormField’s missing Text
+import by referring to its bundled Text2 class. Both input and corrected
+bundles have pinned SHA-256 checksums in Cargo.toml.
+
 @bufbuild/protobuf@2.15.0
                                  Apache License
                            Version 2.0, January 2004

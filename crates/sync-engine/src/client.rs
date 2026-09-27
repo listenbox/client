@@ -48,6 +48,45 @@ impl Client {
     pub fn show_url(&self, show: &p::Show) -> Result<String> {
         self.config.show_url(&show.team_id, &show.id)
     }
+    pub fn youtube_cookies(&self) -> Result<Option<crate::cookies::Status>> {
+        crate::cookies::status(&self.config)
+    }
+    pub fn import_cookie_json(&self, json: &str) -> Result<crate::cookies::Status> {
+        crate::cookies::import_json(&self.config, json)
+    }
+    pub fn clear_youtube_cookies(&self) -> Result<()> {
+        crate::cookies::clear(&self.config)
+    }
+    pub async fn import_browser_cookies(
+        &self,
+        browser: &str,
+        profile: Option<&str>,
+        cancel: CancellationToken,
+    ) -> Result<crate::cookies::Status> {
+        crate::cookies::import(&self.config, browser, profile, cancel).await
+    }
+    pub async fn episodes(
+        &self,
+        slug: String,
+        cursor: Option<String>,
+        cancel: CancellationToken,
+    ) -> Result<p::EpisodePage> {
+        let api = self.api(cancel)?;
+        if api.credential.is_none() {
+            return Err(crate::api::AuthenticationRequired.into());
+        }
+        Ok(serde_json::from_value(
+            api.json(
+                api.client().list_episodes(p::ListEpisodesParams {
+                    show_slug: slug,
+                    cursor,
+                    limit: Some(50),
+                }),
+                &[200],
+            )
+            .await?,
+        )?)
+    }
     fn api(&self, cancel: CancellationToken) -> Result<Api> {
         Api::new(self.config.clone(), cancel)
     }

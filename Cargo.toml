@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = ["crates/youtubei", "crates/sync-engine", "crates/cli", "crates/desktop"]
+exclude = ["crates/browser-cookies"]
 default-members = ["crates/cli", "crates/desktop"]
 
 [workspace.package]

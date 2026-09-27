@@ -1,7 +1,7 @@
 use crate::{
     api::{Api, string},
     download::download,
-    innertube::YouTube,
+    innertube::{Playback, YouTube},
     publicapi as p,
 };
 use anyhow::{Context, Result, ensure};
@@ -105,11 +105,12 @@ pub async fn import(
             "invalid YouTube video ID"
         );
         (
-            youtube
-                .media(api, &id)
-                .await?
-                .context("YouTube playback unavailable")?
-                .title,
+            match youtube.media(api, &id).await? {
+                Playback::Available(media) => media.title,
+                Playback::Unavailable(reason) => {
+                    anyhow::bail!("YouTube playback unavailable: {reason}")
+                }
+            },
             format!("https://www.youtube.com/watch?v={id}"),
         )
     };
@@ -146,7 +147,7 @@ pub(crate) struct VideoImport<'a> {
 
 pub(crate) enum ImportOutcome {
     Published,
-    Skipped,
+    Skipped(String),
 }
 
 pub(crate) async fn import_video(
@@ -187,13 +188,13 @@ pub(crate) async fn import_video(
                     std::fs::remove_file(path)?;
                 }
             }
-            let Some(media) = youtube.media(api, id).await? else {
-                // No package has been admitted. Keep any download checkpoint
-                // for a future scan, without retrying this video in this pass.
-                return Ok(ImportOutcome::Skipped);
+            let media = match youtube.media(api, id).await? {
+                Playback::Available(media) => media,
+                Playback::Unavailable(reason) => return Ok(ImportOutcome::Skipped(reason)),
             };
             if let Some(transfer) = transfer {
                 transfer.title(&media.title);
+                transfer.duration(media.duration_seconds);
             }
             if audio {
                 download(
