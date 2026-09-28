@@ -1,0 +1,5 @@
+[cache]
+# One OS-level store shared by every checkout; never put it under target/.
+# Keep the store on the same filesystem as worktrees for clones/hardlinks.
+adaptive_incremental = false
+preserve_incremental = false

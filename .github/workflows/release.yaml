@@ -10,6 +10,7 @@ jobs:
     runs-on: macos-15
     env:
       MACOSX_DEPLOYMENT_TARGET: '13.0'
+      KACHE_CONFIG: ${{ github.workspace }}/.kache.toml
     steps:
       - uses: actions/checkout@v7
         with:
@@ -19,20 +20,28 @@ jobs:
         with:
           moon-version: '2.5.5'
       - run: rustup toolchain install 1.98.1 --profile minimal
-      - name: Cache Rust builds and Moon outputs
+      - name: Cache Cargo sources, kache, and Moon outputs
         uses: actions/cache@v6
         with:
           # Save each commit's progress, then restore the closest compatible build.
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
+            ${{ runner.temp }}/kache
             .moon/cache/outputs
             ~/.pkgx
-          key: rust-v4-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.cargo/config.toml', 'rust-toolchain.toml', 'tools/native-ffmpeg.rs') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', '**/moon.yml', '.moon/**/*.yml', '.github/workflows/ci.yaml', '.github/workflows/release.yaml') }}-${{ github.sha }}
+          key: rust-kache-v1-0.27.0-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.kache.toml', '.cargo/config.toml', 'rust-toolchain.toml', 'tools/native-ffmpeg.rs') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', '**/moon.yml', '.moon/**/*.yml', '.github/workflows/ci.yaml', '.github/workflows/release.yaml') }}-${{ github.sha }}
           restore-keys: |
-            rust-v4-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.cargo/config.toml', 'rust-toolchain.toml', 'tools/native-ffmpeg.rs') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', '**/moon.yml', '.moon/**/*.yml', '.github/workflows/ci.yaml', '.github/workflows/release.yaml') }}-
-            rust-v4-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.cargo/config.toml', 'rust-toolchain.toml', 'tools/native-ffmpeg.rs') }}-
+            rust-kache-v1-0.27.0-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.kache.toml', '.cargo/config.toml', 'rust-toolchain.toml', 'tools/native-ffmpeg.rs') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', '**/moon.yml', '.moon/**/*.yml', '.github/workflows/ci.yaml', '.github/workflows/release.yaml') }}-
+            rust-kache-v1-0.27.0-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.kache.toml', '.cargo/config.toml', 'rust-toolchain.toml', 'tools/native-ffmpeg.rs') }}-
+      - name: Set up kache
+        uses: kunobi-ninja/kache-action@ad7317540dcdd71c904f7a60a87b620a0c0e67ed # v1
+        with:
+          version: '0.27.0'
+          cache-dir: ${{ runner.temp }}/kache
+          # The cache above refreshes on every commit, including source-only edits.
+          github-cache: false
+          pr-comment: false
       - name: Test release-linked media on Apple Silicon
         run: moon exec --ignore-ci-checks client-engine:test-media
       - name: Build Apple Silicon DMG
@@ -73,10 +82,17 @@ jobs:
           - architecture: x64
             target: x86_64-pc-windows-msvc
             runner: windows-2025
+            llvm-platform: win64
+            llvm-sha256: 16e5709785fef73c854646241c4a92c5cd574318d1b33c63330dd7721903e55c
           - architecture: arm64
             target: aarch64-pc-windows-msvc
             runner: windows-11-arm
+            llvm-platform: woa64
+            llvm-sha256: 76f44ef1ba6eeb5a65904e9500f042f588fade49952778ce48f0374daa934396
     runs-on: ${{ matrix.runner }}
+    env:
+      KACHE_CONFIG: ${{ github.workspace }}/.kache.toml
+      LLVM_VERSION: '22.1.8'
     defaults:
       run:
         shell: pwsh
@@ -87,6 +103,28 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      - name: Install host-native LLVM
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LLVM_PLATFORM: ${{ matrix.llvm-platform }}
+          LLVM_SHA256: ${{ matrix.llvm-sha256 }}
+        run: |
+          # LLVM 20/21 can crash when ffmpeg-sys unloads libclang after probing.
+          # LLVM 22 includes https://github.com/llvm/llvm-project/pull/171465.
+          $archive = "LLVM-$env:LLVM_VERSION-$env:LLVM_PLATFORM.exe"
+          $download = Join-Path $env:RUNNER_TEMP $archive
+          $directory = Join-Path $env:RUNNER_TEMP 'llvm'
+          $libclangPath = Join-Path $directory 'bin'
+          gh release download "llvmorg-$env:LLVM_VERSION" --repo llvm/llvm-project --pattern $archive --dir $env:RUNNER_TEMP
+          if ($LASTEXITCODE -ne 0) { throw 'LLVM download failed.' }
+          if ((Get-FileHash $download -Algorithm SHA256).Hash -ne $env:LLVM_SHA256) { throw 'LLVM checksum mismatch.' }
+          7z x $download "-o$directory" -y | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'LLVM extraction failed.' }
+          Remove-Item $download
+          if (-not (Test-Path (Join-Path $libclangPath 'libclang.dll'))) { throw 'LLVM libclang.dll is missing.' }
+          & (Join-Path $libclangPath 'clang.exe') --version
+          if ($LASTEXITCODE -ne 0) { throw 'LLVM cannot run on this host.' }
+          "LIBCLANG_PATH=$libclangPath" >> $env:GITHUB_ENV
       - uses: msys2/setup-msys2@v2
         id: msys2
         with:
@@ -127,18 +165,26 @@ jobs:
           $vsVersion = & $vswhere -latest -products '*' -requires "Microsoft.VisualStudio.Component.VC.Tools.$component" -property installationVersion
           if ($LASTEXITCODE -ne 0 -or -not $vsVersion) { throw 'Visual Studio build tools are missing.' }
           "native-toolchain=$vsVersion" >> $env:GITHUB_OUTPUT
-      - name: Cache Rust builds
+      - name: Cache Cargo sources and kache
         uses: actions/cache@v6
         with:
-          # Keep MSVC/native compatibility fixed while refreshing Cargo per commit.
+          # Keep MSVC/LLVM compatibility fixed while refreshing Cargo per commit.
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
-          key: windows-rust-v4-${{ matrix.target }}-${{ steps.version.outputs.native-toolchain }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'tools/native-ffmpeg.rs', 'tools/build-windows.ps1') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}-${{ github.sha }}
+            ${{ runner.temp }}/kache
+          key: windows-rust-kache-v1-0.27.0-${{ matrix.target }}-${{ steps.version.outputs.native-toolchain }}-llvm-${{ env.LLVM_VERSION }}-${{ hashFiles('.kache.toml', 'rust-toolchain.toml', '.cargo/config.toml', 'tools/native-ffmpeg.rs', 'tools/build-windows.ps1') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}-${{ github.sha }}
           restore-keys: |
-            windows-rust-v4-${{ matrix.target }}-${{ steps.version.outputs.native-toolchain }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'tools/native-ffmpeg.rs', 'tools/build-windows.ps1') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}-
-            windows-rust-v4-${{ matrix.target }}-${{ steps.version.outputs.native-toolchain }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'tools/native-ffmpeg.rs', 'tools/build-windows.ps1') }}-
+            windows-rust-kache-v1-0.27.0-${{ matrix.target }}-${{ steps.version.outputs.native-toolchain }}-llvm-${{ env.LLVM_VERSION }}-${{ hashFiles('.kache.toml', 'rust-toolchain.toml', '.cargo/config.toml', 'tools/native-ffmpeg.rs', 'tools/build-windows.ps1') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}-
+            windows-rust-kache-v1-0.27.0-${{ matrix.target }}-${{ steps.version.outputs.native-toolchain }}-llvm-${{ env.LLVM_VERSION }}-${{ hashFiles('.kache.toml', 'rust-toolchain.toml', '.cargo/config.toml', 'tools/native-ffmpeg.rs', 'tools/build-windows.ps1') }}-
+      - name: Set up kache
+        uses: kunobi-ninja/kache-action@ad7317540dcdd71c904f7a60a87b620a0c0e67ed # v1
+        with:
+          version: '0.27.0'
+          cache-dir: ${{ runner.temp }}/kache
+          # The cache above refreshes on every commit, including source-only edits.
+          github-cache: false
+          pr-comment: false
       - name: Restore FFmpeg
         id: ffmpeg-cache
         uses: actions/cache/restore@v6
