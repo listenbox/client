@@ -102,7 +102,7 @@ build filesystem. `actions/cache` persists that store and Cargo downloads, never
 `target/`. Each commit gets a new key, with compatible restore prefixes, so
 source-only changes refresh the cache too. The action's separate GitHub cache
 is disabled to avoid retaining a second copy. Cache keys separate platforms,
-kache/Rust versions and native configurations; Windows also includes MSVC.
+kache/Rust versions and native configurations; Windows also includes MSVC and LLVM.
 GitHub caches remain separate for each repository.
 
 Linux and macOS also retain `.moon/cache/outputs`. Moon can restore a matching
@@ -126,7 +126,7 @@ Every push to `master` builds and publishes one prerelease on [GitHub Releases](
 
 Pull requests build and package the same desktop applications on macOS ARM64, Windows x64, and Windows ARM64. Every runner executes release-linked media tests before packaging, including after native cache hits; only pushes to `master` publish releases. Linux retains the regular Moon checks. On Windows, FFmpeg is cached separately and saved before the Rust build, so subsequent attempts can reuse it even after a Rust compilation failure. Release runs also upload build logs, FFmpeg configuration diagnostics, and Moon reports for troubleshooting without a local Windows machine.
 
-The same builds can run on native Windows machines of the matching architecture with Rust, Moon, Visual Studio's C++ tools for that architecture and Windows SDK, host-native LLVM, cargo-nextest, and MSYS2 (`make`, `diffutils`, `tar`, `xz`, `openssl`). Set `MSYS2_LOCATION` to the MSYS2 installation directory and, if LLVM is not installed at `C:\Program Files\LLVM`, set `LIBCLANG_PATH` to the directory containing `libclang.dll`:
+The same builds can run on native Windows machines of the matching architecture with Rust, Moon, Visual Studio's C++ tools for that architecture and Windows SDK, host-native [LLVM 22.1.8](https://github.com/llvm/llvm-project/releases/tag/llvmorg-22.1.8), cargo-nextest, and MSYS2 (`make`, `diffutils`, `tar`, `xz`, `openssl`). CI installs checksum-verified LLVM 22.1.8 for each architecture: LLVM 20/21 have a [libclang unload crash](https://github.com/llvm/llvm-project/issues/154361) exposed when generating FFmpeg bindings from a clean target directory. Set `MSYS2_LOCATION` to the MSYS2 installation directory and, if LLVM is not installed at `C:\Program Files\LLVM`, set `LIBCLANG_PATH` to the directory containing `libclang.dll`:
 
 ```powershell
 $env:MSYS2_LOCATION = 'C:\msys64'
