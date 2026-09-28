@@ -3,6 +3,8 @@
 /dist/
 /.moon/cache/
 /node_modules/
+/vendor/bundle/
+/vendor/node_modules/
 
 /crates/*/dist/
 

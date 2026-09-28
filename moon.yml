@@ -27,10 +27,9 @@ fileGroups:
     - vendor/youtubejs/src/**/*
     - vendor/youtubejs/protos/generated/**/*
     - vendor/youtubejs/package.json
-    - vendor/youtubejs/aube-lock.yaml
-    - vendor/youtubejs/aube-workspace.yaml
+    - vendor/youtubejs/package-lock.json
     - vendor/youtubejs/tsconfig.json
-    - vendor/youtubejs/moon.yml
+    - vendor/moon.yml
 taskOptions:
   cache: true
 tasks:

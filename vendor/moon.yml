@@ -1,0 +1,37 @@
+language: typescript
+layer: library
+fileGroups:
+  sources:
+    - youtubejs/src/**/*
+    - youtubejs/protos/generated/**/*
+    - youtubejs/package.json
+    - youtubejs/package-lock.json
+    - youtubejs/tsconfig.json
+    - moon.yml
+tasks:
+  install:
+    command: aube -C youtubejs install --frozen-lockfile --ignore-scripts
+    inputs: [youtubejs/package.json, youtubejs/package-lock.json]
+    options:
+      cache: false
+      internal: true
+  bundle:
+    deps: [~:install]
+    command: aube -C youtubejs exec --no-install esbuild
+    args:
+      - src/platform/cf-worker.ts
+      - --bundle
+      - --target=es2020
+      - --keep-names
+      - --minify
+      - --format=esm
+      - --define:global=globalThis
+      - --conditions=module
+      - --outfile=../bundle/cf-worker.js
+      - --platform=node
+    inputs: ['@group(sources)']
+    outputs: [bundle/cf-worker.js]
+  test:
+    deps: [~:bundle]
+    command: aube -C youtubejs exec --no-install vitest run --root .. --globals --testTimeout 30000 tests/youtubejs.test.js
+    inputs: ['@group(sources)', tests/youtubejs.test.js]

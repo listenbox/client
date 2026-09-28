@@ -15,7 +15,10 @@ moon run client-youtubei:build client-youtubei:test
 ```
 
 Moon bundles `vendor/youtubejs/src/platform/cf-worker.ts` with preserved names
-from locked dependencies. Cargo embeds the generated bundle from its own `OUT_DIR` and performs no network download. Both standalone
+using upstream’s unchanged `package-lock.json`. The client owns the build tasks and
+deterministic regression tests in `vendor/`; the submodule contains only upstream
+source fixes. Moon writes `vendor/bundle/cf-worker.js`, which Cargo copies into its
+`OUT_DIR` and embeds without a network download. Both standalone
 and parent-workspace builds use these same prerequisites. End users need no
 JavaScript runtime. This crate is workspace-only; its source dependency is pinned
 by the nested Git submodule. License texts are in `THIRD-PARTY-NOTICES.txt`.
@@ -145,7 +148,7 @@ remain on the app's existing worker pool after receiving owned URL/metadata.
 The crate embeds rquickjs 0.11 with LLRT 0.8.1-beta's Rust implementations of
 fetch, streams, URL, events, timers, encoding, and crypto. Rust supplies
 `Platform.load`, player evaluation, structured cloning, and caching. The complete
-source-built `bundle/cf-worker.js` is loaded; Rust replaces its platform shim
+source-built `vendor/bundle/cf-worker.js` is loaded; Rust replaces its platform shim
 after evaluation. `--keep-names` is required by the upstream parser.
 
 The source bundle imports `module.createRequire` to probe optional worker

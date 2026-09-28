@@ -1,6 +1,6 @@
 defaultProject: client
 projects:
-  youtubejs: vendor/youtubejs
+  youtubejs: vendor
   client: .
   cli: crates/cli
   client-engine: crates/sync-engine
