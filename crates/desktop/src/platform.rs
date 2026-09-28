@@ -5,7 +5,7 @@ use gpui_kit::{App, Entity, Menu, MenuItem, Window, actions};
 #[path = "platform/windows.rs"]
 mod windows;
 
-actions!(listenbox, [Logout, Quit]);
+actions!(listenbox, [Logout, Quit, OpenSettings]);
 
 /// Query the actual shortcut key while its quit attempt is active. macOS can
 /// consume Command-key releases before they reach GPUI's focused view.
@@ -48,7 +48,18 @@ pub fn install_actions(view: &Entity<Workspace>, cx: &mut App) {
     });
     let quit = view.clone();
     cx.on_action(move |_: &Quit, cx| quit.update(cx, |view, cx| view.shutdown(Shutdown::Quit, cx)));
+    cx.bind_keys([gpui_kit::KeyBinding::new(
+        if cfg!(target_os = "macos") {
+            "cmd-,"
+        } else {
+            "ctrl-,"
+        },
+        OpenSettings,
+        None,
+    )]);
     cx.set_menus(vec![Menu::new("Listenbox").items([
+        MenuItem::action("Settings…", OpenSettings),
+        MenuItem::separator(),
         MenuItem::action("Log out", Logout),
         MenuItem::separator(),
         MenuItem::action("Quit Listenbox", Quit),

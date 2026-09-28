@@ -11,13 +11,13 @@ A Rust monorepo for the Listenbox desktop app, CLI and shared synchronization en
 
 ## Build
 
-Install Rust via rustup, [Moon](https://moonrepo.dev), [pkgx](https://pkgx.sh), [kache 0.27.0](https://github.com/kunobi-ninja/kache/releases/tag/v0.27.0), a C compiler, make and tar. Rust is pinned in `rust-toolchain.toml`. No JavaScript runtime or package manager is needed in this repository.
+Install Rust via rustup, [Moon](https://moonrepo.dev), [pkgx](https://pkgx.sh), [kache 0.27.0](https://github.com/kunobi-ninja/kache/releases/tag/v0.27.0), a C compiler, make and tar. Rust is pinned in `rust-toolchain.toml`. Source builds also use Node.js 26 and [Aube](https://aube.sh); shipped applications need neither.
 
 ```sh
 # Install once per machine, outside a checkout (or use the prebuilt release).
 cargo install --locked kache --version 0.27.0
 
-git clone https://github.com/listenbox/client.git
+git clone --recurse-submodules https://github.com/listenbox/client.git
 cd client
 moon run client:build
 moon ci
@@ -25,7 +25,7 @@ moon ci
 
 The debug app is `crates/desktop/dist/listenbox-desktop`; the terminal executable is `crates/cli/dist/listenbox`. `moon run desktop:build-release` builds the production desktop executable for the host architecture at `crates/desktop/dist/release/listenbox-desktop`. `moon run desktop:dmg` packages its Apple Silicon build as a DMG. `moon run client:package` packages release CLI and desktop binaries with notices.
 
-FFmpeg 9.0.2 is built from verified source by `tools/native-ffmpeg.rs`, linked with `ffmpeg-the-third`, and never run as a subprocess. The physical `youtubei` crate embeds a verified upstream bundle in QuickJS. Both applications are self-contained. See `THIRD-PARTY-NOTICES.txt` and the packaged FFmpeg source/license notice.
+FFmpeg 9.0.2 is built from verified source by `tools/native-ffmpeg.rs`, linked with `ffmpeg-the-third`, and never run as a subprocess. The `youtubei` crate embeds our pinned `vendor/youtubejs` source build in QuickJS. Moon installs locked JavaScript build dependencies and creates the bundle before Cargo; Cargo never downloads a prebuilt YouTube.js bundle. Both applications are self-contained. See `THIRD-PARTY-NOTICES.txt` and the packaged FFmpeg source/license notice.
 
 ### Moon and Cargo
 
@@ -203,6 +203,39 @@ listenbox shows order --show field-notes --episode ep_0123456789abcdef --episode
 ```
 
 Supplied episodes move to the front in sequence; other episodes retain their relative order. Sync restores playlist order for imported podcasts.
+
+## YouTube sign-in checks
+
+When YouTube asks you to sign in, open **Settings → YouTube** in the desktop app
+(⌘, on macOS or Ctrl+, on Windows). Paste a **Netscape cookies.txt** export and
+choose **Save cookies**, then return to the podcast and choose **Sync now**.
+The CLI accepts the same format, without requiring a Listenbox login to save it:
+
+```sh
+listenbox youtube-cookies import /path/to/cookies.txt
+listenbox shows sync youtube --show field-notes
+listenbox youtube-cookies remove
+```
+
+Follow [the private-session export guide](https://listenbox.app/guides/import-youtube-as-a-podcast/#when-youtube-asks-you-to-sign-in).
+Cookies stay in the shared profile's `youtube-cookies/jar.json`. The app never
+shows the saved contents. A new import replaces the session; removal returns
+future requests to anonymous access. Only YouTube receives these credentials;
+media hosts and the Listenbox API do not.
+
+The sync engine reads immutable snapshots without a reader lock. Writers take
+an OS file lock, compare the request's generation and per-cookie revisions,
+merge unrelated updates, then sync and atomically replace the snapshot. Late
+responses cannot overwrite a newer rotation, resurrect a deleted cookie, or
+undo a user replacement/removal. Interrupted writes leave the prior complete
+snapshot readable. Response cookies are committed before consuming the body.
+Unix directories are private (0700) and snapshots are 0600; Windows uses the
+user profile's inherited access controls.
+
+Tests use synthetic cookie exports and local YouTube fixtures. The optional
+`verify_youtube` example is a manual live probe: it copies an explicitly supplied
+export into a temporary profile, checks playlist extraction and media ranges,
+and deletes that profile on exit. It never publishes and is not run by CI.
 
 ## Interrupted work
 

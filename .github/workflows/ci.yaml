@@ -14,7 +14,13 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          submodules: recursive
           filter: blob:none
+      - uses: jdx/aube-action@v1
+        with:
+          version: '2.5.1'
+          node-version: '26.5.0'
+          run-install: false
       - uses: pkgxdev/setup@v5
       - run: sudo apt-get update && sudo apt-get install -y libasound2-dev libfontconfig1-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev libxcb1-dev libx11-xcb-dev libx11-dev libegl1-mesa-dev libvulkan-dev libssl-dev
       - uses: moonrepo/setup-toolchain@v0

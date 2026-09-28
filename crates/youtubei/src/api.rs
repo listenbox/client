@@ -180,7 +180,7 @@ impl Session {
     pub async fn actions(&self) -> Result<Actions> {
         Ok(Actions(self.0.get("actions").await?))
     }
-    scalar_properties!(client_name: String, client_version: String, lang: String, logged_in: bool);
+    scalar_properties!(client_name: String, client_version: String, lang: String, logged_in: bool, user_agent: String);
     object_properties!(context, http, oauth);
 }
 

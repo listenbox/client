@@ -1311,6 +1311,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "cookie"
+version = "0.18.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1a373e3602691c3cdea496d2f0ee5935151e6168fe87739483c463db1b2f2f87"
+dependencies = [
+ "percent-encoding",
+ "time",
+ "version_check",
+]
+
+[[package]]
+name = "cookie_store"
+version = "0.22.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "15b2c103cf610ec6cae3da84a766285b42fd16aad564758459e6ecf128c75206"
+dependencies = [
+ "cookie",
+ "document-features",
+ "idna",
+ "log",
+ "serde",
+ "serde_derive",
+ "time",
+ "url",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4470,6 +4497,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "cookie",
+ "cookie_store",
  "ffmpeg-the-third",
  "futures-util",
  "hex",
@@ -4483,6 +4512,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "sha1 0.10.7",
  "sha2 0.10.9",
  "tempfile",
  "tokio",
@@ -7017,7 +7047,6 @@ checksum = "eddd3ca559203180a307f12d114c268abf583f59b03cb906fd0b3ff8646c1147"
 dependencies = [
  "base64",
  "bytes",
- "futures-channel",
  "futures-core",
  "futures-util",
  "http",
@@ -8357,17 +8386,6 @@ dependencies = [
  "core-foundation-sys",
  "libc",
  "objc",
-]
-
-[[package]]
-name = "tar"
-version = "0.4.46"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f6221d9a6003c78398e3b239969f352578258df48c8eb051caadae0015bc840"
-dependencies = [
- "filetime",
- "libc",
- "xattr",
 ]
 
 [[package]]
@@ -10376,16 +10394,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "xattr"
-version = "1.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32e45ad4206f6d2479085147f02bc2ef834ac85886624a23575ae137c8aa8156"
-dependencies = [
- "libc",
- "rustix",
-]
-
-[[package]]
 name = "xcb"
 version = "1.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10512,20 +10520,15 @@ dependencies = [
 name = "youtubei"
 version = "0.1.0"
 dependencies = [
- "flate2",
  "futures-util",
  "llrt_modules",
  "llrt_utils_watts",
- "reqwest",
  "rquickjs",
  "serde",
  "serde_json",
  "sha1 0.10.7",
- "sha2 0.10.9",
  "static_assertions",
- "tar",
  "tokio",
- "toml 0.8.23",
  "uuid",
 ]
 

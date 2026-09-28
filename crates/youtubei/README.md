@@ -1,34 +1,30 @@
 # youtubei
 
-The client workspace's Rust crate embedding QuickJS and youtubei.js from npm. One `Innertube`
-owns a reusable JavaScript instance; returned objects retain the same engine.
-No application TypeScript or JavaScript bridge runs inside it.
+The client workspace's Rust crate embeds QuickJS, our pinned
+[YouTube.js fork](https://github.com/listenbox/YouTube.js). Live objects
+retain a reusable engine; the sync engine owns cookies, transport, downloads, and
+application policy.
 
-Extracted from [Mazit](https://github.com/meoyawn/mazit/tree/fa0cd7c9edc3b0d25d91fd1bb93ef0f9bd58eb47/youtubei), preserving
-its MIT attribution. Build prerequisites are Rust, a C toolchain, and CMake.
-Cargo downloads the published `youtubei.js` 18.1.0 archive from the npm registry,
-verifies its SHA-256, reads `package/bundle/cf-worker.js`, and verifies that file's
-SHA-256 before embedding it. No JavaScript package manager, runtime, or bundler is
-needed. The upstream bundle is used unchanged, including its preserved names.
-
-From the repository root, Moon supplies CMake through pkgx:
+Extracted from [Mazit](https://github.com/meoyawn/mazit/tree/fa0cd7c9edc3b0d25d91fd1bb93ef0f9bd58eb47/youtubei), preserving its MIT attribution.
+Source builds require Rust, a C toolchain, CMake, Node.js 26, Aube and Moon.
+Initialize submodules recursively, then run:
 
 ```sh
+git submodule update --init --recursive
 moon run client-youtubei:build client-youtubei:test
 ```
+
+Moon bundles `vendor/youtubejs/src/platform/cf-worker.ts` with preserved names
+from locked dependencies. Cargo embeds the generated bundle from its own `OUT_DIR` and performs no network download. Both standalone
+and parent-workspace builds use these same prerequisites. End users need no
+JavaScript runtime. This crate is workspace-only; its source dependency is pinned
+by the nested Git submodule. License texts are in `THIRD-PARTY-NOTICES.txt`.
 
 Sibling crates consume the checked-in source directly:
 
 ```toml
 youtubei = { path = "../youtubei" }
 ```
-
-The upstream version and both hashes live in `package.metadata.youtubei` in
-Cargo.toml. A cold build needs access to the npm registry. Verified generated
-output stays in Cargo's build-specific `OUT_DIR`; it is reused while its checksum
-matches. Generated files are gitignored and excluded from the Cargo package.
-Concurrent consumers never write to the shared Git checkout. Upstream license
-texts are retained in `THIRD-PARTY-NOTICES.txt`.
 
 ```rust
 use youtubei::{Innertube, SessionOptions, models::PlaylistItem};
@@ -149,10 +145,10 @@ remain on the app's existing worker pool after receiving owned URL/metadata.
 The crate embeds rquickjs 0.11 with LLRT 0.8.1-beta's Rust implementations of
 fetch, streams, URL, events, timers, encoding, and crypto. Rust supplies
 `Platform.load`, player evaluation, structured cloning, and caching. The complete
-published `bundle/cf-worker.js` is loaded unchanged; Rust replaces its platform shim
+source-built `bundle/cf-worker.js` is loaded; Rust replaces its platform shim
 after evaluation. `--keep-names` is required by the upstream parser.
 
-The published bundle imports `module.createRequire` to probe optional worker
+The source bundle imports `module.createRequire` to probe optional worker
 threads. The crate supplies a native-only require factory because LLRT 0.8.1
 exports `require` directly under that name. Native module loads work; filesystem
 CommonJS loads and worker threads are unavailable and raise JavaScript errors.
@@ -160,8 +156,8 @@ The bundle's own optional-worker handling catches that error.
 
 Tests run the real bundle offline: object lifetime/identity, independent workers,
 overlapping promises, Rust callbacks, errors, flat continuation pages, VISIONOS
-request construction, parser nodes, formats, and the platform hooks. They do not
-establish compatibility of every upstream feature (e.g. account authentication).
+request construction, parser nodes, formats, and the platform hooks.
+These tests do not establish compatibility of every upstream feature.
 LLRT implements a subset of browser APIs. Cancelling a Rust wait does not itself
 abort a JavaScript operation; use the upstream AbortSignal/cancellation API when
 needed, and drive background jobs with `Engine::idle` while using subscriptions.

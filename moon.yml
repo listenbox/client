@@ -24,6 +24,13 @@ fileGroups:
     - .config/nextest.toml
     - .moon/**/*.yml
     - moon.yml
+    - vendor/youtubejs/src/**/*
+    - vendor/youtubejs/protos/generated/**/*
+    - vendor/youtubejs/package.json
+    - vendor/youtubejs/aube-lock.yaml
+    - vendor/youtubejs/aube-workspace.yaml
+    - vendor/youtubejs/tsconfig.json
+    - vendor/youtubejs/moon.yml
 taskOptions:
   cache: true
 tasks:
@@ -42,7 +49,7 @@ tasks:
       .cache/native-ffmpeg
     outputs: [.cache/ffmpeg/**/*]
   prerequisites:
-    deps: [~:native-ffmpeg, ~:codegen]
+    deps: [~:native-ffmpeg, ~:codegen, youtubejs:bundle]
     inputs: []
     options:
       internal: true

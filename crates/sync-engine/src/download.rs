@@ -10,6 +10,16 @@ use sha2::{Digest, Sha256};
 use std::{io::SeekFrom, path::Path};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
+#[derive(Debug)]
+pub(crate) struct MediaUnavailable;
+
+impl std::fmt::Display for MediaUnavailable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("YouTube did not allow playback of this video. It will be checked again at the next sync.")
+    }
+}
+impl std::error::Error for MediaUnavailable {}
+
 pub(crate) async fn download(
     api: &Api,
     source: &Stream,
@@ -26,6 +36,9 @@ pub(crate) async fn download(
                 .header("User-Agent", &source.user_agent),
         )
         .await?;
+    if response.status() == reqwest::StatusCode::FORBIDDEN {
+        return Err(MediaUnavailable.into());
+    }
     ensure!(
         response.status() == reqwest::StatusCode::PARTIAL_CONTENT,
         "Resolve download length: HTTP {}",
@@ -119,6 +132,9 @@ pub(crate) async fn download(
                 request = request.header("If-Range", validator);
             }
             let mut response = api.send(request).await?;
+            if response.status() == reqwest::StatusCode::FORBIDDEN {
+                return Err(MediaUnavailable.into());
+            }
             ensure!(
                 response.status() == reqwest::StatusCode::PARTIAL_CONTENT,
                 "Download range returned HTTP {}; source may have changed",

@@ -1,6 +1,8 @@
 //! Application policy over the shared typed youtubei bindings.
 use crate::api::{Api, read_bounded};
+use crate::cookies::{CookieJar, SignInRequired};
 use anyhow::{Context, Result, bail, ensure};
+use sha1::{Digest, Sha1};
 use std::collections::HashSet;
 use youtubei::{
     BrowseOptions, Client, Engine, EngineOptions, FetchRequest, FetchResponse, Format,
@@ -13,7 +15,7 @@ use youtubei::{
 pub struct YouTube {
     client: Innertube,
     parse_failed: std::rc::Rc<std::cell::Cell<bool>>,
-    playback_client: Client,
+    user_agent: String,
 }
 
 pub struct PlaylistSnapshot {
@@ -55,7 +57,10 @@ pub struct Stream {
 
 impl YouTube {
     pub async fn new(api: &Api) -> Result<Self> {
-        let playback_client = Client::VisionOs;
+        let jar = CookieJar::new(&api.config.directory);
+        let snapshot_jar = jar.clone();
+        let initial = tokio::task::spawn_blocking(move || snapshot_jar.snapshot()).await??;
+        let cookie = initial.header(&url::Url::parse("https://www.youtube.com/")?);
         let engine = Engine::with_options(EngineOptions::default()).await?;
         let cancel = api.cancel.clone();
         engine
@@ -67,7 +72,7 @@ impl YouTube {
             .value_with(|ctx| {
                 Ok(youtubei::rquickjs::Function::new(
                     ctx,
-                    move |_error: youtubei::rquickjs::Value<'_>| {
+                    move |_: youtubei::rquickjs::Object<'_>| {
                         failed.set(true);
                     },
                 )?
@@ -79,11 +84,14 @@ impl YouTube {
             .await?
             .call("setParserErrorHandler", &[callback.into()])
             .await?;
-        let api = api.clone();
+        let mut api = api.clone();
+        // Never forward browser credentials through a redirect.
+        api.http = Api::http_client(true)?;
         let continuations = std::sync::Arc::new(parking_lot::Mutex::new(HashSet::new()));
         let fetch = engine
             .fetch_with(move |request| {
                 let api = api.clone();
+                let jar = jar.clone();
                 let continuations = continuations.clone();
                 async move {
                     if request.url.contains("/youtubei/v1/browse")
@@ -96,7 +104,7 @@ impl YouTube {
                     {
                         return Err(youtubei::Error::new("Repeated YouTube continuation"));
                     }
-                    fetch(&api, request)
+                    fetch(&api, &jar, request)
                         .await
                         .map_err(|error| youtubei::Error::new(error.to_string()))
                 }
@@ -110,19 +118,22 @@ impl YouTube {
                 location: Some("US".into()),
                 cache: Some(cache.as_cache()),
                 fetch: Some(fetch),
+                cookie: (!cookie.is_empty()).then_some(cookie),
                 generate_session_locally: Some(false),
                 fail_fast: Some(true),
-                retrieve_player: Some(false),
+                // Web playback needs the player signature timestamp.
+                retrieve_player: Some(true),
                 retrieve_innertube_config: Some(false),
                 ..Default::default()
             },
         )
         .await
         .context("initialize YouTube")?;
+        let user_agent = client.session().await?.user_agent().await?;
         Ok(Self {
             client,
             parse_failed,
-            playback_client,
+            user_agent,
         })
     }
 
@@ -264,7 +275,7 @@ impl YouTube {
                 .get_basic_info(
                     id,
                     GetVideoInfoOptions {
-                        client: Some(self.playback_client),
+                        client: Some(Client::Web),
                         ..Default::default()
                     },
                 )
@@ -279,7 +290,14 @@ impl YouTube {
                         .as_ref()
                         .is_some_and(|info| info["status"] == "ERROR") =>
                 {
-                    return Ok(Playback::Unavailable(error.info.as_ref().and_then(|info| info["reason"].as_str()).unwrap_or("Video unavailable").to_owned()));
+                    return Ok(Playback::Unavailable(
+                        error
+                            .info
+                            .as_ref()
+                            .and_then(|info| info["reason"].as_str())
+                            .unwrap_or("Video unavailable")
+                            .to_owned(),
+                    ));
                 }
                 Err(error) => return Err(error.into()),
             };
@@ -289,13 +307,33 @@ impl YouTube {
                 .as_ref()
                 .context("YouTube player response missing playability status")?;
             match status.status.as_str() {
-                "OK" => {},
-                "UNPLAYABLE" => return Ok(Playback::Unavailable(status.reason.clone().unwrap_or_else(|| "Video unavailable".into()))),
-                "LOGIN_REQUIRED" => bail!("YouTube rejected anonymous playback for {id}: {}. Check YouTube access on your current network before syncing again", status.reason.as_deref().unwrap_or("Sign in required")),
-                _ => bail!("YouTube could not resolve {id} ({}): {}", status.status, status.reason.as_deref().unwrap_or("No reason supplied")),
+                "OK" => {}
+                "UNPLAYABLE" => {
+                    return Ok(Playback::Unavailable(
+                        status
+                            .reason
+                            .clone()
+                            .unwrap_or_else(|| "Video unavailable".into()),
+                    ));
+                }
+                "LOGIN_REQUIRED" => {
+                    return Err(anyhow::Error::new(SignInRequired).context(format!(
+                        "{} ({id})",
+                        status.reason.as_deref().unwrap_or("Sign in required")
+                    )));
+                }
+                _ => bail!(
+                    "YouTube could not resolve {id} ({}): {}",
+                    status.status,
+                    status.reason.as_deref().unwrap_or("No reason supplied")
+                ),
             }
-            if data.basic_info.is_live.unwrap_or(false) || data.basic_info.is_upcoming.unwrap_or(false) {
-                return Ok(Playback::Unavailable("Live or upcoming video; sync after it has finished".into()));
+            if data.basic_info.is_live.unwrap_or(false)
+                || data.basic_info.is_upcoming.unwrap_or(false)
+            {
+                return Ok(Playback::Unavailable(
+                    "Live or upcoming video; sync after it has finished".into(),
+                ));
             }
             let mut formats = info.formats().await?;
             formats.extend(info.adaptive_formats().await?);
@@ -332,14 +370,11 @@ impl YouTube {
                         .context("YouTube video has no audio stream")?,
                 )
             };
-            // VISIONOS supplies downloadable streams but omits publication dates.
-            // WEB still supplies that metadata when its own playback is unavailable.
-            let metadata = self.client.get_basic_info(id, GetVideoInfoOptions {
-                client: Some(Client::Web),
-                ..Default::default()
-            }).await?.data().await?;
-            ensure!(metadata.basic_info.id.as_deref() == Some(id), "YouTube metadata video ID differs from the requested video");
-            let published = match metadata.microformat {
+            ensure!(
+                data.basic_info.id.as_deref() == Some(id),
+                "YouTube metadata video ID differs from the requested video"
+            );
+            let published = match data.microformat {
                 Some(Microformat::PlayerMicroformat(metadata)) => metadata
                     .publish_date
                     .filter(|date| !date.is_empty())
@@ -399,16 +434,12 @@ impl YouTube {
         Ok(Stream {
             identity: format!("{}:{}:{:?}", info.itag, info.mime_type, info.content_length),
             url: url.into(),
-            user_agent: self
-                .playback_client
-                .user_agent(self.client.engine())
-                .await?
-                .unwrap_or_else(|| "Mozilla/5.0".into()),
+            user_agent: self.user_agent.clone(),
         })
     }
 }
 
-async fn fetch(api: &Api, input: FetchRequest) -> Result<FetchResponse> {
+async fn fetch(api: &Api, jar: &CookieJar, input: FetchRequest) -> Result<FetchResponse> {
     let url = url::Url::parse(&input.url)?;
     let host = url.host_str().unwrap_or("").to_owned();
     ensure!(
@@ -424,20 +455,54 @@ async fn fetch(api: &Api, input: FetchRequest) -> Result<FetchResponse> {
             .any(|base| host == *base || host.ends_with(&format!(".{base}"))),
         "unexpected YouTube API host"
     );
-    let mut request = api.http.request(input.method.parse()?, url);
+    let snapshot_jar = jar.clone();
+    let snapshot = tokio::task::spawn_blocking(move || snapshot_jar.snapshot()).await??;
+    let cookie = snapshot.header(&url);
+    let mut request = api
+        .http
+        .request(input.method.parse()?, url.clone())
+        .timeout(std::time::Duration::from_secs(30));
     for (name, value) in input.headers {
         let name_lower = name.to_ascii_lowercase();
-        if matches!(name_lower.as_str(), "cookie" | "authorization") && host != "www.youtube.com" {
+        if matches!(
+            name_lower.as_str(),
+            "cookie" | "authorization" | "x-goog-authuser" | "x-goog-pageid"
+        ) {
             continue;
         }
         if !["host", "content-length"].contains(&name_lower.as_str()) {
             request = request.header(name, value);
         }
     }
+    if !cookie.is_empty() {
+        request = request.header("cookie", &cookie);
+        if host == "www.youtube.com" && url.path().starts_with("/youtubei/") {
+            let timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_secs();
+            let authorization = cookie_authorization(&cookie, timestamp);
+            if !authorization.is_empty() {
+                request = request
+                    .header("authorization", authorization)
+                    .header("x-origin", "https://www.youtube.com")
+                    .header("x-goog-authuser", "0");
+            }
+        }
+    }
     if let Some(body) = input.body {
         request = request.body(body);
     }
     let response = api.send(request).await?;
+    let updates = response
+        .headers()
+        .get_all(reqwest::header::SET_COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok().map(str::to_owned))
+        .collect::<Vec<_>>();
+    let update_jar = jar.clone();
+    // Commit response cookies before reading the body. Cancellation or a body
+    // failure must not discard a rotation that YouTube already performed.
+    tokio::task::spawn_blocking(move || update_jar.update(&snapshot, &url, &updates)).await??;
     let status = response.status().as_u16();
     let headers = response
         .headers()
@@ -496,4 +561,33 @@ fn duration_badge_seconds(text: &str) -> Option<i64> {
         total = total.checked_mul(60)?.checked_add(value)?;
     }
     Some(total)
+}
+
+fn cookie_authorization(header: &str, timestamp: u64) -> String {
+    let value = |name: &str| {
+        header.split("; ").find_map(|part| {
+            part.split_once('=')
+                .filter(|(key, _)| *key == name)
+                .map(|(_, value)| value)
+        })
+    };
+    [
+        (
+            "SAPISIDHASH",
+            value("SAPISID").or_else(|| value("__Secure-3PAPISID")),
+        ),
+        ("SAPISID1PHASH", value("__Secure-1PAPISID")),
+        ("SAPISID3PHASH", value("__Secure-3PAPISID")),
+    ]
+    .into_iter()
+    .filter_map(|(scheme, sid)| {
+        sid.map(|sid| {
+            let digest = hex::encode(Sha1::digest(format!(
+                "{timestamp} {sid} https://www.youtube.com"
+            )));
+            format!("{scheme} {timestamp}_{digest}")
+        })
+    })
+    .collect::<Vec<_>>()
+    .join(" ")
 }

@@ -1,0 +1,3 @@
+[submodule "vendor/youtubejs"]
+	path = vendor/youtubejs
+	url = https://github.com/listenbox/YouTube.js.git

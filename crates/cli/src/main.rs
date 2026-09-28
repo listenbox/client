@@ -33,6 +33,11 @@ enum Command {
         slug: Option<String>,
         source_url: String,
     },
+    /// Import or remove the YouTube session shared with Listenbox desktop
+    YoutubeCookies {
+        #[command(subcommand)]
+        command: CookieCommand,
+    },
     /// Manage shows by slug
     Shows {
         #[command(subcommand)]
@@ -48,6 +53,14 @@ enum Command {
         #[command(subcommand)]
         command: MemberCommand,
     },
+}
+
+#[derive(Subcommand)]
+enum CookieCommand {
+    /// Replace saved cookies with a Netscape cookies.txt export
+    Import { file: std::path::PathBuf },
+    /// Remove the saved session and return to anonymous access
+    Remove,
 }
 
 #[derive(Subcommand)]
@@ -272,6 +285,16 @@ async fn run(cli: Cli, cancel: CancellationToken) -> Result<()> {
     let config = config::Config::load(cli.config.as_deref())?;
     let mut api = api::Api::new(config, cancel)?;
     match cli.command {
+        Command::YoutubeCookies { command } => {
+            let jar = listenbox_sync_engine::cookies::CookieJar::new(&api.config.directory);
+            tokio::task::spawn_blocking(move || match command {
+                CookieCommand::Import { file } => jar.import_file(&file),
+                CookieCommand::Remove => jar.remove(),
+            })
+            .await??;
+            println!("YouTube cookies updated. Sync your podcast to continue.");
+            Ok(())
+        }
         Command::Login => auth::login(&mut api).await,
         Command::Auth {
             command: AuthCommand::Logout,
@@ -301,7 +324,8 @@ async fn run(cli: Cli, cancel: CancellationToken) -> Result<()> {
                 Command::Shows { command } => commands::shows(&api, command).await,
                 Command::Episodes { command } => episodes::run(&api, command).await,
                 Command::Members { command } => commands::members(&api, command).await,
-                Command::Login
+                Command::YoutubeCookies { .. }
+                | Command::Login
                 | Command::Auth {
                     command: AuthCommand::Logout,
                 } => unreachable!(),
