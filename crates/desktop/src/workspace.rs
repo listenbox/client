@@ -480,7 +480,7 @@ impl Workspace {
                         if let Some(slug) = &imported_slug {
                             self.reports.insert(
                                 slug.clone(),
-                                "Import paused. Progress is saved; use Sync now to resume.".into(),
+                                "Import stopped. Use Sync now to continue.".into(),
                             );
                         }
                         self.error = Some(ErrorNotice::import(
@@ -528,8 +528,7 @@ impl Workspace {
                     self.reports
                         .insert(slug, "Stopped. Progress is saved for the next sync.".into());
                 } else if let Err(error) = result {
-                    self.reports
-                        .insert(slug, format!("Sync paused after an error. {error:#}"));
+                    self.reports.insert(slug, format!("Sync failed. {error:#}"));
                 }
             }
         }
@@ -1057,30 +1056,12 @@ impl Workspace {
             .border_color(t.divider)
             .pt(px(tokens::SPACE))
             .child(
-                div()
-                    .flex()
-                    .justify_between()
-                    .items_center()
-                    .child(
-                        div()
-                            .text_size(px(tokens::TITLE))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child("Transfers"),
-                    )
-                    .child(
-                        Button::new("pause-transfers")
-                            .ghost()
-                            .label(if self.progress.paused {
-                                "Resume queue"
-                            } else {
-                                "Pause queue"
-                            })
-                            .disabled(self.progress.items.is_empty())
-                            .on_click(cx.listener(|view, _, _, cx| {
-                                view.client.downloads().set_paused(!view.progress.paused);
-                                cx.notify();
-                            })),
-                    ),
+                div().flex().justify_between().items_center().child(
+                    div()
+                        .text_size(px(tokens::TITLE))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child("Transfers"),
+                ),
             );
         if self.progress.items.is_empty() {
             rows = rows.child(

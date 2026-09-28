@@ -97,10 +97,9 @@ async fn live_backend(cx: &mut TestAppContext) {
         window.render_frame(cx);
         assert_ne!(window.find("sync-now").disabled(), Some(true));
         assert!(window.try_find("stop-sync").is_none());
-        window.click("pause-transfers", cx);
+        assert!(window.try_find("pause-transfers").is_none());
     })
     .unwrap();
-    wait_for(cx, &workspace, |view| view.progress.paused).await;
     cx.update(|cx| cx.dispatch_action(&crate::platform::Logout));
     wait_for(cx, &workspace, |view| {
         view.stopping.is_none() && !view.loaded
