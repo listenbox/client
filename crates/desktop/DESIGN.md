@@ -222,9 +222,10 @@ Never suggest importing a second podcast to recover the first.
 
 Transfers are flat rows separated by quiet dividers. Each row pairs the episode
 and podcast titles with a phase on the right. Downloads show a horizontal
-progress bar, received/total bytes and measured throughput. Queue pause/resume
-remains in the section header. Empty states describe real next steps and never
-invent activity or podcast content.
+progress bar, received/total bytes and measured throughput. There is no queue or
+upload pause/resume control. Checkpoints recover crashes and unexpected
+interruptions. Empty states describe real next steps and never invent activity
+or podcast content.
 
 ## Window behavior
 

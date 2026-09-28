@@ -134,6 +134,8 @@ fn prepare_video(separate_audio: bool) {
     assert!(audio::fast_start(&root.join("video.mp4")).unwrap());
     assert_audio(&root.join("video.mp4"));
     assert_video(&root.join("video.mp4"));
+    assert!(audio::fast_start(&root.join("audio.m4a")).unwrap());
+    assert_audio(&root.join("audio.m4a"));
     let master = fs::read_to_string(root.join("hls/master.m3u8")).unwrap();
     assert!(master.contains("RESOLUTION=1280x720"));
     assert!(master.contains("audio/index.m3u8"));

@@ -29,7 +29,7 @@ impl AdaptiveLimit {
             self.back_off();
             return;
         }
-        // An empty queue, pause, conversion, or upload is not network congestion.
+        // An empty queue, conversion, or upload is not network congestion.
         if !saturated || downloading == 0 {
             self.baseline = None;
             // Inconclusive probes do not permanently raise the budget.

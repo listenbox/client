@@ -417,8 +417,7 @@ async fn inventory(root: &Path, audio: bool) -> Result<Vec<p::PreparedMediaObjec
                 .strip_prefix(root)?
                 .to_string_lossy()
                 .replace('\\', "/");
-            if (audio && name == "audio.m4a")
-                || (!audio && (name == "video.mp4" || name.starts_with("hls/")))
+            if name == "audio.m4a" || (!audio && (name == "video.mp4" || name.starts_with("hls/")))
             {
                 names.push(name);
             }

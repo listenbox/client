@@ -1090,10 +1090,10 @@ pub struct EpisodeEnclosure {
     pub content_type: NonEmptyString,
     #[serde(rename = "duration_seconds")]
     pub duration_seconds: i64,
-    #[serde(rename = "feed_id")]
-    pub feed_id: FeedID,
     #[serde(rename = "format")]
     pub format: EpisodeEnclosureFormat,
+    #[serde(rename = "kind")]
+    pub kind: ShowSourceKind,
     #[serde(rename = "url")]
     pub url: std::string::String,
 }

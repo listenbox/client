@@ -140,7 +140,6 @@ impl Download {
 #[derive(Clone, PartialEq, Eq)]
 pub struct Snapshot {
     pub items: Vec<Download>,
-    pub paused: bool,
     pub slot_limit: usize,
 }
 
@@ -148,7 +147,6 @@ impl Default for Snapshot {
     fn default() -> Self {
         Self {
             items: Vec::new(),
-            paused: false,
             slot_limit: INITIAL_TRANSFERS,
         }
     }
@@ -190,8 +188,7 @@ impl ManagerState {
             .iter()
             .filter(|item| item.phase == Phase::Downloading)
             .count();
-        let saturated = !self.snapshot.paused
-            && self.active >= self.adaptive.limit
+        let saturated = self.active >= self.adaptive.limit
             && self
                 .snapshot
                 .items
@@ -254,13 +251,6 @@ impl DownloadManager {
         if self.state.write().sample(now) {
             self.changed.send_replace(());
         }
-    }
-
-    /// Pause only admissions; in-flight transfers finish and keep their checkpoints.
-    pub fn set_paused(&self, paused: bool) {
-        let mut state = self.state.write();
-        state.snapshot.paused = paused;
-        self.changed.send_replace(());
     }
 
     /// Replace the previous sync's history for this source, retaining other podcasts.
@@ -328,7 +318,7 @@ impl Transfer {
             self.manager.sample(Instant::now());
             {
                 let mut state = self.manager.state.write();
-                if !state.snapshot.paused && state.active < state.snapshot.slot_limit {
+                if state.active < state.snapshot.slot_limit {
                     // One shared budget includes resolution, conversion and upload.
                     if state
                         .idle_since
@@ -506,7 +496,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn podcasts_share_one_budget_and_pause_applies_to_waiting_admissions() {
+    async fn podcasts_share_one_budget_and_release_admits_waiting_work() {
         let manager = DownloadManager::default();
         let first = enqueue(&manager, "first", INITIAL_TRANSFERS);
         let second = enqueue(&manager, "second", 2);
@@ -529,10 +519,7 @@ mod tests {
             manager.snapshot().items.last().unwrap().phase,
             Phase::Queued
         );
-        manager.set_paused(true);
         active.pop().unwrap().finish(&Ok(()));
-        assert!(poll!(&mut waiting).is_pending());
-        manager.set_paused(false);
         let admitted = waiting.await;
         assert_eq!(
             manager
@@ -632,7 +619,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pause_and_uploads_do_not_probe_and_retry_feedback_closes_slots() {
+    async fn uploads_do_not_probe_and_retry_feedback_closes_slots() {
         let manager = DownloadManager::default();
         let transfers = enqueue(&manager, "first", 3);
         let first = transfers[0].acquire().await;
@@ -641,12 +628,6 @@ mod tests {
         transfers[1].phase(Phase::Uploading);
         let mut waiting = Box::pin(transfers[2].acquire());
         assert!(poll!(&mut waiting).is_pending());
-        manager.set_paused(true);
-        manager.state.write().sampled_at = Instant::now() - SAMPLE_INTERVAL;
-        transfers[0].range(0, 5_000_000, RangePhase::Active);
-        assert_eq!(manager.snapshot().slot_limit, INITIAL_TRANSFERS);
-        assert!(poll!(&mut waiting).is_pending());
-        manager.set_paused(false);
         transfers[0].phase(Phase::Uploading);
         manager.state.write().sampled_at = Instant::now() - SAMPLE_INTERVAL;
         manager.sample(Instant::now());
