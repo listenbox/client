@@ -1,24 +1,23 @@
-use std::{
-    sync::{Arc, Mutex},
-    thread::ThreadId,
-    time::Duration,
-};
-use tokio::sync::oneshot;
-use youtubei::{Engine, Text, Worker, json};
+use std::{rc::Rc, thread::ThreadId, time::Duration};
+use tokio::sync::{mpsc, oneshot};
+use youtubei::Worker;
 
 struct Request {
     text: String,
-    reply: oneshot::Sender<youtubei::Result<String>>,
+    release: oneshot::Receiver<()>,
+    reply: oneshot::Sender<String>,
 }
 
 static_assertions::assert_impl_all!(Worker<Request>: Send, Sync, Clone);
 
 struct State {
-    engine: Engine,
-    owner: ThreadId,
+    owner: Rc<ThreadId>,
     barrier: tokio::sync::Barrier,
+    admitted: mpsc::UnboundedSender<String>,
     dropped: Option<oneshot::Sender<ThreadId>>,
 }
+
+static_assertions::assert_not_impl_any!(State: Send, Sync);
 
 impl Drop for State {
     fn drop(&mut self) {
@@ -32,73 +31,93 @@ impl Drop for State {
 
 #[tokio::test(flavor = "current_thread")]
 async fn shared_worker_overlaps_calls_from_other_threads_and_drains_on_drop() {
-    let (dropped, drop_thread) = oneshot::channel();
-    let owner = Arc::new(Mutex::new(None));
-    let initialized_owner = owner.clone();
+    let (initialized, owner) = oneshot::channel();
+    let (admitted, mut admissions) = mpsc::unbounded_channel();
+    let (dropped, mut drop_thread) = oneshot::channel();
     let worker = Worker::new(
         move || async move {
             let owner = std::thread::current().id();
-            *initialized_owner.lock().unwrap() = Some(owner);
+            initialized.send(owner).unwrap();
             State {
-                engine: Engine::new().await.unwrap(),
-                owner,
+                owner: Rc::new(owner),
                 barrier: tokio::sync::Barrier::new(2),
+                admitted,
                 dropped: Some(dropped),
             }
         },
         |state, request: Request| {
             Box::pin(async move {
-                assert_eq!(std::thread::current().id(), state.owner);
+                assert_eq!(std::thread::current().id(), *state.owner);
                 state.barrier.wait().await;
-                // Hold accepted work while all sender handles are dropped.
-                tokio::time::sleep(Duration::from_millis(30)).await;
-                let result = async {
-                    Text::new(&state.engine, json!({"simpleText": request.text}))
-                        .await?
-                        .to_string()
-                        .await
-                }
-                .await;
-                let _ = request.reply.send(result);
+                state.admitted.send(request.text.clone()).unwrap();
+                request.release.await.unwrap();
+                let _ = request.reply.send(request.text);
             })
         },
     )
     .unwrap();
     let mut callers = Vec::new();
-    for text in ["First caller", "Second caller"] {
+    let mut releases = Vec::new();
+    let texts = ["First caller", "Second caller"];
+    for text in texts {
         let worker = worker.clone();
+        let (release, released) = oneshot::channel();
+        releases.push(release);
         callers.push(std::thread::spawn(move || {
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .unwrap();
+            let (reply, response) = oneshot::channel();
             runtime.block_on(async move {
-                let (reply, response) = oneshot::channel();
                 worker
                     .send(Request {
                         text: text.into(),
+                        release: released,
                         reply,
                     })
                     .await
                     .unwrap();
                 drop(worker);
-                let result = tokio::time::timeout(Duration::from_secs(2), response)
-                    .await
-                    .unwrap()
-                    .unwrap()
-                    .unwrap();
-                assert_eq!(result, text);
             });
+            response
         }));
     }
     drop(worker);
-    for caller in callers {
-        caller.join().unwrap();
+    // Joining proves every sender has been dropped before handlers may finish.
+    let responses = callers
+        .into_iter()
+        .map(|caller| caller.join().unwrap())
+        .collect::<Vec<_>>();
+    let mut accepted = Vec::new();
+    for _ in texts {
+        accepted.push(
+            tokio::time::timeout(Duration::from_secs(2), admissions.recv())
+                .await
+                .expect("both handlers must overlap after all senders are dropped")
+                .expect("worker must retain accepted handlers until they finish"),
+        );
+    }
+    accepted.sort();
+    assert_eq!(accepted, texts);
+    assert_eq!(
+        drop_thread.try_recv(),
+        Err(oneshot::error::TryRecvError::Empty)
+    );
+    for release in releases {
+        release.send(()).unwrap();
+    }
+    for (response, text) in responses.into_iter().zip(texts) {
+        let result = tokio::time::timeout(Duration::from_secs(2), response)
+            .await
+            .expect("accepted requests must finish after all senders are dropped")
+            .unwrap();
+        assert_eq!(result, text);
     }
     let actual = tokio::time::timeout(Duration::from_secs(2), drop_thread)
         .await
-        .unwrap()
+        .expect("worker state must be destroyed after accepted requests finish")
         .unwrap();
-    assert_eq!(Some(actual), *owner.lock().unwrap());
+    assert_eq!(actual, owner.await.unwrap());
     assert_ne!(actual, std::thread::current().id());
 }
