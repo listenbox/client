@@ -20,6 +20,7 @@ fileGroups:
     - Cargo.lock
     - rust-toolchain.toml
     - .cargo/config.toml
+    - .kache.toml
     - .config/nextest.toml
     - .moon/**/*.yml
     - moon.yml

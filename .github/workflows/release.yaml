@@ -10,6 +10,7 @@ jobs:
     runs-on: macos-15
     env:
       MACOSX_DEPLOYMENT_TARGET: '13.0'
+      KACHE_CONFIG: ${{ github.workspace }}/.kache.toml
     steps:
       - uses: actions/checkout@v7
         with:
@@ -19,20 +20,28 @@ jobs:
         with:
           moon-version: '2.5.5'
       - run: rustup toolchain install 1.98.1 --profile minimal
-      - name: Cache Rust builds and Moon outputs
+      - name: Cache Cargo sources, kache, and Moon outputs
         uses: actions/cache@v6
         with:
           # Save each commit's progress, then restore the closest compatible build.
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
+            ${{ runner.temp }}/kache
             .moon/cache/outputs
             ~/.pkgx
-          key: rust-v4-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.cargo/config.toml', 'rust-toolchain.toml', 'tools/native-ffmpeg.rs') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', '**/moon.yml', '.moon/**/*.yml', '.github/workflows/ci.yaml', '.github/workflows/release.yaml') }}-${{ github.sha }}
+          key: rust-kache-v1-0.27.0-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.kache.toml', '.cargo/config.toml', 'rust-toolchain.toml', 'tools/native-ffmpeg.rs') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', '**/moon.yml', '.moon/**/*.yml', '.github/workflows/ci.yaml', '.github/workflows/release.yaml') }}-${{ github.sha }}
           restore-keys: |
-            rust-v4-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.cargo/config.toml', 'rust-toolchain.toml', 'tools/native-ffmpeg.rs') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', '**/moon.yml', '.moon/**/*.yml', '.github/workflows/ci.yaml', '.github/workflows/release.yaml') }}-
-            rust-v4-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.cargo/config.toml', 'rust-toolchain.toml', 'tools/native-ffmpeg.rs') }}-
+            rust-kache-v1-0.27.0-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.kache.toml', '.cargo/config.toml', 'rust-toolchain.toml', 'tools/native-ffmpeg.rs') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', '**/moon.yml', '.moon/**/*.yml', '.github/workflows/ci.yaml', '.github/workflows/release.yaml') }}-
+            rust-kache-v1-0.27.0-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.kache.toml', '.cargo/config.toml', 'rust-toolchain.toml', 'tools/native-ffmpeg.rs') }}-
+      - name: Set up kache
+        uses: kunobi-ninja/kache-action@ad7317540dcdd71c904f7a60a87b620a0c0e67ed # v1
+        with:
+          version: '0.27.0'
+          cache-dir: ${{ runner.temp }}/kache
+          # The cache above refreshes on every commit, including source-only edits.
+          github-cache: false
+          pr-comment: false
       - name: Test release-linked media on Apple Silicon
         run: moon exec --ignore-ci-checks client-engine:test-media
       - name: Build Apple Silicon DMG
@@ -77,6 +86,8 @@ jobs:
             target: aarch64-pc-windows-msvc
             runner: windows-11-arm
     runs-on: ${{ matrix.runner }}
+    env:
+      KACHE_CONFIG: ${{ github.workspace }}/.kache.toml
     defaults:
       run:
         shell: pwsh
@@ -127,18 +138,26 @@ jobs:
           $vsVersion = & $vswhere -latest -products '*' -requires "Microsoft.VisualStudio.Component.VC.Tools.$component" -property installationVersion
           if ($LASTEXITCODE -ne 0 -or -not $vsVersion) { throw 'Visual Studio build tools are missing.' }
           "native-toolchain=$vsVersion" >> $env:GITHUB_OUTPUT
-      - name: Cache Rust builds
+      - name: Cache Cargo sources and kache
         uses: actions/cache@v6
         with:
           # Keep MSVC/native compatibility fixed while refreshing Cargo per commit.
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
-          key: windows-rust-v4-${{ matrix.target }}-${{ steps.version.outputs.native-toolchain }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'tools/native-ffmpeg.rs', 'tools/build-windows.ps1') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}-${{ github.sha }}
+            ${{ runner.temp }}/kache
+          key: windows-rust-kache-v1-0.27.0-${{ matrix.target }}-${{ steps.version.outputs.native-toolchain }}-${{ hashFiles('.kache.toml', 'rust-toolchain.toml', '.cargo/config.toml', 'tools/native-ffmpeg.rs', 'tools/build-windows.ps1') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}-${{ github.sha }}
           restore-keys: |
-            windows-rust-v4-${{ matrix.target }}-${{ steps.version.outputs.native-toolchain }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'tools/native-ffmpeg.rs', 'tools/build-windows.ps1') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}-
-            windows-rust-v4-${{ matrix.target }}-${{ steps.version.outputs.native-toolchain }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'tools/native-ffmpeg.rs', 'tools/build-windows.ps1') }}-
+            windows-rust-kache-v1-0.27.0-${{ matrix.target }}-${{ steps.version.outputs.native-toolchain }}-${{ hashFiles('.kache.toml', 'rust-toolchain.toml', '.cargo/config.toml', 'tools/native-ffmpeg.rs', 'tools/build-windows.ps1') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}-
+            windows-rust-kache-v1-0.27.0-${{ matrix.target }}-${{ steps.version.outputs.native-toolchain }}-${{ hashFiles('.kache.toml', 'rust-toolchain.toml', '.cargo/config.toml', 'tools/native-ffmpeg.rs', 'tools/build-windows.ps1') }}-
+      - name: Set up kache
+        uses: kunobi-ninja/kache-action@ad7317540dcdd71c904f7a60a87b620a0c0e67ed # v1
+        with:
+          version: '0.27.0'
+          cache-dir: ${{ runner.temp }}/kache
+          # The cache above refreshes on every commit, including source-only edits.
+          github-cache: false
+          pr-comment: false
       - name: Restore FFmpeg
         id: ffmpeg-cache
         uses: actions/cache/restore@v6

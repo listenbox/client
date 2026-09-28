@@ -11,9 +11,12 @@ A Rust monorepo for the Listenbox desktop app, CLI and shared synchronization en
 
 ## Build
 
-Install Rust via rustup, [Moon](https://moonrepo.dev), [pkgx](https://pkgx.sh), a C compiler, make and tar. Rust is pinned in `rust-toolchain.toml`. No JavaScript runtime or package manager is needed in this repository.
+Install Rust via rustup, [Moon](https://moonrepo.dev), [pkgx](https://pkgx.sh), [kache 0.27.0](https://github.com/kunobi-ninja/kache/releases/tag/v0.27.0), a C compiler, make and tar. Rust is pinned in `rust-toolchain.toml`. No JavaScript runtime or package manager is needed in this repository.
 
 ```sh
+# Install once per machine, outside a checkout (or use the prebuilt release).
+cargo install --locked kache --version 0.27.0
+
 git clone https://github.com/listenbox/client.git
 cd client
 moon run client:build
@@ -49,38 +52,64 @@ Moon caches deliverable binaries under `dist/`, never Cargo's `target/` director
 
 ### Worktree disk usage
 
-Cargo downloads are shared through `registry` and `git` under `CARGO_HOME`
-(normally `~/.cargo`). Build artifacts stay in this checkout's `target/` so
-different worktrees can compile independently. Do not share `CARGO_TARGET_DIR`
-or `build.build-dir`: Cargo's build-directory lock would queue those builds.
+Cargo downloads share `registry` and `git` under `CARGO_HOME` (normally
+`~/.cargo`). `.cargo/config.toml` routes both direct Cargo commands and Moon tasks
+through [kache](https://github.com/kunobi-ninja/kache). Install its pinned version
+once on `PATH`; no global `kache init` or background service is needed for local
+caching. The parent workspace uses this same configuration.
 
-`.cargo/config.toml` disables incremental compilation to avoid its extra disk
-state. Cargo still reuses unchanged dependencies and crate artifacts; editing a
-crate can take longer to rebuild. The development profile already disables debug
-information. Compiler wrappers such as `sccache` save compilation time but still
-materialize artifacts in each worktree, so they do not eliminate disk duplication.
+Each checkout keeps its own `target/` and Cargo build lock. Kache stores compatible
+compiler artifacts once in the user-level content-addressed store:
 
-The policy applies to both direct Cargo commands and Moon tasks, in standalone
-and parent checkouts. Existing artifacts are not automatically removed. After
-stopping builds in a worktree, `cargo clean` from this directory reclaims its
-build artifacts. FFmpeg's native build remains in this checkout's `.cache/ffmpeg`.
+| Platform | Shared store |
+| --- | --- |
+| macOS | `~/Library/Caches/kache` |
+| Linux | `${XDG_CACHE_HOME:-~/.cache}/kache` |
+| Windows | `%LOCALAPPDATA%\kache` |
 
-Client and parent CI restore Cargo downloads, unpacked sources, and compiled
-artifacts together. Standalone tasks fetch dependencies on demand; the parent
-also prepares Cargo dependencies in its workspace setup. Each commit gets a new
-cache key so successful jobs save their latest build artifacts. Restore prefixes
-prefer the same dependency set, then allow unchanged
-dependencies to be reused after lockfile updates. Both prefixes keep the platform,
-Rust toolchain, and native build configuration fixed. Windows also keys on the
-MSVC toolchain version. GitHub caches remain separate for each repository.
+Restores use copy-on-write clones or hardlinks when supported. Keep the store and
+worktrees on the **same filesystem**; a cross-filesystem restore copies data and
+loses the disk saving. `KACHE_CACHE_DIR` can select a shared location on that
+filesystem. Never point it inside a worktree, and never share `CARGO_TARGET_DIR`
+or `build.build-dir` between worktrees.
 
-Linux CI in both repositories and the client's macOS releases also retain their workspace's
-`.moon/cache/outputs` archives. Moon can restore a matching FFmpeg build into a
-fresh checkout instead of rebuilding the restored libraries. Native preparation
-remains a prerequisite: missing archives or changed task inputs still run the
-real build. Windows keeps its separate FFmpeg cache and saves it before Cargo
-runs. The parent continues to build the CLI and desktop test executable for its
-integrated tests; client release packaging stays in this repository.
+`.kache.toml` disables adaptive/preserved incremental state. Cargo also disables
+incremental compilation, and the development profile omits debug information.
+Cache retention uses kache's defaults or the machine owner's environment settings;
+the project imposes no size budget. Uncached outputs, native FFmpeg builds, Moon
+archives, and packaged binaries still take space in each checkout. Ten identical
+builds can share eligible compiler artifacts; ten different revisions still need their
+unique outputs. Windows keeps kache's default exclusion of executable caching.
+
+Inspect actual reuse and retention from the client directory:
+
+```sh
+kache doctor
+kache report --last-build
+kache targets
+```
+
+Enabling kache does not retroactively deduplicate existing `target/` files. After
+stopping builds in an existing worktree, `cargo clean` and the next Moon build
+repopulate it through kache. Inspect `kache targets` before cleaning unused
+worktrees; deleting a target can release blocks retained by its outputs.
+`kache gc` reclaims eligible unreferenced entries. FFmpeg remains in this
+checkout's `.cache/ffmpeg`.
+
+Linux CI in both repositories and the client's macOS/Windows release jobs install
+kache 0.27.0 with the official action. The store sits under `runner.temp` on the
+build filesystem. `actions/cache` persists that store and Cargo downloads, never
+`target/`. Each commit gets a new key, with compatible restore prefixes, so
+source-only changes refresh the cache too. The action's separate GitHub cache
+is disabled to avoid retaining a second copy. Cache keys separate platforms,
+kache/Rust versions and native configurations; Windows also includes MSVC.
+GitHub caches remain separate for each repository.
+
+Linux and macOS also retain `.moon/cache/outputs`. Moon can restore a matching
+FFmpeg build into a fresh checkout; native preparation remains a prerequisite
+when archives are absent or inputs change. Windows keeps its separate FFmpeg
+cache and saves it before Cargo runs. The parent still builds the CLI and desktop
+test executable for integrated tests; release packaging stays in this repository.
 
 ### Native media acceptance
 
