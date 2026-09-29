@@ -337,6 +337,13 @@ impl YouTube {
             }
             let mut formats = info.formats().await?;
             formats.extend(info.adaptive_formats().await?);
+            ensure!(
+                formats.iter().any(|format| {
+                    let f = format.info();
+                    f.url.is_some() || f.cipher.is_some() || f.signature_cipher.is_some()
+                }),
+                "YouTube returned no downloadable stream URLs; video resolution is not the problem"
+            );
             formats.retain(|format| {
                 let f = format.info();
                 f.drm_families.as_ref().is_none_or(Vec::is_empty)

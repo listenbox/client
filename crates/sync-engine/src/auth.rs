@@ -84,7 +84,6 @@ pub async fn login_with(
             .cli_authorization_events(p::CliAuthorizationEventsParams {
                 code: string(&created, "code")?.into(),
             }),
-        false,
     )
     .await?;
     let event = events.next(api).await?;

@@ -119,7 +119,6 @@ pub async fn create(api: &Api, args: EpisodeCreate) -> Result<()> {
             "description": args.description,
         }))? });
         let response = api.send(request).await?;
-        api.trace(&response, false)?;
         let session = api.accept(response, &[200, 201]).await?;
         record.upload_session_id = string(&session, "upload_session_id")?.into();
         record.team_id = string(&session, "team_id")?.into();
@@ -154,7 +153,6 @@ pub async fn create(api: &Api, args: EpisodeCreate) -> Result<()> {
                         },
                     ))
                     .await?;
-                api.trace(&response, false)?;
                 let signed = api.accept(response, &[201]).await?;
                 let parts = signed["parts"].as_array().context("missing signed parts")?;
                 let mut pending = missing.into_iter().collect::<HashSet<_>>();
@@ -199,7 +197,6 @@ pub async fn create(api: &Api, args: EpisodeCreate) -> Result<()> {
             },
         ))
         .await?;
-    api.trace(&response, false)?;
     let episode = api.accept(response, &[200, 201]).await?;
     record.episode_id = string(&episode, "id")?.into();
     record.show_id = string(&episode, "show_id")?.into();
@@ -220,7 +217,6 @@ pub async fn create(api: &Api, args: EpisodeCreate) -> Result<()> {
             .episode_upload_session_events(p::EpisodeUploadSessionEventsParams {
                 upload_session_id: record.upload_session_id.clone(),
             }),
-        true,
     )
     .await?;
     loop {

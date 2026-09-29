@@ -225,7 +225,6 @@ pub async fn import_rss(api: &Api, source: &str, slug: Option<&str>) -> Result<(
     if response.status() != reqwest::StatusCode::ACCEPTED {
         return Err(api.response_error(response).await);
     }
-    api.trace(&response, true)?;
     let created: p::CreatedPublicRSSImport = api.decode(response).await?;
     let mut stream = Events::open(
         api,
@@ -233,7 +232,6 @@ pub async fn import_rss(api: &Api, source: &str, slug: Option<&str>) -> Result<(
             .import_rss_run_events(p::ImportRSSRunEventsParams {
                 import_run_id: created.import_run_id,
             }),
-        false,
     )
     .await?;
     let mut progress = Progress::default();
@@ -277,7 +275,7 @@ pub async fn delete_events(
     identity_key: &str,
     identity: &str,
 ) -> Result<()> {
-    let mut stream = Events::open(api, request, false).await?;
+    let mut stream = Events::open(api, request).await?;
     let mut progress = Progress::default();
     loop {
         let event = stream.next(api).await?;

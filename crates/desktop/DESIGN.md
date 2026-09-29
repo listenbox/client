@@ -240,10 +240,6 @@ Do not introduce a full-window dimming layer or shift the workspace.
 
 `src/tokens.rs` owns reusable dimensions and semantic colors. `src/workspace.rs`
 owns production composition; `src/artwork.rs` owns covers and their cache.
-`moon run desktop:preview` captures these same components into `dist/preview/`,
-including light/dark library, long team names, team choices, import, validation,
-empty and quit states. These captures are the visual evidence; stale screenshots
-from an earlier layout are not the design authority.
 
 Headless GPUI tests cover control activation and state, while parent API E2E
 scenarios exercise actual import, sync and recovery. Native window chrome

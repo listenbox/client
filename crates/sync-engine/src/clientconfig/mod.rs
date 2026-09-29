@@ -9,7 +9,5 @@ pub struct ClientConfig {
     pub api_origin: std::string::String,
     #[serde(rename = "dashboard_origin")]
     pub dashboard_origin: std::string::String,
-    #[serde(rename = "print_trace_ids")]
-    pub print_trace_ids: bool,
 }
 

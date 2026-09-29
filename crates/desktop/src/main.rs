@@ -1,4 +1,7 @@
-#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+#![cfg_attr(
+    all(target_os = "windows", not(debug_assertions)),
+    windows_subsystem = "windows"
+)]
 
 mod artwork;
 mod platform;
@@ -29,7 +32,15 @@ fn main() -> anyhow::Result<()> {
         None => None,
     };
     anyhow::ensure!(args.next().is_none(), "Unexpected desktop argument");
-    let client = Client::desktop(Config::load(explicit.as_deref())?)?;
+    let config = Config::load(explicit.as_deref())?;
+    if cfg!(debug_assertions) {
+        eprintln!("Listenbox desktop profile: {}", config.directory.display());
+        eprintln!(
+            "Sync database: {}",
+            config.directory.join("sync.sqlite").display()
+        );
+    }
+    let client = Client::desktop(config)?;
     let shutdown_signal = shutdown_signal(&runtime)?;
     let cancel = CancellationToken::new();
     let stop = cancel.clone();

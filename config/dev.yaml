@@ -1,3 +1,2 @@
 api_origin: http://localhost:8080
 dashboard_origin: http://localhost:5174
-print_trace_ids: true

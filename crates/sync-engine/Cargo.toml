@@ -8,6 +8,7 @@ license.workspace = true
 anyhow = "1"
 cookie = "0.18"
 cookie_store = { version = "0.22", default-features = false, features = ["serde"] }
+dirs = "6"
 sha1 = "0.10"
 ffmpeg = { package = "ffmpeg-the-third", version = "=6.0.0", default-features = false, features = ["static", "format", "software-resampling"] }
 chrono = { version = "0.4", default-features = false, features = ["std"] }

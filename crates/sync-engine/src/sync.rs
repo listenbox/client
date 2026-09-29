@@ -380,7 +380,6 @@ async fn delete(api: &Api, slug: &str, episode: &str) -> Result<()> {
             .episode_deletion_events(p::EpisodeDeletionEventsParams {
                 episode_deletion_run_id: string(&result, "episode_deletion_run_id")?.into(),
             }),
-        false,
     )
     .await?;
     loop {

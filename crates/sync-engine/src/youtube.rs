@@ -318,12 +318,6 @@ pub(crate) async fn import_video(
     if response.status() != reqwest::StatusCode::CREATED {
         return Err(api.response_error(response).await);
     }
-    // Keep the trace until after reading admission, so every admitted session has a cleanup owner.
-    let trace = response
-        .headers()
-        .get("X-Trace-Id")
-        .and_then(|h| h.to_str().ok())
-        .map(str::to_owned);
     let session: p::EpisodePackage = api.decode(response).await?;
     if session.status == p::EpisodePackageStatus::Completed {
         journal.forget(&api.config.api_origin, slug, &source_url)?;
@@ -331,11 +325,6 @@ pub(crate) async fn import_video(
     }
     journal.session(&manifest.operation_id, &session.upload_session_id)?;
     let result: Result<()> = async {
-        if api.config.print_trace_ids {
-            let trace = trace.context("response missing X-Trace-Id")?;
-            crate::config::check_trace(&trace)?;
-            println!("Trace ID: {trace}");
-        }
         ensure!(session.part_size >= 5 << 20, "invalid package part size");
         for (ordinal, object) in objects.iter().enumerate() {
             let mut offset = 0;

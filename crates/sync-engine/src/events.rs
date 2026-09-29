@@ -11,7 +11,7 @@ pub struct Events {
 }
 
 impl Events {
-    pub async fn open(api: &Api, request: RequestBuilder, trace: bool) -> Result<Self> {
+    pub async fn open(api: &Api, request: RequestBuilder) -> Result<Self> {
         let response = api.send(request).await?;
         if !response.status().is_success() {
             return Err(api.response_error(response).await);
@@ -24,9 +24,6 @@ impl Events {
                 .is_some_and(|v| v.starts_with("text/event-stream")),
             "expected an event stream"
         );
-        if trace {
-            api.trace(&response, false)?;
-        }
         Ok(Self {
             response,
             buffer: Vec::new(),

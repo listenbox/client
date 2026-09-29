@@ -4499,6 +4499,7 @@ dependencies = [
  "chrono",
  "cookie",
  "cookie_store",
+ "dirs 6.0.0",
  "ffmpeg-the-third",
  "futures-util",
  "hex",

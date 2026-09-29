@@ -11,7 +11,6 @@ fileGroups:
   sources:
     - src/**/*.rs
     - tests/**/*
-    - examples/**/*.rs
     - build.rs
     - Cargo.toml
 tasks:

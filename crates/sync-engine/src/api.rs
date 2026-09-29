@@ -4,7 +4,10 @@ use reqwest::{Client, Response};
 use reqwest_middleware::{ClientWithMiddleware, RequestBuilder};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use std::{future::Future, time::Duration};
+use std::{
+    future::Future,
+    time::{Duration, Instant},
+};
 use tokio_util::sync::CancellationToken;
 
 #[derive(Debug)]
@@ -80,15 +83,53 @@ impl Api {
         }
     }
 
-    pub async fn send(&self, request: RequestBuilder) -> Result<Response> {
-        self.wait(async {
-            request
-                .send()
-                .await
-                .map_err(|error| error.without_url())
-                .context("send HTTP request")
-        })
-        .await
+    pub async fn send(&self, mut request: RequestBuilder) -> Result<Response> {
+        let mut extensions = std::mem::take(request.extensions());
+        let (client, request) = request.build_split();
+        let request = request
+            .map_err(|error| error.without_url())
+            .context("build HTTP request")?;
+        let diagnostic = cfg!(debug_assertions).then(|| {
+            let origin = request.url().origin().ascii_serialization();
+            // Signed media URLs may contain credentials in their paths and query strings.
+            let path = if origin != self.config.api_origin {
+                ""
+            } else if request.url().path().starts_with("/cli/authorizations/") {
+                "/cli/authorizations/{code}/events"
+            } else {
+                request.url().path()
+            };
+            format!("{} {origin}{path}", request.method())
+        });
+        let started = Instant::now();
+        let result = self
+            .wait(async {
+                client
+                    .execute_with_extensions(request, &mut extensions)
+                    .await
+                    .map_err(|error| error.without_url())
+                    .context("send HTTP request")
+            })
+            .await;
+        if let Some(diagnostic) = diagnostic {
+            let elapsed = started.elapsed().as_millis();
+            match &result {
+                Ok(response) => {
+                    let trace = response
+                        .headers()
+                        .get("X-Trace-Id")
+                        .and_then(|value| value.to_str().ok())
+                        .filter(|value| crate::config::check_trace(value).is_ok())
+                        .unwrap_or("-");
+                    eprintln!(
+                        "HTTP {diagnostic} -> {} ({elapsed}ms) trace_id={trace}",
+                        response.status().as_u16()
+                    );
+                }
+                Err(error) => eprintln!("HTTP {diagnostic} -> failed ({elapsed}ms): {error:#}"),
+            }
+        }
+        result
     }
 
     pub async fn bytes(&self, response: Response, limit: usize) -> Result<Vec<u8>> {
@@ -136,23 +177,6 @@ impl Api {
             _ => &message,
         };
         anyhow::anyhow!("HTTP {status}: {hint}")
-    }
-
-    pub fn trace(&self, response: &Response, stdout: bool) -> Result<()> {
-        if self.config.print_trace_ids {
-            let trace = response
-                .headers()
-                .get("X-Trace-Id")
-                .context("response missing X-Trace-Id")?
-                .to_str()?;
-            crate::config::check_trace(trace)?;
-            if stdout {
-                println!("Trace ID: {trace}");
-            } else {
-                eprintln!("Trace ID: {trace}");
-            }
-        }
-        Ok(())
     }
 }
 

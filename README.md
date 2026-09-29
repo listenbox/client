@@ -135,9 +135,9 @@ moon run desktop:build-release-windows-x64
 moon run desktop:build-release-windows-arm64
 ```
 
-Outputs are in `crates/desktop/dist/`. FFmpeg and the MSVC runtime are linked statically. Each Windows target has its own FFmpeg cache, separate from the native macOS/Linux build. GPUI compiles its release shaders using the Windows SDK, so these tasks must run on Windows. The client profile is `%USERPROFILE%\.config\listenbox` on Windows; `LISTENBOX_PROFILE_DIR` overrides it on all platforms.
+Outputs are in `crates/desktop/dist/`. FFmpeg and the MSVC runtime are linked statically. Each Windows target has its own FFmpeg cache, separate from the native macOS/Linux build. GPUI compiles its release shaders using the Windows SDK, so these tasks must run on Windows. The release profile is `%LOCALAPPDATA%\Listenbox` on Windows; debug builds use `%USERPROFILE%\.cache\listenbox\dev`. `LISTENBOX_PROFILE_DIR` overrides it on all platforms.
 
-Listenbox opens without a console window and keeps a system tray icon while running. Closing the window with X hides it and keeps synchronization running. Click the tray icon to reopen the window, or right-click it for Open Listenbox and Quit Listenbox. The macOS menu-bar icon offers the same two actions. Quit waits for active work to shut down cleanly. Windows may place the icon in the tray's hidden-icons overflow.
+Release builds open without a console window and keep a system tray icon while running. Closing the window with X hides it and keeps synchronization running. Click the tray icon to reopen the window, or right-click it for Open Listenbox and Quit Listenbox. The macOS menu-bar icon offers the same two actions. Quit waits for active work to shut down cleanly. Windows may place the icon in the tray's hidden-icons overflow.
 
 Desktop icon artwork lives in `crates/desktop/assets/icon.png`. macOS packages it directly; the desktop Cargo build generates a multi-resolution Windows ICO from the same image and embeds it as resource 1 for Explorer, the window, and the taskbar. `assets/tray.svg` adapts the shared web favicon's L-and-dot geometry without its tile background. The build renders a 36px macOS template (18pt at Retina scale) and a 32px Windows mark with a contrasting outline for light and dark taskbars. Generated ICO, PNG previews, and embedded RGBA pixels live in Cargo's build output directory; edit the source artwork to regenerate them.
 
@@ -159,10 +159,10 @@ This follows [Mazit's watchexec workflow](https://github.com/meoyawn/mazit/blob/
 
 The watched crate directories come from `cargo metadata`, following the desktop's transitive local dependencies. There is no hand-maintained crate list, and CLI source edits do not restart the desktop. Cargo reuses unchanged crate artifacts through `desktop:build`. Restart `moonx desktop:dev` after adding or removing a local crate dependency so it discovers the changed dependency graph.
 
-`config/dev.yaml` points at `http://localhost:8080` (public API) and `http://localhost:5174` (dashboard sign-in), with API trace IDs enabled. The watcher sets `LISTENBOX_PROFILE_DIR` to this checkout's `.cache/dev`, isolating credentials and resumable work from the normal production profile. To use the same dev login from the CLI, run from the client repository:
+`config/dev.yaml` points at `http://localhost:8080` (public API) and `http://localhost:5174` (dashboard sign-in). Debug builds automatically log HTTP method, route, response status, elapsed milliseconds, and trace ID to stderr; release builds omit these diagnostics. Desktop debug startup also prints the active profile and SQLite path. Signed media URLs and credentials are omitted from diagnostics. Debug builds use the worktree-independent `~/.cache/listenbox/dev` profile, isolating credentials and resumable work from the release profile. To use the same dev login from the CLI, run from the client repository:
 
 ```sh
-env LISTENBOX_PROFILE_DIR="$PWD/.cache/dev" crates/cli/dist/listenbox --config config/dev.yaml shows list
+crates/cli/dist/listenbox --config config/dev.yaml shows list
 ```
 
 The desktop task runs independently of the parent `scripts/dev.ts` and never starts or stops the backend services. For a standalone client checkout, start those services separately on the configured addresses.
@@ -181,7 +181,7 @@ This reuses the release/DMG packaging, verifies the staged app, gracefully stops
 
 ## Import and sync
 
-The desktop's sign-in button opens Listenbox in your browser. `listenbox login` uses the same authorization flow. Both save and read one private credential in `~/.config/listenbox/auth.json`; signing in through either authorizes both.
+The desktop's sign-in button opens Listenbox in your browser. `listenbox login` uses the same authorization flow. Both save and read one private credential in their shared profile. Release builds use `~/Library/Application Support/Listenbox/` on macOS, `%LOCALAPPDATA%\Listenbox\` on Windows, and `$XDG_DATA_HOME/listenbox/` (default `~/.local/share/listenbox/`) on Linux. Debug builds use `~/.cache/listenbox/dev/`. Signing in through either interface authorizes the other interface using that profile.
 
 ```sh
 listenbox login
@@ -232,14 +232,11 @@ snapshot readable. Response cookies are committed before consuming the body.
 Unix directories are private (0700) and snapshots are 0600; Windows uses the
 user profile's inherited access controls.
 
-Tests use synthetic cookie exports and local YouTube fixtures. The optional
-`verify_youtube` example is a manual live probe: it copies an explicitly supplied
-export into a temporary profile, checks playlist extraction and media ranges,
-and deletes that profile on exit. It never publishes and is not run by CI.
+Tests use synthetic cookie exports and local YouTube fixtures.
 
 ## Interrupted work
 
-Both interfaces use the engine's persistent sync path. It opens `~/.config/listenbox/sync.sqlite` only for sync work and keeps media under `~/.config/listenbox/transfers`. Refinery applies embedded SQL migrations with strict history validation. Neither interface accesses SQLite directly.
+Both interfaces use the engine's persistent sync path. It opens `sync.sqlite` only for sync work and keeps media under `transfers/` in the selected profile. The release profile stores authentication and SQLite in persistent application data: `~/Library/Application Support/Listenbox/` on macOS and `%LOCALAPPDATA%\Listenbox\` on Windows. SQLite records unfinished uploads and resumable work; it is not a disposable copy of the server database. The desktop dev task uses `~/.cache/listenbox/dev/sync.sqlite` across worktrees, documented in [AGENTS.md](AGENTS.md). Refinery applies embedded SQL migrations with strict history validation. Neither interface accesses SQLite directly.
 
 One writer connection serializes changes; pooled read-only connections read concurrently through WAL. FULL synchronous commits and macOS full-fsync preserve acknowledged checkpoints. Closing the desktop window leaves sync running. The menu-bar icon offers Open Listenbox and Quit Listenbox. Quit cancels active work and waits for admitted writes and processing to finish. A second ⌘Q press within one second or holding it for two seconds confirms keyboard quit; quitting waits for key release. Log out from the account controls also drains active work and removes the shared credential, keeping resumable work.
 
@@ -256,12 +253,11 @@ RestartSec=10
 
 ## Configuration and tests
 
-Both applications read `~/.config/listenbox/config.yaml`, or accept `--config PATH`. `LISTENBOX_PROFILE_DIR` overrides the shared directory for config, credentials, and sync state; an empty override is rejected. `--config` selects the config file without changing that profile directory. Release defaults are:
+Both applications read `config.yaml` from their profile, or accept `--config PATH`. `LISTENBOX_PROFILE_DIR` overrides the shared directory for config, credentials, and sync state; an empty override is rejected. `--config` selects the config file without changing that profile directory. Release defaults are:
 
 ```yaml
 api_origin: https://v1.listenbox.app
 dashboard_origin: https://web.listenbox.app
-print_trace_ids: false
 ```
 
 E2E tests use the same code with isolated homes and explicit local configuration. GPUI Kit tests interact with real controls in a headless window. The integrated suite boots the API, worker and local external fixtures; the desktop flow needs no Chrome process.
@@ -272,6 +268,6 @@ Generated API and configuration modules are committed in `sync-engine`, so this 
 
 Run `moon run client:secrets` before publishing changes. It uses [Gitleaks](https://github.com/gitleaks/gitleaks) to scan all locally available Git history, staged and unstaged edits, and new non-ignored files. `moon ci` always runs this check without caching. Findings are redacted. The additional file-content rules catch personal home paths and personal email addresses; Git author and committer identities remain public attribution.
 
-Keep credentials, sync databases, downloaded media, and logs in the client profile, outside tracked source. The development profile already lives in ignored `.cache/dev`. Local environment files, credentials, SQLite journals, logs, and signing keys are also ignored. Use synthetic data for fixtures and screenshots, and review images manually: a text scanner cannot establish that an image contains no private information.
+Keep credentials, sync databases, downloaded media, and logs in the client profile, outside tracked source. The development profile lives in `~/.cache/listenbox/dev` outside the checkout. Local environment files, credentials, SQLite journals, logs, and signing keys are also ignored. Use synthetic data for fixtures and screenshots, and review images manually: a text scanner cannot establish that an image contains no private information.
 
 See `crates/desktop/DESIGN.md` for native tokens and component conventions.

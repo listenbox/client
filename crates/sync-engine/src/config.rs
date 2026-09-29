@@ -28,10 +28,17 @@ impl Config {
                 ensure!(!directory.is_empty(), "LISTENBOX_PROFILE_DIR is empty");
                 PathBuf::from(directory)
             }
-            None => {
+            None if cfg!(debug_assertions) => {
                 let home = std::env::home_dir().context("resolve user home directory")?;
-                home.join(".config/listenbox")
+                home.join(".cache/listenbox/dev")
             }
+            None => dirs::data_local_dir()
+                .context("resolve user application data directory")?
+                .join(if cfg!(any(target_os = "macos", windows)) {
+                    "Listenbox"
+                } else {
+                    "listenbox"
+                }),
         };
         Self::load_in(explicit, directory)
     }
@@ -51,7 +58,6 @@ impl Config {
                 ClientConfig {
                     api_origin: "https://v1.listenbox.app".into(),
                     dashboard_origin: "https://web.listenbox.app".into(),
-                    print_trace_ids: false,
                 }
             }
             Err(error) => {
@@ -161,15 +167,17 @@ mod tests {
         let config = Config::load_in(None, home.path().into()).unwrap();
         assert_eq!(config.api_origin, "https://v1.listenbox.app");
         assert_eq!(config.dashboard_origin, "https://web.listenbox.app");
-        assert!(!config.print_trace_ids);
     }
     #[test]
     fn generated_config_decodes_yaml_and_normalizes_origins() {
         let home = tempfile::tempdir().unwrap();
-        std::fs::write(home.path().join("config.yaml"), "api_origin: http://EXAMPLE.com:80/\ndashboard_origin: https://WEB.example.com:443/\nprint_trace_ids: true\n").unwrap();
+        std::fs::write(
+            home.path().join("config.yaml"),
+            "api_origin: http://EXAMPLE.com:80/\ndashboard_origin: https://WEB.example.com:443/\n",
+        )
+        .unwrap();
         let config = Config::load_in(None, home.path().into()).unwrap();
         assert_eq!(config.api_origin, "http://example.com");
         assert_eq!(config.dashboard_origin, "https://web.example.com");
-        assert!(config.print_trace_ids);
     }
 }

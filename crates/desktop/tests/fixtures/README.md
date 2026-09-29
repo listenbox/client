@@ -1,1 +1,1 @@
-`podcast.png` is the synthetic podcast artwork fixture copied unchanged from Listenbox’s `apps/fixtures/e2e/apple-podcast-artwork.png`. It is used only by tests and the headless preview, never as production podcast artwork.
+`podcast.png` is the synthetic podcast artwork fixture copied unchanged from Listenbox’s `apps/fixtures/e2e/apple-podcast-artwork.png`. It is used only by tests, never as production podcast artwork.

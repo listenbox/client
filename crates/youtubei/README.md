@@ -112,7 +112,7 @@ declaration**. APIs outside the typed surface use these dynamic Rust operations.
 
 Application policy stays in Rust: for Mazit's unavailable-inclusive flat listing,
 call `Actions::browse` with `browse_id: "VL" + id` and `params: "wgYCCAA="`, then construct
-`Playlist` and follow every continuation. See `examples/playlist.rs`. The crate
+`Playlist` and follow every continuation. The crate
 does not expand listing videos or choose an audio format for the application.
 Mazit keeps channel HTML resolution, listing validation, publication dates, and
 audio selection in `src/youtube/`. The app does not call Innertube's download or
@@ -128,8 +128,8 @@ can return local engines, sessions, caches, or application state; its handler
 borrows that state and returns a boxed local future. Requests can contain typed
 reply channels for owned results. Up to sixteen operations overlap while awaiting
 I/O, with backpressure after 32 queued requests. Dropping all worker handles drains
-accepted operations before destroying the state. See the runnable, network-free
-`examples/workers.rs` and cross-thread lifecycle tests in `tests/worker.rs`.
+accepted operations before destroying the state. See the cross-thread lifecycle
+tests in `tests/worker.rs`.
 
 Raw object handles remain `!Send` and `!Sync`, preventing accidental movement
 between runtime threads at compile time. Advanced consumers may use them directly
