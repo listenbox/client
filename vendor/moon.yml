@@ -5,13 +5,14 @@ fileGroups:
     - youtubejs/src/**/*
     - youtubejs/protos/generated/**/*
     - youtubejs/package.json
-    - youtubejs/package-lock.json
     - youtubejs/tsconfig.json
+    - aube-workspace.yaml
+    - aube-lock.yaml
     - moon.yml
 tasks:
   install:
     command: aube -C youtubejs install --frozen-lockfile --ignore-scripts
-    inputs: [youtubejs/package.json, youtubejs/package-lock.json]
+    inputs: [youtubejs/package.json, aube-workspace.yaml, aube-lock.yaml]
     options:
       cache: false
       internal: true

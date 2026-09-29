@@ -25,7 +25,7 @@ moon ci
 
 The debug app is `crates/desktop/dist/listenbox-desktop`; the terminal executable is `crates/cli/dist/listenbox`. `moon run desktop:build-release` builds the production desktop executable for the host architecture at `crates/desktop/dist/release/listenbox-desktop`. `moon run desktop:dmg` packages its Apple Silicon build as a DMG. `moon run client:package` packages release CLI and desktop binaries with notices.
 
-FFmpeg 9.0.2 is built from verified source by `tools/native-ffmpeg.rs`, linked with `ffmpeg-the-third`, and never run as a subprocess. The `youtubei` crate embeds our pinned `vendor/youtubejs` source build in QuickJS. Moon installs locked JavaScript build dependencies and creates the bundle before Cargo; Cargo never downloads a prebuilt YouTube.js bundle. Both applications are self-contained. See `THIRD-PARTY-NOTICES.txt` and the packaged FFmpeg source/license notice.
+FFmpeg 9.0.2 is built from verified source by `tools/native-ffmpeg.rs`, linked with `ffmpeg-the-third`, and never run as a subprocess. The `youtubei` crate embeds our pinned `vendor/youtubejs` source build in QuickJS. Moon installs locked JavaScript build dependencies and creates the bundle before Cargo; Cargo never downloads a prebuilt YouTube.js bundle. `vendor/aube-workspace.yaml` and `vendor/aube-lock.yaml` keep those dependencies scoped to the vendored build without changing the YouTube.js fork. Both applications are self-contained. See `THIRD-PARTY-NOTICES.txt` and the packaged FFmpeg source/license notice.
 
 ### Moon and Cargo
 
