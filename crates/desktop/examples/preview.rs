@@ -21,6 +21,14 @@ mod workspace {
         view.catalog.shows[0].image_url = Some("https://artwork.example.test/missing.png".into());
     }
 
+    pub fn show_settings(view: &mut Workspace, saved: bool) {
+        view.settings_open = true;
+        view.cookie_saved = saved;
+    }
+    pub fn show_cookie_recovery(view: &mut Workspace) {
+        view.error = Some(ErrorNotice::youtube_sign_in());
+    }
+
     pub fn show_import(view: &mut Workspace) {
         view.import_open = true;
     }
@@ -177,6 +185,9 @@ fn main() -> anyhow::Result<()> {
         ("payment-dark", ThemeMode::Dark, 840., 600., true, false),
         ("quota-light", ThemeMode::Light, 1080., 760., true, false),
         ("quota-dark", ThemeMode::Dark, 840., 600., true, false),
+        ("settings-light", ThemeMode::Light, 1080., 760., true, false),
+        ("settings-dark", ThemeMode::Dark, 840., 600., true, false),
+        ("cookie-recovery", ThemeMode::Light, 840., 600., true, false),
         ("quit-light", ThemeMode::Light, 1080., 760., false, true),
         ("quit-dark", ThemeMode::Dark, 840., 600., true, true),
     ] {
@@ -210,6 +221,12 @@ fn main() -> anyhow::Result<()> {
                 }
                 if name == "workspace-dark" {
                     workspace::show_selected_team(&mut view);
+                }
+                if name.starts_with("settings-") {
+                    workspace::show_settings(&mut view, name == "settings-dark");
+                }
+                if name == "cookie-recovery" {
+                    workspace::show_cookie_recovery(&mut view);
                 }
                 if quitting {
                     workspace::show_quit_notice(&mut view, cx);

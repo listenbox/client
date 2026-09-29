@@ -41,6 +41,15 @@ impl Api {
             .and_then(|raw| serde_json::from_slice::<StoredAuth>(&raw).ok())
             .filter(|auth| crate::config::credential_valid(&auth.api_key))
             .map(|auth| auth.api_key);
+        Ok(Self {
+            config,
+            credential,
+            http: Self::http_client(false)?,
+            cancel,
+        })
+    }
+
+    pub(crate) fn http_client(no_redirects: bool) -> Result<ClientWithMiddleware> {
         let mut builder = Client::builder()
             .connect_timeout(Duration::from_secs(30))
             .timeout(Duration::from_secs(30 * 60));
@@ -49,12 +58,10 @@ impl Api {
                 builder = builder.add_root_certificate(certificate);
             }
         }
-        Ok(Self {
-            config,
-            credential,
-            http: reqwest_middleware::ClientBuilder::new(builder.build()?).build(),
-            cancel,
-        })
+        if no_redirects {
+            builder = builder.redirect(reqwest::redirect::Policy::none());
+        }
+        Ok(reqwest_middleware::ClientBuilder::new(builder.build()?).build())
     }
 
     pub fn client(&self) -> crate::publicapi::Client {

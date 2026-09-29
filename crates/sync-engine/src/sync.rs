@@ -269,15 +269,26 @@ impl Engine {
             match result {
                 Ok(ImportOutcome::Published) => report.added += 1,
                 Ok(ImportOutcome::Skipped(_)) => report.skipped += 1,
-                Err(error) => failures.push(format!("{error:#}")),
+                Err(error) => failures.push(error),
             }
         }
         if !failures.is_empty() {
-            bail!(
+            let message = format!(
                 "{} transfer(s) failed: {}",
                 failures.len(),
-                failures.join("; ")
+                failures
+                    .iter()
+                    .map(|error| format!("{error:#}"))
+                    .collect::<Vec<_>>()
+                    .join("; ")
             );
+            if failures
+                .iter()
+                .any(|error| error.is::<crate::cookies::SignInRequired>())
+            {
+                return Err(anyhow::Error::new(crate::cookies::SignInRequired).context(message));
+            }
+            bail!(message);
         }
 
         for episode in &before.episodes {

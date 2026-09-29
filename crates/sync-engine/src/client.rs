@@ -30,6 +30,9 @@ impl Client {
             config,
         })
     }
+    pub fn cookie_jar(&self) -> crate::cookies::CookieJar {
+        crate::cookies::CookieJar::new(&self.config.directory)
+    }
     pub fn downloads(&self) -> DownloadManager {
         self.engine.downloads.clone()
     }

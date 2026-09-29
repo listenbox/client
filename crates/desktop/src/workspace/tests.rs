@@ -629,3 +629,77 @@ fn library_filters_connections_and_shares_artwork_requests(cx: &mut TestAppConte
         "reload must refresh stale artwork"
     );
 }
+
+#[gpui_kit::test]
+async fn youtube_settings_validate_save_forget_and_link_to_guide(cx: &mut TestAppContext) {
+    let (_profile, handle, view) = quit_workspace(cx);
+    cx.update_window(handle.into(), |_, window, cx| {
+        view.update(cx, |view, cx| {
+            view.error = Some(ErrorNotice::youtube_sign_in());
+            cx.notify();
+        });
+        window.render_frame(cx);
+        window.click("youtube-sign-in-settings", cx);
+    })
+    .unwrap();
+    wait_for(cx, &view, |view| !view.cookie_busy).await;
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        assert!(view.read(cx).settings_open);
+        window.click("cookie-guide", cx);
+        view.read(cx).cookie_input.clone().update(cx, |input, cx| {
+            input.set_value("invalid export", window, cx)
+        });
+        window.scroll(
+            "cookie-guide",
+            ScrollDelta::Pixels(point(px(0.), px(-400.))),
+            cx,
+        );
+        window.click("save-cookies", cx);
+    })
+    .unwrap();
+    wait_for(cx, &view, |view| !view.cookie_busy).await;
+    assert_eq!(
+        cx.opened_url().as_deref(),
+        Some(listenbox_sync_engine::cookies::GUIDE_URL)
+    );
+    cx.update_window(handle.into(), |_, window, cx| {
+        assert!(view.read(cx).cookie_error.is_some());
+        assert!(!view.read(cx).client.cookie_jar().is_enabled().unwrap());
+        view.read(cx).cookie_input.clone().update(cx, |input, cx| input.set_value("# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSAPISID\tsynthetic-ui-cookie\n", window, cx));
+        window.render_frame(cx);
+        window.scroll("cookie-guide", ScrollDelta::Pixels(point(px(0.), px(-400.))), cx);
+        window.click("save-cookies", cx);
+    }).unwrap();
+    wait_for(cx, &view, |view| !view.cookie_busy).await;
+    cx.update_window(handle.into(), |_, window, cx| {
+        assert!(view.read(cx).client.cookie_jar().is_enabled().unwrap());
+        assert!(view.read(cx).cookie_input.read(cx).value().is_empty());
+        assert!(view.read(cx).cookie_error.is_none());
+        window.render_frame(cx);
+        window.scroll(
+            "save-cookies",
+            ScrollDelta::Pixels(point(px(0.), px(600.))),
+            cx,
+        );
+        window.click("close-settings", cx);
+        window.render_frame(cx);
+        window.click("open-settings", cx);
+    })
+    .unwrap();
+    wait_for(cx, &view, |view| !view.cookie_busy).await;
+    cx.update_window(handle.into(), |_, window, cx| {
+        assert!(view.read(cx).cookie_saved);
+        assert!(view.read(cx).cookie_input.read(cx).value().is_empty());
+        window.render_frame(cx);
+        window.scroll(
+            "cookie-guide",
+            ScrollDelta::Pixels(point(px(0.), px(-400.))),
+            cx,
+        );
+        window.click("remove-cookies", cx);
+    })
+    .unwrap();
+    wait_for(cx, &view, |view| !view.cookie_busy).await;
+    assert!(!cx.update(|cx| view.read(cx).client.cookie_jar().is_enabled().unwrap()));
+}

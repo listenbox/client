@@ -390,7 +390,9 @@ impl Transfer {
     }
 
     pub fn error(&self, error: &anyhow::Error) {
-        self.update(|item| item.error = Some(crate::redact(&format!("{error:#}"))));
+        self.update(|item| item.error = Some(if error.is::<crate::cookies::SignInRequired>() {
+            "YouTube needs a signed-in session. Open Settings → YouTube to add fresh cookies, then sync again.".into()
+        } else { crate::redact(&format!("{error:#}")) }));
     }
 
     pub fn start_download(&self, total: u64, chunk_bytes: usize) {

@@ -227,34 +227,44 @@ pub(crate) async fn import_video(
                 transfer.title(&media.title);
                 transfer.duration(media.duration_seconds);
             }
-            if audio {
-                download(
-                    api,
-                    media.audio.as_ref().unwrap_or(&media.video),
-                    &directory.join("source-audio"),
-                    transfer,
-                    Some((journal, operation_id.as_str())),
-                )
-                .await?;
-            } else {
-                download(
-                    api,
-                    &media.video,
-                    &directory.join("source-video"),
-                    transfer,
-                    Some((journal, operation_id.as_str())),
-                )
-                .await?;
-                if let Some(stream) = &media.audio {
+            let downloaded: Result<()> = async {
+                if audio {
                     download(
                         api,
-                        stream,
+                        media.audio.as_ref().unwrap_or(&media.video),
                         &directory.join("source-audio"),
                         transfer,
                         Some((journal, operation_id.as_str())),
                     )
                     .await?;
+                } else {
+                    download(
+                        api,
+                        &media.video,
+                        &directory.join("source-video"),
+                        transfer,
+                        Some((journal, operation_id.as_str())),
+                    )
+                    .await?;
+                    if let Some(stream) = &media.audio {
+                        download(
+                            api,
+                            stream,
+                            &directory.join("source-audio"),
+                            transfer,
+                            Some((journal, operation_id.as_str())),
+                        )
+                        .await?;
+                    }
                 }
+                Ok(())
+            }
+            .await;
+            if let Err(error) = downloaded {
+                if error.is::<crate::download::MediaUnavailable>() {
+                    return Ok(ImportOutcome::Skipped(error.to_string()));
+                }
+                return Err(error);
             }
             if let Some(transfer) = transfer {
                 transfer.phase(crate::downloads::Phase::Preparing);

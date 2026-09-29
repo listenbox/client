@@ -3,7 +3,7 @@ use crate::tokens::{self, Tokens};
 use gpui_kit::component::{
     Disableable, Icon, Sizable,
     button::{Button, ButtonVariants},
-    input::{Input, InputState},
+    input::{Input, InputState, TextareaState},
     progress::Progress,
     spinner::Spinner,
 };
@@ -22,6 +22,8 @@ use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
 #[path = "workspace/episodes.rs"]
 mod episodes;
+#[path = "workspace/settings.rs"]
+mod settings;
 
 pub struct Workspace {
     episodes: Vec<listenbox_sync_engine::publicapi::EpisodeListItem>,
@@ -56,6 +58,12 @@ pub struct Workspace {
     team_picker: bool,
     selected: Option<String>,
     source: Entity<InputState>,
+    settings_open: bool,
+    cookie_input: Entity<TextareaState>,
+    cookie_busy: bool,
+    cookie_saved: bool,
+    cookie_message: Option<String>,
+    cookie_error: Option<String>,
     jobs: HashMap<String, CancellationToken>,
     reports: HashMap<String, String>,
     error: Option<ErrorNotice>,
@@ -66,6 +74,7 @@ pub struct Workspace {
 struct ErrorNotice {
     message: String,
     upgrade_url: Option<String>,
+    youtube_sign_in: bool,
 }
 
 impl From<String> for ErrorNotice {
@@ -73,11 +82,16 @@ impl From<String> for ErrorNotice {
         Self {
             message,
             upgrade_url: None,
+            youtube_sign_in: false,
         }
     }
 }
 
 impl ErrorNotice {
+    fn youtube_sign_in() -> Self {
+        Self { message: "YouTube is asking you to sign in. Add fresh cookies in Settings, then use Sync now to continue this podcast.".into(), upgrade_url: None, youtube_sign_in: true }
+    }
+
     fn import(
         error: anyhow::Error,
         client: &Client,
@@ -85,7 +99,9 @@ impl ErrorNotice {
         created: bool,
         kind: &ShowSourceKind,
     ) -> Self {
-        if let Some(payment) = error.downcast_ref::<PaymentRequired>() {
+        if error.is::<listenbox_sync_engine::cookies::SignInRequired>() {
+            Self::youtube_sign_in()
+        } else if let Some(payment) = error.downcast_ref::<PaymentRequired>() {
             let reason = if payment.0.is_empty() {
                 "Payment is required to continue."
             } else {
@@ -100,6 +116,7 @@ impl ErrorNotice {
                         "Could not create podcast."
                     }
                 ),
+                youtube_sign_in: false,
                 upgrade_url: team
                     .and_then(|team| client.upgrade_url(team).ok())
                     .map(|url| {
@@ -132,6 +149,8 @@ enum Message {
     Report(String, Report),
     Finished(String, anyhow::Result<()>),
     SyncDue,
+    CookieStatus(anyhow::Result<bool>),
+    CookiesSaved(bool, anyhow::Result<()>),
     Episodes(
         u64,
         bool,
@@ -213,6 +232,12 @@ impl Workspace {
             team_picker: false,
             selected: None,
             source,
+            settings_open: false,
+            cookie_input: settings::cookie_input(window, cx),
+            cookie_busy: false,
+            cookie_saved: false,
+            cookie_message: None,
+            cookie_error: None,
             jobs: HashMap::new(),
             reports: HashMap::new(),
             error: None,
@@ -354,6 +379,16 @@ impl Workspace {
             return;
         }
         match message {
+            Message::CookieStatus(result) => {
+                self.cookie_busy = false;
+                match result {
+                    Ok(saved) => self.cookie_saved = saved,
+                    Err(error) => self.cookie_error = Some(error.to_string()),
+                }
+            }
+            Message::CookiesSaved(saved, result) => {
+                self.cookies_received(saved, result, window, cx)
+            }
             Message::Episodes(request, append, result) => {
                 self.episodes_received(request, append, result)
             }
@@ -528,7 +563,15 @@ impl Workspace {
                     self.reports
                         .insert(slug, "Stopped. Progress is saved for the next sync.".into());
                 } else if let Err(error) = result {
-                    self.reports.insert(slug, format!("Sync failed. {error:#}"));
+                    if error.is::<listenbox_sync_engine::cookies::SignInRequired>() {
+                        self.error = Some(ErrorNotice::youtube_sign_in());
+                        self.reports.insert(
+                            slug,
+                            "YouTube sign-in required. Open Settings to add fresh cookies.".into(),
+                        );
+                    } else {
+                        self.reports.insert(slug, format!("Sync failed. {error:#}"));
+                    }
                 }
             }
         }
@@ -537,6 +580,8 @@ impl Workspace {
 
     fn select(&mut self, slug: Option<String>, _window: &mut Window, cx: &mut Context<Self>) {
         self.selected = slug;
+        self.settings_open = false;
+        self.cookie_input = settings::cookie_input(_window, cx);
         self.import_open = false;
         self.load_episodes(false, cx);
         self.error = None;
@@ -815,7 +860,9 @@ impl Workspace {
                             .child(Icon::new(assets::IconName::Plus).small()),
                     )
                     .disabled(!self.loaded || self.importing || self.stopping.is_some())
-                    .on_click(cx.listener(|view, _, _, cx| {
+                    .on_click(cx.listener(|view, _, window, cx| {
+                        view.settings_open = false;
+                        view.cookie_input = settings::cookie_input(window, cx);
                         view.import_open = true;
                         view.error = None;
                         cx.notify();
@@ -1158,6 +1205,11 @@ impl Render for Workspace {
         div()
             .image_cache(self.artwork_cache.clone())
             .track_focus(&self.focus)
+            .on_action(
+                cx.listener(|view, _: &crate::platform::OpenSettings, window, cx| {
+                    view.open_settings(window, cx)
+                }),
+            )
             .capture_key_down(cx.listener(|view, event: &KeyDownEvent, _, cx| {
                 if event.keystroke.modifiers.platform && event.keystroke.key == "q" {
                     cx.stop_propagation();
@@ -1209,6 +1261,15 @@ impl Render for Workspace {
                                         row.child(Spinner::new().small())
                                     })
                                     .child(
+                                        Button::new("open-settings")
+                                            .ghost()
+                                            .label("Settings")
+                                            .disabled(self.stopping.is_some())
+                                            .on_click(cx.listener(|view, _, window, cx| {
+                                                view.open_settings(window, cx)
+                                            })),
+                                    )
+                                    .child(
                                         Button::new("reload")
                                             .ghost()
                                             .label("Reload")
@@ -1250,28 +1311,49 @@ impl Render for Workspace {
                             .min_h_0()
                             .overflow_y_scroll()
                             .p(px(tokens::SPACE))
-                            .when_some(self.error.clone(), |pane, error| {
-                                pane.child(
-                                    div()
-                                        .mb_4()
-                                        .flex()
-                                        .flex_col()
-                                        .items_start()
-                                        .gap_2()
-                                        .child(div().text_color(t.danger).child(error.message))
-                                        .when_some(error.upgrade_url, |notice, url| {
-                                            notice.child(
-                                                Button::new("upgrade-plan")
-                                                    .ghost()
-                                                    .icon(assets::IconName::ExternalLink)
-                                                    .label("Upgrade plan")
-                                                    .on_click(move |_, _, cx| cx.open_url(&url)),
-                                            )
-                                        }),
-                                )
+                            .when_some(
+                                self.error.clone().filter(|_| !self.settings_open),
+                                |pane, error| {
+                                    pane.child(
+                                        div()
+                                            .mb_4()
+                                            .flex()
+                                            .flex_col()
+                                            .items_start()
+                                            .gap_2()
+                                            .child(div().text_color(t.danger).child(error.message))
+                                            .when(error.youtube_sign_in, |notice| {
+                                                notice.child(
+                                                    Button::new("youtube-sign-in-settings")
+                                                        .primary()
+                                                        .label("Open YouTube settings")
+                                                        .on_click(cx.listener(
+                                                            |view, _, window, cx| {
+                                                                view.open_settings(window, cx)
+                                                            },
+                                                        )),
+                                                )
+                                            })
+                                            .when_some(error.upgrade_url, |notice, url| {
+                                                notice.child(
+                                                    Button::new("upgrade-plan")
+                                                        .ghost()
+                                                        .icon(assets::IconName::ExternalLink)
+                                                        .label("Upgrade plan")
+                                                        .on_click(move |_, _, cx| {
+                                                            cx.open_url(&url)
+                                                        }),
+                                                )
+                                            }),
+                                    )
+                                },
+                            )
+                            .child(if self.settings_open {
+                                self.settings(cx)
+                            } else {
+                                self.detail(window, cx)
                             })
-                            .child(self.detail(window, cx))
-                            .when(self.loaded, |pane| {
+                            .when(self.loaded && !self.settings_open, |pane| {
                                 pane.child(self.episode_list(cx)).child(self.transfers(cx))
                             }),
                     ),
