@@ -281,7 +281,7 @@ pub(crate) async fn import_video(
             }
             .await;
             if let Err(error) = downloaded {
-                if error.is::<crate::download::MediaUnavailable>() {
+                if crate::errors::classify(&error) == crate::errors::Category::Skip {
                     return Ok(ImportOutcome::Skipped(error.to_string()));
                 }
                 return Err(error);

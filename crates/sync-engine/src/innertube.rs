@@ -106,7 +106,7 @@ impl YouTube {
                     }
                     fetch(&api, &jar, request)
                         .await
-                        .map_err(|error| youtubei::Error::new(error.to_string()))
+                        .map_err(crate::errors::youtube_error)
                 }
             })
             .await?;

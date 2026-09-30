@@ -2,6 +2,7 @@ use crate::{
     api::{Api, string},
     database::Database,
     downloads::DownloadManager,
+    errors::{Category, classify},
     events::Events,
     innertube::{PlaylistSnapshot, YouTube},
     publicapi as p,
@@ -17,6 +18,7 @@ use std::{
 };
 
 pub const WATCH_INTERVAL: Duration = Duration::from_secs(3600);
+const TRANSFER_ATTEMPTS: usize = 5;
 
 #[derive(Default, Clone, Debug)]
 pub struct Report {
@@ -246,23 +248,54 @@ impl Engine {
                         return Err(error);
                     }
                 };
-                let result = crate::youtube::import_video(
-                    api,
-                    youtube,
-                    crate::youtube::VideoImport {
-                        slug,
-                        id: &video.id,
-                        collection,
-                        transfer: Some(&transfer),
-                        journal,
-                        audio,
-                    },
-                )
-                .await;
+                let mut attempt = 1;
+                let result = loop {
+                    transfer.attempt(attempt);
+                    let result = crate::youtube::import_video(
+                        api,
+                        youtube,
+                        crate::youtube::VideoImport {
+                            slug,
+                            id: &video.id,
+                            collection,
+                            transfer: Some(&transfer),
+                            journal,
+                            audio,
+                        },
+                    )
+                    .await;
+                    let Err(error) = &result else {
+                        break result;
+                    };
+                    if api.cancel.is_cancelled()
+                        || attempt == TRANSFER_ATTEMPTS
+                        || classify(error) != Category::Retryable
+                    {
+                        break result;
+                    }
+                    // import_video has joined its writes and retains its durable
+                    // operation, ranges, manifest and parts. It is the sole resume
+                    // path, including when publication succeeded but its reply was lost.
+                    transfer.error(error);
+                    transfer.phase(crate::downloads::Phase::Retrying);
+                    journal.outcome(&api.config.api_origin, slug, &transfer.item())?;
+                    if let Err(error) = api
+                        .wait(async {
+                            tokio::time::sleep(Duration::from_secs(1 << (attempt - 1))).await;
+                            Ok(())
+                        })
+                        .await
+                    {
+                        break Err(error);
+                    }
+                    attempt += 1;
+                };
                 if let Ok(ImportOutcome::Skipped(reason)) = &result {
                     transfer.skipped(reason);
                 }
-                if api.cancel.is_cancelled() && result.is_err() {
+                if result.as_ref().is_err_and(|error| {
+                    api.cancel.is_cancelled() || classify(error) == Category::Cancelled
+                }) {
                     active.cancelled();
                 } else {
                     let outcome = result.as_ref().map(|_| ()).map_err(|error| {
