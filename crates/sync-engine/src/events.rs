@@ -1,7 +1,7 @@
 use crate::api::Api;
+use crate::publicapi as p;
 use anyhow::{Result, bail, ensure};
 use reqwest::Response;
-use reqwest_middleware::RequestBuilder;
 use serde_json::Value;
 
 pub struct Events {
@@ -11,11 +11,11 @@ pub struct Events {
 }
 
 impl Events {
-    pub async fn open(api: &Api, request: RequestBuilder) -> Result<Self> {
-        let response = api.send(request).await?;
-        if !response.status().is_success() {
-            return Err(api.response_error(response).await);
-        }
+    pub async fn open<R: p::Response>(api: &Api, request: p::Request<R>) -> Result<Self> {
+        let response = match api.request(request).await?.into_stream() {
+            Ok(response) => response,
+            Err(response) => return Err(api.response_error(response).await),
+        };
         ensure!(
             response
                 .headers()

@@ -11,14 +11,16 @@ pub async fn shows(api: &Api, command: ShowCommand) -> Result<()> {
     match command {
         ShowCommand::Order { show, episode } => {
             let order: p::EpisodeOrder = if episode.is_empty() {
-                serde_json::from_value(
-                    api.json(
+                match api
+                    .request(
                         api.client()
                             .get_episode_order(p::GetEpisodeOrderParams { show_slug: show }),
-                        &[200],
                     )
-                    .await?,
-                )?
+                    .await?
+                {
+                    p::GetEpisodeOrderResponse::Status200(value) => value,
+                    response => return Err(api.response_error(response).await),
+                }
             } else {
                 listenbox_sync_engine::sync::set_order(api, &show, episode).await?
             };
@@ -59,8 +61,11 @@ pub async fn shows(api: &Api, command: ShowCommand) -> Result<()> {
             result?;
         }
         ShowCommand::List => {
-            let result = api.json(api.client().list_shows(), &[200]).await?;
-            let shows: Vec<p::Show> = serde_json::from_value(result)?;
+            let result = match api.request(api.client().list_shows()).await? {
+                p::ListShowsResponse::Status200(value) => value,
+                response => return Err(api.response_error(response).await),
+            };
+            let shows = result;
             for show in shows {
                 println!("{}", show.slug);
             }
@@ -88,11 +93,13 @@ pub async fn shows(api: &Api, command: ShowCommand) -> Result<()> {
                     source_kind: serde_json::from_value(serde_json::to_value(source_kind)?)?,
                 },
             });
-            let response = api.send(request).await?;
-            if response.status() == reqwest::StatusCode::CONFLICT {
-                bail!("create show: slug {slug:?} already exists");
-            }
-            let show: p::Show = serde_json::from_value(api.accept(response, &[201]).await?)?;
+            let show = match api.request(request).await? {
+                p::CreateShowResponse::Status201(show) => show,
+                p::CreateShowResponse::Status409(()) => {
+                    bail!("create show: slug {slug:?} already exists")
+                }
+                response => return Err(api.response_error(response).await),
+            };
             println!(
                 "Created show {:?}\nOpen in Listenbox: {}",
                 show.slug,
@@ -101,20 +108,23 @@ pub async fn shows(api: &Api, command: ShowCommand) -> Result<()> {
         }
         ShowCommand::Delete { show, yes } => {
             ensure!(yes, "shows delete: --yes is required");
-            let result = api
-                .json(
+            let result = match api
+                .request(
                     api.client()
                         .create_show_deletion(p::CreateShowDeletionParams {
                             show_slug: show.clone(),
                         }),
-                    &[202],
                 )
-                .await?;
+                .await?
+            {
+                p::CreateShowDeletionResponse::Status202(value) => value,
+                response => return Err(api.response_error(response).await),
+            };
             delete_events(
                 api,
                 api.client()
                     .show_deletion_events(p::ShowDeletionEventsParams {
-                        show_deletion_run_id: string(&result, "show_deletion_run_id")?.into(),
+                        show_deletion_run_id: result.show_deletion_run_id,
                     }),
                 "show",
                 "show_slug",
@@ -172,17 +182,17 @@ async fn upload_artwork(api: &Api, show: &str, path: &std::path::Path) -> Result
         width == height && (1400..=3000).contains(&width),
         "upload a square image between 1400 and 3000 pixels. Attempted resolution: {width} × {height} pixels"
     );
-    let result = api.json(api.client().create_image_upload_presign(p::CreateImageUploadPresignParams { body: serde_json::from_value(json!({
+    let result = match api.request(api.client().create_image_upload_presign(p::CreateImageUploadPresignParams { body: serde_json::from_value(json!({
         "show_id": show, "byte_length": raw.len(), "content_type": content_type,
         "file_name": path.file_name().context("artwork filename")?.to_string_lossy(),
-    }))? }), &[201]).await?;
+    }))? })).await? {
+p::CreateImageUploadPresignResponse::Status201(value) => value,
+response => return Err(api.response_error(response).await),
+};
     let response = api
         .send(
             api.http
-                .request(
-                    string(&result, "method")?.parse()?,
-                    string(&result, "upload_url")?,
-                )
+                .request(reqwest::Method::PUT, &result.upload_url)
                 .header("Content-Type", content_type)
                 .body(raw),
         )
@@ -192,40 +202,43 @@ async fn upload_artwork(api: &Api, show: &str, path: &std::path::Path) -> Result
         "upload artwork: HTTP {}",
         response.status()
     );
-    let completed = api
-        .json(
+    let completed = match api
+        .request(
             api.client()
                 .complete_image_upload(p::CompleteImageUploadParams {
-                    image_asset_id: string(&result, "image_asset_id")?.into(),
+                    image_asset_id: result.image_asset_id,
                     body: p::CompleteImageUpload {
-                        object_key: string(&result, "object_key")?.into(),
+                        object_key: result.object_key,
                     },
                 }),
-            &[201],
         )
-        .await?;
-    Ok(string(&completed, "id")?.into())
+        .await?
+    {
+        p::CompleteImageUploadResponse::Status201(value) => value,
+        response => return Err(api.response_error(response).await),
+    };
+    Ok(completed.id)
 }
 
 pub async fn import_rss(api: &Api, source: &str, slug: Option<&str>) -> Result<()> {
     let response = api
-        .send(api.client().import_rss(p::ImportRSSParams {
+        .request(api.client().import_rss(p::ImportRSSParams {
             body: p::ImportRSSRequest {
                 source_url: source.into(),
                 slug: slug.map(str::to_owned),
             },
         }))
         .await?;
-    if response.status() == reqwest::StatusCode::CONFLICT {
-        if let Some(slug) = slug {
-            bail!("requested slug {slug:?} conflicts");
+    let created = match response {
+        p::ImportRSSResponse::Status202(created) => created,
+        p::ImportRSSResponse::Status409(()) => {
+            if let Some(slug) = slug {
+                bail!("requested slug {slug:?} conflicts");
+            }
+            bail!("import choice conflicts");
         }
-        bail!("import choice conflicts");
-    }
-    if response.status() != reqwest::StatusCode::ACCEPTED {
-        return Err(api.response_error(response).await);
-    }
-    let created: p::CreatedPublicRSSImport = api.decode(response).await?;
+        response => return Err(api.response_error(response).await),
+    };
     let mut stream = Events::open(
         api,
         api.client()
@@ -268,9 +281,9 @@ pub async fn import_rss(api: &Api, source: &str, slug: Option<&str>) -> Result<(
     }
 }
 
-pub async fn delete_events(
+pub async fn delete_events<R: p::Response>(
     api: &Api,
-    request: reqwest_middleware::RequestBuilder,
+    request: p::Request<R>,
     kind: &str,
     identity_key: &str,
     identity: &str,
@@ -309,58 +322,77 @@ pub async fn delete_events(
 pub async fn members(api: &Api, command: MemberCommand) -> Result<()> {
     let client = api.client();
     match command {
-        MemberCommand::List { show } => {
-            let request = match &show {
-                Some(show) => client.list_show_members(p::ListShowMembersParams {
-                    show_slug: show.clone(),
-                }),
-                None => client.list_team_members(),
-            };
-            let result = api.json(request, &[200]).await?;
-            for member in result["members"].as_array().context("missing members")? {
-                if show.is_some() {
-                    print!("{}\t", string(member, "access_source")?);
-                }
-                println!(
-                    "{}\t{}\t{}",
-                    string(member, "role")?,
-                    string(&member["user"], "email")?,
-                    string(&member["user"], "id")?
-                );
-            }
-            for invite in result["invitations"]
-                .as_array()
-                .context("missing invitations")?
+        MemberCommand::List { show: Some(show) } => {
+            let result = match api
+                .request(client.list_show_members(p::ListShowMembersParams { show_slug: show }))
+                .await?
             {
-                let expiry = chrono::DateTime::from_timestamp_millis(number(invite, "expires_at")?)
-                    .context("invalid invitation expiry")?;
-                println!(
-                    "pending\t{}\t{}\t{}\t{}",
-                    string(invite, "role")?,
-                    string(invite, "email")?,
-                    string(invite, "id")?,
-                    expiry.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+                p::ListShowMembersResponse::Status200(result) => result,
+                response => return Err(api.response_error(response).await),
+            };
+            for member in result.members {
+                print!(
+                    "{}\t",
+                    match member.access_source {
+                        p::ShowAccessSource::Team => "team",
+                        p::ShowAccessSource::Show => "show",
+                    }
                 );
+                print_member(&member.role, &member.user);
+            }
+            for invite in result.invitations {
+                print_invitation(&invite.id, &invite.email, &invite.role, invite.expires_at)?;
+            }
+        }
+        MemberCommand::List { show: None } => {
+            let result = match api.request(client.list_team_members()).await? {
+                p::ListTeamMembersResponse::Status200(result) => result,
+                response => return Err(api.response_error(response).await),
+            };
+            for member in result.members {
+                print_member(&member.role, &member.user);
+            }
+            for invite in result.invitations {
+                print_invitation(&invite.id, &invite.email, &invite.role, invite.expires_at)?;
             }
         }
         MemberCommand::Invite { email, role, show } => {
-            let body = json!({"email": email.trim().to_lowercase(), "role": role});
-            let request = match &show {
-                Some(show) => client.create_show_invitation(p::CreateShowInvitationParams {
-                    show_slug: show.clone(),
-                    body: serde_json::from_value(body)?,
-                }),
-                None => client.create_team_invitation(p::CreateTeamInvitationParams {
-                    body: serde_json::from_value(body)?,
-                }),
+            let role = match role {
+                crate::Role::Read => p::AssignableTeamRole::Read,
+                crate::Role::Write => p::AssignableTeamRole::Write,
             };
-            let result = api.json(request, &[201]).await?;
+            let email = email.trim().to_lowercase();
+            let (email, role) = match &show {
+                Some(show) => match api
+                    .request(
+                        client.create_show_invitation(p::CreateShowInvitationParams {
+                            show_slug: show.clone(),
+                            body: p::CreateShowInvitation { email, role },
+                        }),
+                    )
+                    .await?
+                {
+                    p::CreateShowInvitationResponse::Status201(invite) => {
+                        (invite.email, invite.role)
+                    }
+                    response => return Err(api.response_error(response).await),
+                },
+                None => match api
+                    .request(
+                        client.create_team_invitation(p::CreateTeamInvitationParams {
+                            body: p::CreateTeamInvitation { email, role },
+                        }),
+                    )
+                    .await?
+                {
+                    p::CreateTeamInvitationResponse::Status201(invite) => {
+                        (invite.email, invite.role)
+                    }
+                    response => return Err(api.response_error(response).await),
+                },
+            };
             let target = show.map_or(String::new(), |show| format!(" to {show}"));
-            println!(
-                "Invited {}{target} as {}.",
-                string(&result, "email")?,
-                string(&result, "role")?
-            );
+            println!("Invited {email}{target} as {}.", invitation_role(&role));
         }
         MemberCommand::Role { member, role, show } => {
             let label = if show.is_some() {
@@ -368,23 +400,38 @@ pub async fn members(api: &Api, command: MemberCommand) -> Result<()> {
             } else {
                 "member"
             };
-            let body = json!({"role": role});
-            let request = match show {
-                Some(show) => client.update_show_member_role(p::UpdateShowMemberRoleParams {
-                    show_slug: show,
-                    user_id: member.clone(),
-                    body: serde_json::from_value(body.clone())?,
-                }),
-                None => client.update_team_member_role(p::UpdateTeamMemberRoleParams {
-                    user_id: member.clone(),
-                    body: serde_json::from_value(body.clone())?,
-                }),
+            let role = match role {
+                crate::Role::Read => p::AssignableTeamRole::Read,
+                crate::Role::Write => p::AssignableTeamRole::Write,
             };
-            api.json(request, &[204]).await?;
-            println!(
-                "Changed {label} {member} to {}.",
-                body["role"].as_str().unwrap_or("")
-            );
+            match show {
+                Some(show) => match api
+                    .request(
+                        client.update_show_member_role(p::UpdateShowMemberRoleParams {
+                            show_slug: show,
+                            user_id: member.clone(),
+                            body: p::UpdateShowMemberRole { role: role.clone() },
+                        }),
+                    )
+                    .await?
+                {
+                    p::UpdateShowMemberRoleResponse::Status204(()) => (),
+                    response => return Err(api.response_error(response).await),
+                },
+                None => match api
+                    .request(
+                        client.update_team_member_role(p::UpdateTeamMemberRoleParams {
+                            user_id: member.clone(),
+                            body: p::UpdateTeamMemberRole { role: role.clone() },
+                        }),
+                    )
+                    .await?
+                {
+                    p::UpdateTeamMemberRoleResponse::Status204(()) => (),
+                    response => return Err(api.response_error(response).await),
+                },
+            }
+            println!("Changed {label} {member} to {}.", invitation_role(&role));
         }
         MemberCommand::Remove { member, yes, show } => {
             let label = if show.is_some() {
@@ -393,18 +440,59 @@ pub async fn members(api: &Api, command: MemberCommand) -> Result<()> {
                 "member"
             };
             ensure!(yes, "members remove: --yes is required");
-            let request = match show {
-                Some(show) => client.remove_show_member(p::RemoveShowMemberParams {
-                    show_slug: show,
-                    user_id: member.clone(),
-                }),
-                None => client.remove_team_member(p::RemoveTeamMemberParams {
-                    user_id: member.clone(),
-                }),
-            };
-            api.json(request, &[204]).await?;
+            match show {
+                Some(show) => match api
+                    .request(client.remove_show_member(p::RemoveShowMemberParams {
+                        show_slug: show,
+                        user_id: member.clone(),
+                    }))
+                    .await?
+                {
+                    p::RemoveShowMemberResponse::Status204(()) => (),
+                    response => return Err(api.response_error(response).await),
+                },
+                None => match api
+                    .request(client.remove_team_member(p::RemoveTeamMemberParams {
+                        user_id: member.clone(),
+                    }))
+                    .await?
+                {
+                    p::RemoveTeamMemberResponse::Status204(()) => (),
+                    response => return Err(api.response_error(response).await),
+                },
+            }
             println!("Removed {label} {member}.");
         }
     }
+    Ok(())
+}
+
+fn print_member(role: &p::TeamRole, user: &p::User) {
+    let role = match role {
+        p::TeamRole::Owner => "owner",
+        p::TeamRole::Write => "write",
+        p::TeamRole::Read => "read",
+    };
+    println!("{role}\t{}\t{}", user.email, user.id);
+}
+fn invitation_role(role: &p::AssignableTeamRole) -> &'static str {
+    match role {
+        p::AssignableTeamRole::Write => "write",
+        p::AssignableTeamRole::Read => "read",
+    }
+}
+fn print_invitation(
+    id: &str,
+    email: &str,
+    role: &p::AssignableTeamRole,
+    expires_at: i64,
+) -> Result<()> {
+    let expiry =
+        chrono::DateTime::from_timestamp_millis(expires_at).context("invalid invitation expiry")?;
+    println!(
+        "pending\t{}\t{email}\t{id}\t{}",
+        invitation_role(role),
+        expiry.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+    );
     Ok(())
 }

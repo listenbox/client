@@ -49,17 +49,18 @@ pub async fn inventory(api: &Api, slug: &str) -> Result<p::SyncInventory> {
     let mut cursors = HashSet::new();
     let mut complete: Option<p::SyncInventory> = None;
     loop {
-        let result = api
-            .json(
-                api.client().get_sync_inventory(p::GetSyncInventoryParams {
-                    show_slug: slug.into(),
-                    cursor,
-                    limit: Some(500),
-                }),
-                &[200],
-            )
-            .await?;
-        let mut page: p::SyncInventory = serde_json::from_value(result)?;
+        let result = match api
+            .request(api.client().get_sync_inventory(p::GetSyncInventoryParams {
+                show_slug: slug.into(),
+                cursor,
+                limit: Some(500),
+            }))
+            .await?
+        {
+            p::GetSyncInventoryResponse::Status200(value) => value,
+            response => return Err(api.response_error(response).await),
+        };
+        let mut page = result;
         ensure!(
             page.show.slug == slug,
             "Sync inventory returned a different show"
@@ -373,34 +374,39 @@ impl Engine {
 }
 
 pub async fn set_order(api: &Api, slug: &str, episode_ids: Vec<String>) -> Result<p::EpisodeOrder> {
-    Ok(serde_json::from_value(
-        api.json(
-            api.client().set_episode_order(p::SetEpisodeOrderParams {
+    Ok(
+        match api
+            .request(api.client().set_episode_order(p::SetEpisodeOrderParams {
                 show_slug: slug.into(),
                 body: p::SetEpisodeOrder { episode_ids },
-            }),
-            &[200],
-        )
-        .await?,
-    )?)
+            }))
+            .await?
+        {
+            p::SetEpisodeOrderResponse::Status200(value) => value,
+            response => return Err(api.response_error(response).await),
+        },
+    )
 }
 
 async fn delete(api: &Api, slug: &str, episode: &str) -> Result<()> {
-    let result = api
-        .json(
+    let result = match api
+        .request(
             api.client()
                 .create_sync_episode_deletion(p::CreateSyncEpisodeDeletionParams {
                     show_slug: slug.into(),
                     episode_id: episode.into(),
                 }),
-            &[202],
         )
-        .await?;
+        .await?
+    {
+        p::CreateSyncEpisodeDeletionResponse::Status202(value) => value,
+        response => return Err(api.response_error(response).await),
+    };
     let mut events = Events::open(
         api,
         api.client()
             .episode_deletion_events(p::EpisodeDeletionEventsParams {
-                episode_deletion_run_id: string(&result, "episode_deletion_run_id")?.into(),
+                episode_deletion_run_id: result.episode_deletion_run_id,
             }),
     )
     .await?;

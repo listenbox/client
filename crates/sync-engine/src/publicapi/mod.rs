@@ -215,15 +215,35 @@ pub enum CancelEpisodePackageResponse {
     Status409(()),
     Unexpected(reqwest::Response),
 }
-impl CancelEpisodePackageResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+impl Response for CancelEpisodePackageResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
         Ok(match response.status().as_u16() {
             204 => Self::Status204(()),
-            400 => Self::Status400(response.json().await?),
+            400 => Self::Status400(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             401 => Self::Status401(()),
             409 => Self::Status409(()),
             _ => Self::Unexpected(response),
         })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status204(_) => 204,
+            Self::Status400(_) => 400,
+            Self::Status401(_) => 401,
+            Self::Status409(_) => 409,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status204(_) => Ok(Vec::new()),
+            Self::Status400(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status401(_) => Ok(Vec::new()),
+            Self::Status409(_) => Ok(Vec::new()),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
     }
 }
 
@@ -241,16 +261,38 @@ pub enum CancelEpisodeUploadSessionResponse {
     Status409(()),
     Unexpected(reqwest::Response),
 }
-impl CancelEpisodeUploadSessionResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+impl Response for CancelEpisodeUploadSessionResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
         Ok(match response.status().as_u16() {
             204 => Self::Status204(()),
-            400 => Self::Status400(response.json().await?),
+            400 => Self::Status400(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             401 => Self::Status401(()),
             404 => Self::Status404(()),
             409 => Self::Status409(()),
             _ => Self::Unexpected(response),
         })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status204(_) => 204,
+            Self::Status400(_) => 400,
+            Self::Status401(_) => 401,
+            Self::Status404(_) => 404,
+            Self::Status409(_) => 409,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status204(_) => Ok(Vec::new()),
+            Self::Status400(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status401(_) => Ok(Vec::new()),
+            Self::Status404(_) => Ok(Vec::new()),
+            Self::Status409(_) => Ok(Vec::new()),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
     }
 }
 
@@ -266,14 +308,38 @@ pub enum CliAuthorizationEventsResponse {
     Status404(()),
     Unexpected(reqwest::Response),
 }
-impl CliAuthorizationEventsResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+impl Response for CliAuthorizationEventsResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
         Ok(match response.status().as_u16() {
             200 => Self::Status200(response),
-            400 => Self::Status400(response.json().await?),
+            400 => Self::Status400(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             404 => Self::Status404(()),
             _ => Self::Unexpected(response),
         })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status200(_) => 200,
+            Self::Status400(_) => 400,
+            Self::Status404(_) => 404,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    fn into_stream(self) -> Result<reqwest::Response, Self> {
+        match self {
+            Self::Status200(response) => Ok(response),
+            response => Err(response),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status200(body) => read_body(body, 64 << 10).await,
+            Self::Status400(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status404(_) => Ok(Vec::new()),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
     }
 }
 
@@ -299,15 +365,35 @@ pub enum CompleteEpisodePackageResponse {
     Status409(()),
     Unexpected(reqwest::Response),
 }
-impl CompleteEpisodePackageResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+impl Response for CompleteEpisodePackageResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
         Ok(match response.status().as_u16() {
-            200 => Self::Status200(response.json().await?),
-            400 => Self::Status400(response.json().await?),
+            200 => Self::Status200(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
+            400 => Self::Status400(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             401 => Self::Status401(()),
             409 => Self::Status409(()),
             _ => Self::Unexpected(response),
         })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status200(_) => 200,
+            Self::Status400(_) => 400,
+            Self::Status401(_) => 401,
+            Self::Status409(_) => 409,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status200(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status400(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status401(_) => Ok(Vec::new()),
+            Self::Status409(_) => Ok(Vec::new()),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
     }
 }
 
@@ -336,12 +422,12 @@ pub enum CompleteEpisodeUploadSessionResponse {
     Status410(()),
     Unexpected(reqwest::Response),
 }
-impl CompleteEpisodeUploadSessionResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+impl Response for CompleteEpisodeUploadSessionResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
         Ok(match response.status().as_u16() {
-            200 => Self::Status200(response.json().await?),
-            201 => Self::Status201(response.json().await?),
-            400 => Self::Status400(response.json().await?),
+            200 => Self::Status200(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
+            201 => Self::Status201(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
+            400 => Self::Status400(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             401 => Self::Status401(()),
             403 => Self::Status403(()),
             404 => Self::Status404(()),
@@ -349,6 +435,34 @@ impl CompleteEpisodeUploadSessionResponse {
             410 => Self::Status410(()),
             _ => Self::Unexpected(response),
         })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status200(_) => 200,
+            Self::Status201(_) => 201,
+            Self::Status400(_) => 400,
+            Self::Status401(_) => 401,
+            Self::Status403(_) => 403,
+            Self::Status404(_) => 404,
+            Self::Status409(_) => 409,
+            Self::Status410(_) => 410,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status200(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status201(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status400(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status401(_) => Ok(Vec::new()),
+            Self::Status403(_) => Ok(Vec::new()),
+            Self::Status404(_) => Ok(Vec::new()),
+            Self::Status409(_) => Ok(Vec::new()),
+            Self::Status410(_) => Ok(Vec::new()),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
     }
 }
 
@@ -375,10 +489,10 @@ pub enum CompleteImageUploadResponse {
     Status409(()),
     Unexpected(reqwest::Response),
 }
-impl CompleteImageUploadResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+impl Response for CompleteImageUploadResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
         Ok(match response.status().as_u16() {
-            201 => Self::Status201(response.json().await?),
+            201 => Self::Status201(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             400 => Self::Status400(()),
             401 => Self::Status401(()),
             403 => Self::Status403(()),
@@ -386,6 +500,30 @@ impl CompleteImageUploadResponse {
             409 => Self::Status409(()),
             _ => Self::Unexpected(response),
         })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status201(_) => 201,
+            Self::Status400(_) => 400,
+            Self::Status401(_) => 401,
+            Self::Status403(_) => 403,
+            Self::Status404(_) => 404,
+            Self::Status409(_) => 409,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status201(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status400(_) => Ok(Vec::new()),
+            Self::Status401(_) => Ok(Vec::new()),
+            Self::Status403(_) => Ok(Vec::new()),
+            Self::Status404(_) => Ok(Vec::new()),
+            Self::Status409(_) => Ok(Vec::new()),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
     }
 }
 
@@ -421,14 +559,32 @@ pub enum CreateCLIAuthorizationResponse {
     Status401(()),
     Unexpected(reqwest::Response),
 }
-impl CreateCLIAuthorizationResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+impl Response for CreateCLIAuthorizationResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
         Ok(match response.status().as_u16() {
-            201 => Self::Status201(response.json().await?),
-            400 => Self::Status400(response.json().await?),
+            201 => Self::Status201(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
+            400 => Self::Status400(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             401 => Self::Status401(()),
             _ => Self::Unexpected(response),
         })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status201(_) => 201,
+            Self::Status400(_) => 400,
+            Self::Status401(_) => 401,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status201(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status400(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status401(_) => Ok(Vec::new()),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
     }
 }
 
@@ -446,16 +602,38 @@ pub enum CreateEpisodeDeletionResponse {
     Status404(()),
     Unexpected(reqwest::Response),
 }
-impl CreateEpisodeDeletionResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+impl Response for CreateEpisodeDeletionResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
         Ok(match response.status().as_u16() {
-            202 => Self::Status202(response.json().await?),
-            400 => Self::Status400(response.json().await?),
+            202 => Self::Status202(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
+            400 => Self::Status400(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             401 => Self::Status401(()),
             403 => Self::Status403(()),
             404 => Self::Status404(()),
             _ => Self::Unexpected(response),
         })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status202(_) => 202,
+            Self::Status400(_) => 400,
+            Self::Status401(_) => 401,
+            Self::Status403(_) => 403,
+            Self::Status404(_) => 404,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status202(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status400(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status401(_) => Ok(Vec::new()),
+            Self::Status403(_) => Ok(Vec::new()),
+            Self::Status404(_) => Ok(Vec::new()),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
     }
 }
 
@@ -495,17 +673,41 @@ pub enum CreateEpisodePackageResponse {
     Status409(()),
     Unexpected(reqwest::Response),
 }
-impl CreateEpisodePackageResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+impl Response for CreateEpisodePackageResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
         Ok(match response.status().as_u16() {
-            201 => Self::Status201(response.json().await?),
-            400 => Self::Status400(response.json().await?),
+            201 => Self::Status201(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
+            400 => Self::Status400(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             401 => Self::Status401(()),
-            402 => Self::Status402(response.json().await?),
+            402 => Self::Status402(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             404 => Self::Status404(()),
             409 => Self::Status409(()),
             _ => Self::Unexpected(response),
         })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status201(_) => 201,
+            Self::Status400(_) => 400,
+            Self::Status401(_) => 401,
+            Self::Status402(_) => 402,
+            Self::Status404(_) => 404,
+            Self::Status409(_) => 409,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status201(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status400(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status401(_) => Ok(Vec::new()),
+            Self::Status402(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status404(_) => Ok(Vec::new()),
+            Self::Status409(_) => Ok(Vec::new()),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
     }
 }
 
@@ -547,12 +749,12 @@ pub enum CreateEpisodeUploadSessionResponse {
     Status410(()),
     Unexpected(reqwest::Response),
 }
-impl CreateEpisodeUploadSessionResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+impl Response for CreateEpisodeUploadSessionResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
         Ok(match response.status().as_u16() {
-            200 => Self::Status200(response.json().await?),
-            201 => Self::Status201(response.json().await?),
-            400 => Self::Status400(response.json().await?),
+            200 => Self::Status200(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
+            201 => Self::Status201(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
+            400 => Self::Status400(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             401 => Self::Status401(()),
             403 => Self::Status403(()),
             404 => Self::Status404(()),
@@ -560,6 +762,34 @@ impl CreateEpisodeUploadSessionResponse {
             410 => Self::Status410(()),
             _ => Self::Unexpected(response),
         })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status200(_) => 200,
+            Self::Status201(_) => 201,
+            Self::Status400(_) => 400,
+            Self::Status401(_) => 401,
+            Self::Status403(_) => 403,
+            Self::Status404(_) => 404,
+            Self::Status409(_) => 409,
+            Self::Status410(_) => 410,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status200(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status201(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status400(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status401(_) => Ok(Vec::new()),
+            Self::Status403(_) => Ok(Vec::new()),
+            Self::Status404(_) => Ok(Vec::new()),
+            Self::Status409(_) => Ok(Vec::new()),
+            Self::Status410(_) => Ok(Vec::new()),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
     }
 }
 
@@ -599,10 +829,10 @@ pub enum CreateImageUploadPresignResponse {
     Status409(()),
     Unexpected(reqwest::Response),
 }
-impl CreateImageUploadPresignResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+impl Response for CreateImageUploadPresignResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
         Ok(match response.status().as_u16() {
-            201 => Self::Status201(response.json().await?),
+            201 => Self::Status201(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             400 => Self::Status400(()),
             401 => Self::Status401(()),
             402 => Self::Status402(()),
@@ -610,6 +840,30 @@ impl CreateImageUploadPresignResponse {
             409 => Self::Status409(()),
             _ => Self::Unexpected(response),
         })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status201(_) => 201,
+            Self::Status400(_) => 400,
+            Self::Status401(_) => 401,
+            Self::Status402(_) => 402,
+            Self::Status403(_) => 403,
+            Self::Status409(_) => 409,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status201(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status400(_) => Ok(Vec::new()),
+            Self::Status401(_) => Ok(Vec::new()),
+            Self::Status402(_) => Ok(Vec::new()),
+            Self::Status403(_) => Ok(Vec::new()),
+            Self::Status409(_) => Ok(Vec::new()),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
     }
 }
 
@@ -646,16 +900,38 @@ pub enum CreateShowDeletionResponse {
     Status404(()),
     Unexpected(reqwest::Response),
 }
-impl CreateShowDeletionResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+impl Response for CreateShowDeletionResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
         Ok(match response.status().as_u16() {
-            202 => Self::Status202(response.json().await?),
-            400 => Self::Status400(response.json().await?),
+            202 => Self::Status202(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
+            400 => Self::Status400(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             401 => Self::Status401(()),
             403 => Self::Status403(()),
             404 => Self::Status404(()),
             _ => Self::Unexpected(response),
         })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status202(_) => 202,
+            Self::Status400(_) => 400,
+            Self::Status401(_) => 401,
+            Self::Status403(_) => 403,
+            Self::Status404(_) => 404,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status202(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status400(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status401(_) => Ok(Vec::new()),
+            Self::Status403(_) => Ok(Vec::new()),
+            Self::Status404(_) => Ok(Vec::new()),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
     }
 }
 
@@ -684,17 +960,41 @@ pub enum CreateShowInvitationResponse {
     Status409(()),
     Unexpected(reqwest::Response),
 }
-impl CreateShowInvitationResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+impl Response for CreateShowInvitationResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
         Ok(match response.status().as_u16() {
-            201 => Self::Status201(response.json().await?),
-            400 => Self::Status400(response.json().await?),
+            201 => Self::Status201(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
+            400 => Self::Status400(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             401 => Self::Status401(()),
             403 => Self::Status403(()),
             404 => Self::Status404(()),
             409 => Self::Status409(()),
             _ => Self::Unexpected(response),
         })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status201(_) => 201,
+            Self::Status400(_) => 400,
+            Self::Status401(_) => 401,
+            Self::Status403(_) => 403,
+            Self::Status404(_) => 404,
+            Self::Status409(_) => 409,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status201(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status400(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status401(_) => Ok(Vec::new()),
+            Self::Status403(_) => Ok(Vec::new()),
+            Self::Status404(_) => Ok(Vec::new()),
+            Self::Status409(_) => Ok(Vec::new()),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
     }
 }
 
@@ -713,10 +1013,10 @@ pub enum CreateShowResponse {
     Status409(()),
     Unexpected(reqwest::Response),
 }
-impl CreateShowResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+impl Response for CreateShowResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
         Ok(match response.status().as_u16() {
-            201 => Self::Status201(response.json().await?),
+            201 => Self::Status201(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             400 => Self::Status400(()),
             401 => Self::Status401(()),
             402 => Self::Status402(()),
@@ -724,6 +1024,30 @@ impl CreateShowResponse {
             409 => Self::Status409(()),
             _ => Self::Unexpected(response),
         })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status201(_) => 201,
+            Self::Status400(_) => 400,
+            Self::Status401(_) => 401,
+            Self::Status402(_) => 402,
+            Self::Status403(_) => 403,
+            Self::Status409(_) => 409,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status201(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status400(_) => Ok(Vec::new()),
+            Self::Status401(_) => Ok(Vec::new()),
+            Self::Status402(_) => Ok(Vec::new()),
+            Self::Status403(_) => Ok(Vec::new()),
+            Self::Status409(_) => Ok(Vec::new()),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
     }
 }
 
@@ -744,11 +1068,11 @@ pub enum CreateSyncEpisodeDeletionResponse {
     Status409(()),
     Unexpected(reqwest::Response),
 }
-impl CreateSyncEpisodeDeletionResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+impl Response for CreateSyncEpisodeDeletionResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
         Ok(match response.status().as_u16() {
-            202 => Self::Status202(response.json().await?),
-            400 => Self::Status400(response.json().await?),
+            202 => Self::Status202(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
+            400 => Self::Status400(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             401 => Self::Status401(()),
             402 => Self::Status402(()),
             403 => Self::Status403(()),
@@ -756,6 +1080,32 @@ impl CreateSyncEpisodeDeletionResponse {
             409 => Self::Status409(()),
             _ => Self::Unexpected(response),
         })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status202(_) => 202,
+            Self::Status400(_) => 400,
+            Self::Status401(_) => 401,
+            Self::Status402(_) => 402,
+            Self::Status403(_) => 403,
+            Self::Status404(_) => 404,
+            Self::Status409(_) => 409,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status202(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status400(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status401(_) => Ok(Vec::new()),
+            Self::Status402(_) => Ok(Vec::new()),
+            Self::Status403(_) => Ok(Vec::new()),
+            Self::Status404(_) => Ok(Vec::new()),
+            Self::Status409(_) => Ok(Vec::new()),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
     }
 }
 
@@ -782,16 +1132,38 @@ pub enum CreateTeamInvitationResponse {
     Status409(()),
     Unexpected(reqwest::Response),
 }
-impl CreateTeamInvitationResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+impl Response for CreateTeamInvitationResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
         Ok(match response.status().as_u16() {
-            201 => Self::Status201(response.json().await?),
-            400 => Self::Status400(response.json().await?),
+            201 => Self::Status201(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
+            400 => Self::Status400(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             401 => Self::Status401(()),
             403 => Self::Status403(()),
             409 => Self::Status409(()),
             _ => Self::Unexpected(response),
         })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status201(_) => 201,
+            Self::Status400(_) => 400,
+            Self::Status401(_) => 401,
+            Self::Status403(_) => 403,
+            Self::Status409(_) => 409,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status201(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status400(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status401(_) => Ok(Vec::new()),
+            Self::Status403(_) => Ok(Vec::new()),
+            Self::Status409(_) => Ok(Vec::new()),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
     }
 }
 
@@ -973,16 +1345,44 @@ pub enum EpisodeDeletionEventsResponse {
     Status404(()),
     Unexpected(reqwest::Response),
 }
-impl EpisodeDeletionEventsResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+impl Response for EpisodeDeletionEventsResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
         Ok(match response.status().as_u16() {
             200 => Self::Status200(response),
-            400 => Self::Status400(response.json().await?),
+            400 => Self::Status400(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             401 => Self::Status401(()),
             403 => Self::Status403(()),
             404 => Self::Status404(()),
             _ => Self::Unexpected(response),
         })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status200(_) => 200,
+            Self::Status400(_) => 400,
+            Self::Status401(_) => 401,
+            Self::Status403(_) => 403,
+            Self::Status404(_) => 404,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    fn into_stream(self) -> Result<reqwest::Response, Self> {
+        match self {
+            Self::Status200(response) => Ok(response),
+            response => Err(response),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status200(body) => read_body(body, 64 << 10).await,
+            Self::Status400(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status401(_) => Ok(Vec::new()),
+            Self::Status403(_) => Ok(Vec::new()),
+            Self::Status404(_) => Ok(Vec::new()),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
     }
 }
 
@@ -1468,15 +1868,41 @@ pub enum EpisodeUploadSessionEventsResponse {
     Status404(()),
     Unexpected(reqwest::Response),
 }
-impl EpisodeUploadSessionEventsResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+impl Response for EpisodeUploadSessionEventsResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
         Ok(match response.status().as_u16() {
             200 => Self::Status200(response),
-            400 => Self::Status400(response.json().await?),
+            400 => Self::Status400(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             401 => Self::Status401(()),
             404 => Self::Status404(()),
             _ => Self::Unexpected(response),
         })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status200(_) => 200,
+            Self::Status400(_) => 400,
+            Self::Status401(_) => 401,
+            Self::Status404(_) => 404,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    fn into_stream(self) -> Result<reqwest::Response, Self> {
+        match self {
+            Self::Status200(response) => Ok(response),
+            response => Err(response),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status200(body) => read_body(body, 64 << 10).await,
+            Self::Status400(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status401(_) => Ok(Vec::new()),
+            Self::Status404(_) => Ok(Vec::new()),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
     }
 }
 
@@ -1512,16 +1938,38 @@ pub enum GetEpisodeOrderResponse {
     Status404(()),
     Unexpected(reqwest::Response),
 }
-impl GetEpisodeOrderResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+impl Response for GetEpisodeOrderResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
         Ok(match response.status().as_u16() {
-            200 => Self::Status200(response.json().await?),
-            400 => Self::Status400(response.json().await?),
+            200 => Self::Status200(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
+            400 => Self::Status400(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             401 => Self::Status401(()),
             403 => Self::Status403(()),
             404 => Self::Status404(()),
             _ => Self::Unexpected(response),
         })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status200(_) => 200,
+            Self::Status400(_) => 400,
+            Self::Status401(_) => 401,
+            Self::Status403(_) => 403,
+            Self::Status404(_) => 404,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status200(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status400(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status401(_) => Ok(Vec::new()),
+            Self::Status403(_) => Ok(Vec::new()),
+            Self::Status404(_) => Ok(Vec::new()),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
     }
 }
 
@@ -1539,16 +1987,38 @@ pub enum GetEpisodeUploadSessionResponse {
     Status410(()),
     Unexpected(reqwest::Response),
 }
-impl GetEpisodeUploadSessionResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+impl Response for GetEpisodeUploadSessionResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
         Ok(match response.status().as_u16() {
-            200 => Self::Status200(response.json().await?),
-            400 => Self::Status400(response.json().await?),
+            200 => Self::Status200(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
+            400 => Self::Status400(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             401 => Self::Status401(()),
             404 => Self::Status404(()),
             410 => Self::Status410(()),
             _ => Self::Unexpected(response),
         })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status200(_) => 200,
+            Self::Status400(_) => 400,
+            Self::Status401(_) => 401,
+            Self::Status404(_) => 404,
+            Self::Status410(_) => 410,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status200(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status400(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status401(_) => Ok(Vec::new()),
+            Self::Status404(_) => Ok(Vec::new()),
+            Self::Status410(_) => Ok(Vec::new()),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
     }
 }
 
@@ -1561,16 +2031,38 @@ pub enum GetImportCapacityResponse {
     Status404(()),
     Unexpected(reqwest::Response),
 }
-impl GetImportCapacityResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+impl Response for GetImportCapacityResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
         Ok(match response.status().as_u16() {
-            200 => Self::Status200(response.json().await?),
-            400 => Self::Status400(response.json().await?),
+            200 => Self::Status200(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
+            400 => Self::Status400(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             401 => Self::Status401(()),
             403 => Self::Status403(()),
             404 => Self::Status404(()),
             _ => Self::Unexpected(response),
         })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status200(_) => 200,
+            Self::Status400(_) => 400,
+            Self::Status401(_) => 401,
+            Self::Status403(_) => 403,
+            Self::Status404(_) => 404,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status200(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status400(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status401(_) => Ok(Vec::new()),
+            Self::Status403(_) => Ok(Vec::new()),
+            Self::Status404(_) => Ok(Vec::new()),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
     }
 }
 
@@ -1591,17 +2083,41 @@ pub enum GetSyncInventoryResponse {
     Status404(()),
     Unexpected(reqwest::Response),
 }
-impl GetSyncInventoryResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+impl Response for GetSyncInventoryResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
         Ok(match response.status().as_u16() {
-            200 => Self::Status200(response.json().await?),
-            400 => Self::Status400(response.json().await?),
+            200 => Self::Status200(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
+            400 => Self::Status400(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             401 => Self::Status401(()),
             402 => Self::Status402(()),
             403 => Self::Status403(()),
             404 => Self::Status404(()),
             _ => Self::Unexpected(response),
         })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status200(_) => 200,
+            Self::Status400(_) => 400,
+            Self::Status401(_) => 401,
+            Self::Status402(_) => 402,
+            Self::Status403(_) => 403,
+            Self::Status404(_) => 404,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status200(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status400(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status401(_) => Ok(Vec::new()),
+            Self::Status402(_) => Ok(Vec::new()),
+            Self::Status403(_) => Ok(Vec::new()),
+            Self::Status404(_) => Ok(Vec::new()),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
     }
 }
 
@@ -1612,14 +2128,32 @@ pub enum HeadOpenapiResponse {
     Status400(()),
     Unexpected(reqwest::Response),
 }
-impl HeadOpenapiResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+impl Response for HeadOpenapiResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
         Ok(match response.status().as_u16() {
             200 => Self::Status200(()),
             304 => Self::Status304(()),
             400 => Self::Status400(()),
             _ => Self::Unexpected(response),
         })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status200(_) => 200,
+            Self::Status304(_) => 304,
+            Self::Status400(_) => 400,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status200(_) => Ok(Vec::new()),
+            Self::Status304(_) => Ok(Vec::new()),
+            Self::Status400(_) => Ok(Vec::new()),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
     }
 }
 
@@ -1697,17 +2231,41 @@ pub enum ImportRSSResponse {
     Status409(()),
     Unexpected(reqwest::Response),
 }
-impl ImportRSSResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+impl Response for ImportRSSResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
         Ok(match response.status().as_u16() {
-            202 => Self::Status202(response.json().await?),
-            400 => Self::Status400(response.json().await?),
+            202 => Self::Status202(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
+            400 => Self::Status400(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             401 => Self::Status401(()),
-            402 => Self::Status402(response.json().await?),
+            402 => Self::Status402(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             403 => Self::Status403(()),
             409 => Self::Status409(()),
             _ => Self::Unexpected(response),
         })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status202(_) => 202,
+            Self::Status400(_) => 400,
+            Self::Status401(_) => 401,
+            Self::Status402(_) => 402,
+            Self::Status403(_) => 403,
+            Self::Status409(_) => 409,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status202(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status400(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status401(_) => Ok(Vec::new()),
+            Self::Status402(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status403(_) => Ok(Vec::new()),
+            Self::Status409(_) => Ok(Vec::new()),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
     }
 }
 
@@ -1725,16 +2283,44 @@ pub enum ImportRSSRunEventsResponse {
     Status404(()),
     Unexpected(reqwest::Response),
 }
-impl ImportRSSRunEventsResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+impl Response for ImportRSSRunEventsResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
         Ok(match response.status().as_u16() {
             200 => Self::Status200(response),
-            400 => Self::Status400(response.json().await?),
+            400 => Self::Status400(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             401 => Self::Status401(()),
             403 => Self::Status403(()),
             404 => Self::Status404(()),
             _ => Self::Unexpected(response),
         })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status200(_) => 200,
+            Self::Status400(_) => 400,
+            Self::Status401(_) => 401,
+            Self::Status403(_) => 403,
+            Self::Status404(_) => 404,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    fn into_stream(self) -> Result<reqwest::Response, Self> {
+        match self {
+            Self::Status200(response) => Ok(response),
+            response => Err(response),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status200(body) => read_body(body, 64 << 10).await,
+            Self::Status400(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status401(_) => Ok(Vec::new()),
+            Self::Status403(_) => Ok(Vec::new()),
+            Self::Status404(_) => Ok(Vec::new()),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
     }
 }
 
@@ -1748,15 +2334,35 @@ pub enum ListClientTeamsResponse {
     Status403(()),
     Unexpected(reqwest::Response),
 }
-impl ListClientTeamsResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+impl Response for ListClientTeamsResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
         Ok(match response.status().as_u16() {
-            200 => Self::Status200(response.json().await?),
-            400 => Self::Status400(response.json().await?),
+            200 => Self::Status200(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
+            400 => Self::Status400(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             401 => Self::Status401(()),
             403 => Self::Status403(()),
             _ => Self::Unexpected(response),
         })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status200(_) => 200,
+            Self::Status400(_) => 400,
+            Self::Status401(_) => 401,
+            Self::Status403(_) => 403,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status200(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status400(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status401(_) => Ok(Vec::new()),
+            Self::Status403(_) => Ok(Vec::new()),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
     }
 }
 
@@ -1776,16 +2382,38 @@ pub enum ListEpisodesResponse {
     Status404(()),
     Unexpected(reqwest::Response),
 }
-impl ListEpisodesResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+impl Response for ListEpisodesResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
         Ok(match response.status().as_u16() {
-            200 => Self::Status200(response.json().await?),
-            400 => Self::Status400(response.json().await?),
+            200 => Self::Status200(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
+            400 => Self::Status400(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             401 => Self::Status401(()),
             403 => Self::Status403(()),
             404 => Self::Status404(()),
             _ => Self::Unexpected(response),
         })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status200(_) => 200,
+            Self::Status400(_) => 400,
+            Self::Status401(_) => 401,
+            Self::Status403(_) => 403,
+            Self::Status404(_) => 404,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status200(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status400(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status401(_) => Ok(Vec::new()),
+            Self::Status403(_) => Ok(Vec::new()),
+            Self::Status404(_) => Ok(Vec::new()),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
     }
 }
 
@@ -1803,16 +2431,38 @@ pub enum ListShowMembersResponse {
     Status404(()),
     Unexpected(reqwest::Response),
 }
-impl ListShowMembersResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+impl Response for ListShowMembersResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
         Ok(match response.status().as_u16() {
-            200 => Self::Status200(response.json().await?),
-            400 => Self::Status400(response.json().await?),
+            200 => Self::Status200(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
+            400 => Self::Status400(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             401 => Self::Status401(()),
             403 => Self::Status403(()),
             404 => Self::Status404(()),
             _ => Self::Unexpected(response),
         })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status200(_) => 200,
+            Self::Status400(_) => 400,
+            Self::Status401(_) => 401,
+            Self::Status403(_) => 403,
+            Self::Status404(_) => 404,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status200(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status400(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status401(_) => Ok(Vec::new()),
+            Self::Status403(_) => Ok(Vec::new()),
+            Self::Status404(_) => Ok(Vec::new()),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
     }
 }
 
@@ -1823,14 +2473,32 @@ pub enum ListShowsResponse {
     Status401(()),
     Unexpected(reqwest::Response),
 }
-impl ListShowsResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+impl Response for ListShowsResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
         Ok(match response.status().as_u16() {
-            200 => Self::Status200(response.json().await?),
-            400 => Self::Status400(response.json().await?),
+            200 => Self::Status200(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
+            400 => Self::Status400(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             401 => Self::Status401(()),
             _ => Self::Unexpected(response),
         })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status200(_) => 200,
+            Self::Status400(_) => 400,
+            Self::Status401(_) => 401,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status200(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status400(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status401(_) => Ok(Vec::new()),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
     }
 }
 
@@ -1842,15 +2510,35 @@ pub enum ListTeamMembersResponse {
     Status403(()),
     Unexpected(reqwest::Response),
 }
-impl ListTeamMembersResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+impl Response for ListTeamMembersResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
         Ok(match response.status().as_u16() {
-            200 => Self::Status200(response.json().await?),
-            400 => Self::Status400(response.json().await?),
+            200 => Self::Status200(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
+            400 => Self::Status400(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             401 => Self::Status401(()),
             403 => Self::Status403(()),
             _ => Self::Unexpected(response),
         })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status200(_) => 200,
+            Self::Status400(_) => 400,
+            Self::Status401(_) => 401,
+            Self::Status403(_) => 403,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status200(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status400(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status401(_) => Ok(Vec::new()),
+            Self::Status403(_) => Ok(Vec::new()),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
     }
 }
 
@@ -1871,14 +2559,32 @@ pub enum OpenapiResponse {
     Status400(ValidationErr),
     Unexpected(reqwest::Response),
 }
-impl OpenapiResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+impl Response for OpenapiResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
         Ok(match response.status().as_u16() {
-            200 => Self::Status200(response.json().await?),
+            200 => Self::Status200(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             304 => Self::Status304(()),
-            400 => Self::Status400(response.json().await?),
+            400 => Self::Status400(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             _ => Self::Unexpected(response),
         })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status200(_) => 200,
+            Self::Status304(_) => 304,
+            Self::Status400(_) => 400,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status200(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status304(_) => Ok(Vec::new()),
+            Self::Status400(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
     }
 }
 
@@ -1959,15 +2665,35 @@ pub enum PresignEpisodePackagePartsResponse {
     Status409(()),
     Unexpected(reqwest::Response),
 }
-impl PresignEpisodePackagePartsResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+impl Response for PresignEpisodePackagePartsResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
         Ok(match response.status().as_u16() {
-            200 => Self::Status200(response.json().await?),
-            400 => Self::Status400(response.json().await?),
+            200 => Self::Status200(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
+            400 => Self::Status400(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             401 => Self::Status401(()),
             409 => Self::Status409(()),
             _ => Self::Unexpected(response),
         })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status200(_) => 200,
+            Self::Status400(_) => 400,
+            Self::Status401(_) => 401,
+            Self::Status409(_) => 409,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status200(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status400(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status401(_) => Ok(Vec::new()),
+            Self::Status409(_) => Ok(Vec::new()),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
     }
 }
 
@@ -1995,11 +2721,11 @@ pub enum PresignEpisodeUploadSessionPartsResponse {
     Status410(()),
     Unexpected(reqwest::Response),
 }
-impl PresignEpisodeUploadSessionPartsResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+impl Response for PresignEpisodeUploadSessionPartsResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
         Ok(match response.status().as_u16() {
-            201 => Self::Status201(response.json().await?),
-            400 => Self::Status400(response.json().await?),
+            201 => Self::Status201(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
+            400 => Self::Status400(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             401 => Self::Status401(()),
             402 => Self::Status402(()),
             404 => Self::Status404(()),
@@ -2007,6 +2733,32 @@ impl PresignEpisodeUploadSessionPartsResponse {
             410 => Self::Status410(()),
             _ => Self::Unexpected(response),
         })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status201(_) => 201,
+            Self::Status400(_) => 400,
+            Self::Status401(_) => 401,
+            Self::Status402(_) => 402,
+            Self::Status404(_) => 404,
+            Self::Status409(_) => 409,
+            Self::Status410(_) => 410,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status201(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status400(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status401(_) => Ok(Vec::new()),
+            Self::Status402(_) => Ok(Vec::new()),
+            Self::Status404(_) => Ok(Vec::new()),
+            Self::Status409(_) => Ok(Vec::new()),
+            Self::Status410(_) => Ok(Vec::new()),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
     }
 }
 
@@ -2309,16 +3061,38 @@ pub enum RemoveShowMemberResponse {
     Status404(()),
     Unexpected(reqwest::Response),
 }
-impl RemoveShowMemberResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+impl Response for RemoveShowMemberResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
         Ok(match response.status().as_u16() {
             204 => Self::Status204(()),
-            400 => Self::Status400(response.json().await?),
+            400 => Self::Status400(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             401 => Self::Status401(()),
             403 => Self::Status403(()),
             404 => Self::Status404(()),
             _ => Self::Unexpected(response),
         })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status204(_) => 204,
+            Self::Status400(_) => 400,
+            Self::Status401(_) => 401,
+            Self::Status403(_) => 403,
+            Self::Status404(_) => 404,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status204(_) => Ok(Vec::new()),
+            Self::Status400(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status401(_) => Ok(Vec::new()),
+            Self::Status403(_) => Ok(Vec::new()),
+            Self::Status404(_) => Ok(Vec::new()),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
     }
 }
 
@@ -2336,16 +3110,38 @@ pub enum RemoveTeamMemberResponse {
     Status404(()),
     Unexpected(reqwest::Response),
 }
-impl RemoveTeamMemberResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+impl Response for RemoveTeamMemberResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
         Ok(match response.status().as_u16() {
             204 => Self::Status204(()),
-            400 => Self::Status400(response.json().await?),
+            400 => Self::Status400(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             401 => Self::Status401(()),
             403 => Self::Status403(()),
             404 => Self::Status404(()),
             _ => Self::Unexpected(response),
         })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status204(_) => 204,
+            Self::Status400(_) => 400,
+            Self::Status401(_) => 401,
+            Self::Status403(_) => 403,
+            Self::Status404(_) => 404,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status204(_) => Ok(Vec::new()),
+            Self::Status400(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status401(_) => Ok(Vec::new()),
+            Self::Status403(_) => Ok(Vec::new()),
+            Self::Status404(_) => Ok(Vec::new()),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
     }
 }
 
@@ -2364,16 +3160,38 @@ pub enum RevokeShowInvitationResponse {
     Status404(()),
     Unexpected(reqwest::Response),
 }
-impl RevokeShowInvitationResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+impl Response for RevokeShowInvitationResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
         Ok(match response.status().as_u16() {
             204 => Self::Status204(()),
-            400 => Self::Status400(response.json().await?),
+            400 => Self::Status400(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             401 => Self::Status401(()),
             403 => Self::Status403(()),
             404 => Self::Status404(()),
             _ => Self::Unexpected(response),
         })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status204(_) => 204,
+            Self::Status400(_) => 400,
+            Self::Status401(_) => 401,
+            Self::Status403(_) => 403,
+            Self::Status404(_) => 404,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status204(_) => Ok(Vec::new()),
+            Self::Status400(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status401(_) => Ok(Vec::new()),
+            Self::Status403(_) => Ok(Vec::new()),
+            Self::Status404(_) => Ok(Vec::new()),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
     }
 }
 
@@ -2391,16 +3209,38 @@ pub enum RevokeTeamInvitationResponse {
     Status404(()),
     Unexpected(reqwest::Response),
 }
-impl RevokeTeamInvitationResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+impl Response for RevokeTeamInvitationResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
         Ok(match response.status().as_u16() {
             204 => Self::Status204(()),
-            400 => Self::Status400(response.json().await?),
+            400 => Self::Status400(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             401 => Self::Status401(()),
             403 => Self::Status403(()),
             404 => Self::Status404(()),
             _ => Self::Unexpected(response),
         })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status204(_) => 204,
+            Self::Status400(_) => 400,
+            Self::Status401(_) => 401,
+            Self::Status403(_) => 403,
+            Self::Status404(_) => 404,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status204(_) => Ok(Vec::new()),
+            Self::Status400(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status401(_) => Ok(Vec::new()),
+            Self::Status403(_) => Ok(Vec::new()),
+            Self::Status404(_) => Ok(Vec::new()),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
     }
 }
 
@@ -2430,11 +3270,11 @@ pub enum SetEpisodeOrderResponse {
     Status409(()),
     Unexpected(reqwest::Response),
 }
-impl SetEpisodeOrderResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+impl Response for SetEpisodeOrderResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
         Ok(match response.status().as_u16() {
-            200 => Self::Status200(response.json().await?),
-            400 => Self::Status400(response.json().await?),
+            200 => Self::Status200(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
+            400 => Self::Status400(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             401 => Self::Status401(()),
             402 => Self::Status402(()),
             403 => Self::Status403(()),
@@ -2442,6 +3282,32 @@ impl SetEpisodeOrderResponse {
             409 => Self::Status409(()),
             _ => Self::Unexpected(response),
         })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status200(_) => 200,
+            Self::Status400(_) => 400,
+            Self::Status401(_) => 401,
+            Self::Status402(_) => 402,
+            Self::Status403(_) => 403,
+            Self::Status404(_) => 404,
+            Self::Status409(_) => 409,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status200(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status400(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status401(_) => Ok(Vec::new()),
+            Self::Status402(_) => Ok(Vec::new()),
+            Self::Status403(_) => Ok(Vec::new()),
+            Self::Status404(_) => Ok(Vec::new()),
+            Self::Status409(_) => Ok(Vec::new()),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
     }
 }
 
@@ -2560,16 +3426,44 @@ pub enum ShowDeletionEventsResponse {
     Status404(()),
     Unexpected(reqwest::Response),
 }
-impl ShowDeletionEventsResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+impl Response for ShowDeletionEventsResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
         Ok(match response.status().as_u16() {
             200 => Self::Status200(response),
-            400 => Self::Status400(response.json().await?),
+            400 => Self::Status400(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             401 => Self::Status401(()),
             403 => Self::Status403(()),
             404 => Self::Status404(()),
             _ => Self::Unexpected(response),
         })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status200(_) => 200,
+            Self::Status400(_) => 400,
+            Self::Status401(_) => 401,
+            Self::Status403(_) => 403,
+            Self::Status404(_) => 404,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    fn into_stream(self) -> Result<reqwest::Response, Self> {
+        match self {
+            Self::Status200(response) => Ok(response),
+            response => Err(response),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status200(body) => read_body(body, 64 << 10).await,
+            Self::Status400(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status401(_) => Ok(Vec::new()),
+            Self::Status403(_) => Ok(Vec::new()),
+            Self::Status404(_) => Ok(Vec::new()),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
     }
 }
 
@@ -2782,17 +3676,41 @@ pub enum UpdateEpisodeUploadSessionResponse {
     Status410(()),
     Unexpected(reqwest::Response),
 }
-impl UpdateEpisodeUploadSessionResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+impl Response for UpdateEpisodeUploadSessionResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
         Ok(match response.status().as_u16() {
-            200 => Self::Status200(response.json().await?),
-            400 => Self::Status400(response.json().await?),
+            200 => Self::Status200(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
+            400 => Self::Status400(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             401 => Self::Status401(()),
             404 => Self::Status404(()),
             409 => Self::Status409(()),
             410 => Self::Status410(()),
             _ => Self::Unexpected(response),
         })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status200(_) => 200,
+            Self::Status400(_) => 400,
+            Self::Status401(_) => 401,
+            Self::Status404(_) => 404,
+            Self::Status409(_) => 409,
+            Self::Status410(_) => 410,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status200(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status400(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status401(_) => Ok(Vec::new()),
+            Self::Status404(_) => Ok(Vec::new()),
+            Self::Status409(_) => Ok(Vec::new()),
+            Self::Status410(_) => Ok(Vec::new()),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
     }
 }
 
@@ -2812,16 +3730,38 @@ pub enum UpdateShowInvitationRoleResponse {
     Status404(()),
     Unexpected(reqwest::Response),
 }
-impl UpdateShowInvitationRoleResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+impl Response for UpdateShowInvitationRoleResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
         Ok(match response.status().as_u16() {
-            200 => Self::Status200(response.json().await?),
-            400 => Self::Status400(response.json().await?),
+            200 => Self::Status200(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
+            400 => Self::Status400(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             401 => Self::Status401(()),
             403 => Self::Status403(()),
             404 => Self::Status404(()),
             _ => Self::Unexpected(response),
         })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status200(_) => 200,
+            Self::Status400(_) => 400,
+            Self::Status401(_) => 401,
+            Self::Status403(_) => 403,
+            Self::Status404(_) => 404,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status200(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status400(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status401(_) => Ok(Vec::new()),
+            Self::Status403(_) => Ok(Vec::new()),
+            Self::Status404(_) => Ok(Vec::new()),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
     }
 }
 
@@ -2848,16 +3788,38 @@ pub enum UpdateShowMemberRoleResponse {
     Status404(()),
     Unexpected(reqwest::Response),
 }
-impl UpdateShowMemberRoleResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+impl Response for UpdateShowMemberRoleResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
         Ok(match response.status().as_u16() {
             204 => Self::Status204(()),
-            400 => Self::Status400(response.json().await?),
+            400 => Self::Status400(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             401 => Self::Status401(()),
             403 => Self::Status403(()),
             404 => Self::Status404(()),
             _ => Self::Unexpected(response),
         })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status204(_) => 204,
+            Self::Status400(_) => 400,
+            Self::Status401(_) => 401,
+            Self::Status403(_) => 403,
+            Self::Status404(_) => 404,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status204(_) => Ok(Vec::new()),
+            Self::Status400(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status401(_) => Ok(Vec::new()),
+            Self::Status403(_) => Ok(Vec::new()),
+            Self::Status404(_) => Ok(Vec::new()),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
     }
 }
 
@@ -2876,16 +3838,38 @@ pub enum UpdateTeamInvitationRoleResponse {
     Status404(()),
     Unexpected(reqwest::Response),
 }
-impl UpdateTeamInvitationRoleResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+impl Response for UpdateTeamInvitationRoleResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
         Ok(match response.status().as_u16() {
-            200 => Self::Status200(response.json().await?),
-            400 => Self::Status400(response.json().await?),
+            200 => Self::Status200(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
+            400 => Self::Status400(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             401 => Self::Status401(()),
             403 => Self::Status403(()),
             404 => Self::Status404(()),
             _ => Self::Unexpected(response),
         })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status200(_) => 200,
+            Self::Status400(_) => 400,
+            Self::Status401(_) => 401,
+            Self::Status403(_) => 403,
+            Self::Status404(_) => 404,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status200(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status400(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status401(_) => Ok(Vec::new()),
+            Self::Status403(_) => Ok(Vec::new()),
+            Self::Status404(_) => Ok(Vec::new()),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
     }
 }
 
@@ -2911,16 +3895,38 @@ pub enum UpdateTeamMemberRoleResponse {
     Status404(()),
     Unexpected(reqwest::Response),
 }
-impl UpdateTeamMemberRoleResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+impl Response for UpdateTeamMemberRoleResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
         Ok(match response.status().as_u16() {
             204 => Self::Status204(()),
-            400 => Self::Status400(response.json().await?),
+            400 => Self::Status400(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             401 => Self::Status401(()),
             403 => Self::Status403(()),
             404 => Self::Status404(()),
             _ => Self::Unexpected(response),
         })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status204(_) => 204,
+            Self::Status400(_) => 400,
+            Self::Status401(_) => 401,
+            Self::Status403(_) => 403,
+            Self::Status404(_) => 404,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status204(_) => Ok(Vec::new()),
+            Self::Status400(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status401(_) => Ok(Vec::new()),
+            Self::Status403(_) => Ok(Vec::new()),
+            Self::Status404(_) => Ok(Vec::new()),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
     }
 }
 
@@ -3047,14 +4053,32 @@ pub enum WhoamiResponse {
     Status401(()),
     Unexpected(reqwest::Response),
 }
-impl WhoamiResponse {
-    pub async fn decode(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+impl Response for WhoamiResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
         Ok(match response.status().as_u16() {
-            200 => Self::Status200(response.json().await?),
-            400 => Self::Status400(response.json().await?),
+            200 => Self::Status200(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
+            400 => Self::Status400(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             401 => Self::Status401(()),
             _ => Self::Unexpected(response),
         })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status200(_) => 200,
+            Self::Status400(_) => 400,
+            Self::Status401(_) => 401,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status200(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status400(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status401(_) => Ok(Vec::new()),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
     }
 }
 
@@ -3116,6 +4140,86 @@ pub enum YouTubeNoneKind {
 }
 
 
+/// A declared response is decoded exactly once; unknown and streaming bodies stay unread.
+pub trait Response: Sized + Send {
+    fn decode(response: reqwest::Response, limit: usize) -> impl std::future::Future<Output = Result<Self, Error>> + Send;
+    fn status(&self) -> u16;
+    fn into_stream(self) -> Result<reqwest::Response, Self> { Err(self) }
+    /// Convert a response to an error only after the caller chooses not to handle it.
+    fn into_error(self) -> impl std::future::Future<Output = Error> + Send;
+}
+
+#[derive(Debug)]
+pub enum Error {
+    Transport(reqwest_middleware::Error),
+    Body(reqwest::Error),
+    Decode(serde_json::Error),
+    BodyTooLarge { limit: usize },
+    Http { status: u16, body: Vec<u8> },
+}
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Transport(error) => write!(f, "{error}"),
+            Self::Body(error) => write!(f, "{error}"),
+            Self::Decode(error) => write!(f, "decode API response: {error}"),
+            Self::BodyTooLarge { limit } => write!(f, "HTTP response exceeds {limit} bytes"),
+            Self::Http { status, body } => write!(f, "HTTP {status}: {}", String::from_utf8_lossy(body)),
+        }
+    }
+}
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Transport(error) => Some(error),
+            Self::Body(error) => Some(error),
+            Self::Decode(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+impl From<reqwest_middleware::Error> for Error {
+    fn from(error: reqwest_middleware::Error) -> Self { Self::Transport(error.without_url()) }
+}
+async fn read_body(mut response: reqwest::Response, limit: usize) -> Result<Vec<u8>, Error> {
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|error| Error::Body(error.without_url()))? {
+        if chunk.len() > limit.saturating_sub(body.len()) { return Err(Error::BodyTooLarge { limit }); }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
+/// The response type is fixed by the OpenAPI operation, including every declared status.
+#[derive(Debug)]
+pub struct Request<R> {
+    builder: reqwest_middleware::RequestBuilder,
+    limit: usize,
+    response: std::marker::PhantomData<fn() -> R>,
+}
+impl<R: Response> Request<R> {
+    fn new(builder: reqwest_middleware::RequestBuilder) -> Self {
+        Self { builder, limit: 4 << 20, response: std::marker::PhantomData }
+    }
+    /// Cap buffered JSON and raw bodies. Streaming and unknown responses stay unread.
+    pub fn body_limit(mut self, limit: usize) -> Self { self.limit = limit; self }
+    /// Access the underlying builder for transport configuration or raw HTTP handling.
+    pub fn into_builder(self) -> reqwest_middleware::RequestBuilder { self.builder }
+    pub fn build(self) -> reqwest::Result<reqwest::Request> { self.builder.build() }
+    pub async fn send(self) -> Result<R, Error> {
+        R::decode(self.builder.send().await.map_err(Error::from)?, self.limit).await
+    }
+    /// Keep application transport policy while using the operation's generated decoder.
+    pub async fn send_with<E, F, Fut>(self, send: F) -> Result<R, E>
+    where
+        E: From<Error>,
+        F: FnOnce(reqwest_middleware::RequestBuilder) -> Fut,
+        Fut: std::future::Future<Output = Result<reqwest::Response, E>>,
+    {
+        R::decode(send(self.builder).await?, self.limit).await.map_err(E::from)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Client {
     http: reqwest_middleware::ClientWithMiddleware,
@@ -3134,288 +4238,333 @@ impl Client {
     pub fn new(http: reqwest_middleware::ClientWithMiddleware, base_url: String, bearer_token: Option<String>) -> Self {
         Self { http, base_url: base_url.trim_end_matches('/').to_owned(), bearer_token }
     }
-    pub fn openapi(&self) -> reqwest_middleware::RequestBuilder {
+    pub fn openapi(&self) -> Request<OpenapiResponse> {
         let path = "/".to_owned();
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
-        match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
+        let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
+        Request::new(request)
     }
-    pub fn head_openapi(&self) -> reqwest_middleware::RequestBuilder {
+    pub fn head_openapi(&self) -> Request<HeadOpenapiResponse> {
         let path = "/".to_owned();
         let request = self.http.request(reqwest::Method::HEAD, format!("{}{}", self.base_url, path)).header("Accept", "*/*");
-        match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
+        let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
+        Request::new(request)
     }
-    pub fn create_cli_authorization(&self, params: CreateCLIAuthorizationParams) -> reqwest_middleware::RequestBuilder {
+    pub fn create_cli_authorization(&self, params: CreateCLIAuthorizationParams) -> Request<CreateCLIAuthorizationResponse> {
         let path = "/cli/authorizations".to_owned();
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
-        request.json(&params.body)
+        let request = request.json(&params.body);
+        Request::new(request)
     }
-    pub fn cli_authorization_events(&self, params: CliAuthorizationEventsParams) -> reqwest_middleware::RequestBuilder {
+    pub fn cli_authorization_events(&self, params: CliAuthorizationEventsParams) -> Request<CliAuthorizationEventsResponse> {
         let path = "/cli/authorizations/{code}/events".to_owned();
         let path = path.replace("{code}", &encode_path(&params.code.to_string()));
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "text/event-stream");
-        match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
+        let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
+        Request::new(request)
     }
-    pub fn episode_deletion_events(&self, params: EpisodeDeletionEventsParams) -> reqwest_middleware::RequestBuilder {
+    pub fn episode_deletion_events(&self, params: EpisodeDeletionEventsParams) -> Request<EpisodeDeletionEventsResponse> {
         let path = "/s/episode-deletions/{episode_deletion_run_id}/events".to_owned();
         let path = path.replace("{episode_deletion_run_id}", &encode_path(&params.episode_deletion_run_id.to_string()));
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "text/event-stream");
-        match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
+        let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
+        Request::new(request)
     }
-    pub fn create_episode_package(&self, params: CreateEpisodePackageParams) -> reqwest_middleware::RequestBuilder {
+    pub fn create_episode_package(&self, params: CreateEpisodePackageParams) -> Request<CreateEpisodePackageResponse> {
         let path = "/s/episode-packages".to_owned();
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
-        request.json(&params.body)
+        let request = request.json(&params.body);
+        Request::new(request)
     }
-    pub fn cancel_episode_package(&self, params: CancelEpisodePackageParams) -> reqwest_middleware::RequestBuilder {
+    pub fn cancel_episode_package(&self, params: CancelEpisodePackageParams) -> Request<CancelEpisodePackageResponse> {
         let path = "/s/episode-packages/{upload_session_id}".to_owned();
         let path = path.replace("{upload_session_id}", &encode_path(&params.upload_session_id.to_string()));
         let request = self.http.request(reqwest::Method::DELETE, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
-        match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
+        let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
+        Request::new(request)
     }
-    pub fn complete_episode_package(&self, params: CompleteEpisodePackageParams) -> reqwest_middleware::RequestBuilder {
+    pub fn complete_episode_package(&self, params: CompleteEpisodePackageParams) -> Request<CompleteEpisodePackageResponse> {
         let path = "/s/episode-packages/{upload_session_id}/complete".to_owned();
         let path = path.replace("{upload_session_id}", &encode_path(&params.upload_session_id.to_string()));
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
-        match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
+        let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
+        Request::new(request)
     }
-    pub fn presign_episode_package_parts(&self, params: PresignEpisodePackagePartsParams) -> reqwest_middleware::RequestBuilder {
+    pub fn presign_episode_package_parts(&self, params: PresignEpisodePackagePartsParams) -> Request<PresignEpisodePackagePartsResponse> {
         let path = "/s/episode-packages/{upload_session_id}/objects/{object_index}/parts".to_owned();
         let path = path.replace("{upload_session_id}", &encode_path(&params.upload_session_id.to_string()));
         let path = path.replace("{object_index}", &encode_path(&params.object_index.to_string()));
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
-        request.json(&params.body)
+        let request = request.json(&params.body);
+        Request::new(request)
     }
-    pub fn create_episode_upload_session(&self, params: CreateEpisodeUploadSessionParams) -> reqwest_middleware::RequestBuilder {
+    pub fn create_episode_upload_session(&self, params: CreateEpisodeUploadSessionParams) -> Request<CreateEpisodeUploadSessionResponse> {
         let path = "/s/episode-upload-sessions".to_owned();
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
-        request.json(&params.body)
+        let request = request.json(&params.body);
+        Request::new(request)
     }
-    pub fn get_episode_upload_session(&self, params: GetEpisodeUploadSessionParams) -> reqwest_middleware::RequestBuilder {
+    pub fn get_episode_upload_session(&self, params: GetEpisodeUploadSessionParams) -> Request<GetEpisodeUploadSessionResponse> {
         let path = "/s/episode-upload-sessions/{upload_session_id}".to_owned();
         let path = path.replace("{upload_session_id}", &encode_path(&params.upload_session_id.to_string()));
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
-        match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
+        let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
+        Request::new(request)
     }
-    pub fn update_episode_upload_session(&self, params: UpdateEpisodeUploadSessionParams) -> reqwest_middleware::RequestBuilder {
+    pub fn update_episode_upload_session(&self, params: UpdateEpisodeUploadSessionParams) -> Request<UpdateEpisodeUploadSessionResponse> {
         let path = "/s/episode-upload-sessions/{upload_session_id}".to_owned();
         let path = path.replace("{upload_session_id}", &encode_path(&params.upload_session_id.to_string()));
         let request = self.http.request(reqwest::Method::PUT, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
-        request.json(&params.body)
+        let request = request.json(&params.body);
+        Request::new(request)
     }
-    pub fn cancel_episode_upload_session(&self, params: CancelEpisodeUploadSessionParams) -> reqwest_middleware::RequestBuilder {
+    pub fn cancel_episode_upload_session(&self, params: CancelEpisodeUploadSessionParams) -> Request<CancelEpisodeUploadSessionResponse> {
         let path = "/s/episode-upload-sessions/{upload_session_id}".to_owned();
         let path = path.replace("{upload_session_id}", &encode_path(&params.upload_session_id.to_string()));
         let request = self.http.request(reqwest::Method::DELETE, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
-        match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
+        let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
+        Request::new(request)
     }
-    pub fn complete_episode_upload_session(&self, params: CompleteEpisodeUploadSessionParams) -> reqwest_middleware::RequestBuilder {
+    pub fn complete_episode_upload_session(&self, params: CompleteEpisodeUploadSessionParams) -> Request<CompleteEpisodeUploadSessionResponse> {
         let path = "/s/episode-upload-sessions/{upload_session_id}/complete".to_owned();
         let path = path.replace("{upload_session_id}", &encode_path(&params.upload_session_id.to_string()));
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
-        request.json(&params.body)
+        let request = request.json(&params.body);
+        Request::new(request)
     }
-    pub fn episode_upload_session_events(&self, params: EpisodeUploadSessionEventsParams) -> reqwest_middleware::RequestBuilder {
+    pub fn episode_upload_session_events(&self, params: EpisodeUploadSessionEventsParams) -> Request<EpisodeUploadSessionEventsResponse> {
         let path = "/s/episode-upload-sessions/{upload_session_id}/events".to_owned();
         let path = path.replace("{upload_session_id}", &encode_path(&params.upload_session_id.to_string()));
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "text/event-stream");
-        match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
+        let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
+        Request::new(request)
     }
-    pub fn presign_episode_upload_session_parts(&self, params: PresignEpisodeUploadSessionPartsParams) -> reqwest_middleware::RequestBuilder {
+    pub fn presign_episode_upload_session_parts(&self, params: PresignEpisodeUploadSessionPartsParams) -> Request<PresignEpisodeUploadSessionPartsResponse> {
         let path = "/s/episode-upload-sessions/{upload_session_id}/parts/presign".to_owned();
         let path = path.replace("{upload_session_id}", &encode_path(&params.upload_session_id.to_string()));
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
-        request.json(&params.body)
+        let request = request.json(&params.body);
+        Request::new(request)
     }
-    pub fn create_episode_deletion(&self, params: CreateEpisodeDeletionParams) -> reqwest_middleware::RequestBuilder {
+    pub fn create_episode_deletion(&self, params: CreateEpisodeDeletionParams) -> Request<CreateEpisodeDeletionResponse> {
         let path = "/s/episodes/{episode_id}/deletions".to_owned();
         let path = path.replace("{episode_id}", &encode_path(&params.episode_id.to_string()));
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
-        match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
+        let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
+        Request::new(request)
     }
-    pub fn create_image_upload_presign(&self, params: CreateImageUploadPresignParams) -> reqwest_middleware::RequestBuilder {
+    pub fn create_image_upload_presign(&self, params: CreateImageUploadPresignParams) -> Request<CreateImageUploadPresignResponse> {
         let path = "/s/image-uploads/presign".to_owned();
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
-        request.json(&params.body)
+        let request = request.json(&params.body);
+        Request::new(request)
     }
-    pub fn complete_image_upload(&self, params: CompleteImageUploadParams) -> reqwest_middleware::RequestBuilder {
+    pub fn complete_image_upload(&self, params: CompleteImageUploadParams) -> Request<CompleteImageUploadResponse> {
         let path = "/s/image-uploads/{image_asset_id}/complete".to_owned();
         let path = path.replace("{image_asset_id}", &encode_path(&params.image_asset_id.to_string()));
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
-        request.json(&params.body)
+        let request = request.json(&params.body);
+        Request::new(request)
     }
-    pub fn get_import_capacity(&self) -> reqwest_middleware::RequestBuilder {
+    pub fn get_import_capacity(&self) -> Request<GetImportCapacityResponse> {
         let path = "/s/import-capacity".to_owned();
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
-        match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
+        let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
+        Request::new(request)
     }
-    pub fn import_rss(&self, params: ImportRSSParams) -> reqwest_middleware::RequestBuilder {
+    pub fn import_rss(&self, params: ImportRSSParams) -> Request<ImportRSSResponse> {
         let path = "/s/rss-imports".to_owned();
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
-        request.json(&params.body)
+        let request = request.json(&params.body);
+        Request::new(request)
     }
-    pub fn import_rss_run_events(&self, params: ImportRSSRunEventsParams) -> reqwest_middleware::RequestBuilder {
+    pub fn import_rss_run_events(&self, params: ImportRSSRunEventsParams) -> Request<ImportRSSRunEventsResponse> {
         let path = "/s/rss-imports/{import_run_id}/events".to_owned();
         let path = path.replace("{import_run_id}", &encode_path(&params.import_run_id.to_string()));
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "text/event-stream");
-        match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
+        let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
+        Request::new(request)
     }
-    pub fn show_deletion_events(&self, params: ShowDeletionEventsParams) -> reqwest_middleware::RequestBuilder {
+    pub fn show_deletion_events(&self, params: ShowDeletionEventsParams) -> Request<ShowDeletionEventsResponse> {
         let path = "/s/show-deletions/{show_deletion_run_id}/events".to_owned();
         let path = path.replace("{show_deletion_run_id}", &encode_path(&params.show_deletion_run_id.to_string()));
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "text/event-stream");
-        match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
+        let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
+        Request::new(request)
     }
-    pub fn list_shows(&self) -> reqwest_middleware::RequestBuilder {
+    pub fn list_shows(&self) -> Request<ListShowsResponse> {
         let path = "/s/shows".to_owned();
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
-        match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
+        let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
+        Request::new(request)
     }
-    pub fn create_show(&self, params: CreateShowParams) -> reqwest_middleware::RequestBuilder {
+    pub fn create_show(&self, params: CreateShowParams) -> Request<CreateShowResponse> {
         let path = "/s/shows".to_owned();
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
-        request.json(&params.body)
+        let request = request.json(&params.body);
+        Request::new(request)
     }
-    pub fn create_show_deletion(&self, params: CreateShowDeletionParams) -> reqwest_middleware::RequestBuilder {
+    pub fn create_show_deletion(&self, params: CreateShowDeletionParams) -> Request<CreateShowDeletionResponse> {
         let path = "/s/shows/{show_slug}/deletions".to_owned();
         let path = path.replace("{show_slug}", &encode_path(&params.show_slug.to_string()));
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
-        match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
+        let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
+        Request::new(request)
     }
-    pub fn get_episode_order(&self, params: GetEpisodeOrderParams) -> reqwest_middleware::RequestBuilder {
+    pub fn get_episode_order(&self, params: GetEpisodeOrderParams) -> Request<GetEpisodeOrderResponse> {
         let path = "/s/shows/{show_slug}/episode-order".to_owned();
         let path = path.replace("{show_slug}", &encode_path(&params.show_slug.to_string()));
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
-        match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
+        let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
+        Request::new(request)
     }
-    pub fn set_episode_order(&self, params: SetEpisodeOrderParams) -> reqwest_middleware::RequestBuilder {
+    pub fn set_episode_order(&self, params: SetEpisodeOrderParams) -> Request<SetEpisodeOrderResponse> {
         let path = "/s/shows/{show_slug}/episode-order".to_owned();
         let path = path.replace("{show_slug}", &encode_path(&params.show_slug.to_string()));
         let request = self.http.request(reqwest::Method::PUT, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
-        request.json(&params.body)
+        let request = request.json(&params.body);
+        Request::new(request)
     }
-    pub fn list_episodes(&self, params: ListEpisodesParams) -> reqwest_middleware::RequestBuilder {
+    pub fn list_episodes(&self, params: ListEpisodesParams) -> Request<ListEpisodesResponse> {
         let path = "/s/shows/{show_slug}/episodes".to_owned();
         let path = path.replace("{show_slug}", &encode_path(&params.show_slug.to_string()));
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         let request = match params.limit { Some(value) => request.query(&[("limit", value)]), None => request };
-        match params.cursor { Some(value) => request.query(&[("cursor", value)]), None => request }
+        let request = match params.cursor { Some(value) => request.query(&[("cursor", value)]), None => request };
+        Request::new(request)
     }
-    pub fn create_show_invitation(&self, params: CreateShowInvitationParams) -> reqwest_middleware::RequestBuilder {
+    pub fn create_show_invitation(&self, params: CreateShowInvitationParams) -> Request<CreateShowInvitationResponse> {
         let path = "/s/shows/{show_slug}/invitations".to_owned();
         let path = path.replace("{show_slug}", &encode_path(&params.show_slug.to_string()));
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
-        request.json(&params.body)
+        let request = request.json(&params.body);
+        Request::new(request)
     }
-    pub fn update_show_invitation_role(&self, params: UpdateShowInvitationRoleParams) -> reqwest_middleware::RequestBuilder {
+    pub fn update_show_invitation_role(&self, params: UpdateShowInvitationRoleParams) -> Request<UpdateShowInvitationRoleResponse> {
         let path = "/s/shows/{show_slug}/invitations/{invitation_id}".to_owned();
         let path = path.replace("{show_slug}", &encode_path(&params.show_slug.to_string()));
         let path = path.replace("{invitation_id}", &encode_path(&params.invitation_id.to_string()));
         let request = self.http.request(reqwest::Method::PUT, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
-        request.json(&params.body)
+        let request = request.json(&params.body);
+        Request::new(request)
     }
-    pub fn revoke_show_invitation(&self, params: RevokeShowInvitationParams) -> reqwest_middleware::RequestBuilder {
+    pub fn revoke_show_invitation(&self, params: RevokeShowInvitationParams) -> Request<RevokeShowInvitationResponse> {
         let path = "/s/shows/{show_slug}/invitations/{invitation_id}".to_owned();
         let path = path.replace("{show_slug}", &encode_path(&params.show_slug.to_string()));
         let path = path.replace("{invitation_id}", &encode_path(&params.invitation_id.to_string()));
         let request = self.http.request(reqwest::Method::DELETE, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
-        match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
+        let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
+        Request::new(request)
     }
-    pub fn list_show_members(&self, params: ListShowMembersParams) -> reqwest_middleware::RequestBuilder {
+    pub fn list_show_members(&self, params: ListShowMembersParams) -> Request<ListShowMembersResponse> {
         let path = "/s/shows/{show_slug}/members".to_owned();
         let path = path.replace("{show_slug}", &encode_path(&params.show_slug.to_string()));
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
-        match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
+        let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
+        Request::new(request)
     }
-    pub fn update_show_member_role(&self, params: UpdateShowMemberRoleParams) -> reqwest_middleware::RequestBuilder {
+    pub fn update_show_member_role(&self, params: UpdateShowMemberRoleParams) -> Request<UpdateShowMemberRoleResponse> {
         let path = "/s/shows/{show_slug}/members/{user_id}".to_owned();
         let path = path.replace("{show_slug}", &encode_path(&params.show_slug.to_string()));
         let path = path.replace("{user_id}", &encode_path(&params.user_id.to_string()));
         let request = self.http.request(reqwest::Method::PUT, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
-        request.json(&params.body)
+        let request = request.json(&params.body);
+        Request::new(request)
     }
-    pub fn remove_show_member(&self, params: RemoveShowMemberParams) -> reqwest_middleware::RequestBuilder {
+    pub fn remove_show_member(&self, params: RemoveShowMemberParams) -> Request<RemoveShowMemberResponse> {
         let path = "/s/shows/{show_slug}/members/{user_id}".to_owned();
         let path = path.replace("{show_slug}", &encode_path(&params.show_slug.to_string()));
         let path = path.replace("{user_id}", &encode_path(&params.user_id.to_string()));
         let request = self.http.request(reqwest::Method::DELETE, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
-        match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
+        let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
+        Request::new(request)
     }
-    pub fn get_sync_inventory(&self, params: GetSyncInventoryParams) -> reqwest_middleware::RequestBuilder {
+    pub fn get_sync_inventory(&self, params: GetSyncInventoryParams) -> Request<GetSyncInventoryResponse> {
         let path = "/s/shows/{show_slug}/sync".to_owned();
         let path = path.replace("{show_slug}", &encode_path(&params.show_slug.to_string()));
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         let request = match params.cursor { Some(value) => request.query(&[("cursor", value)]), None => request };
-        match params.limit { Some(value) => request.query(&[("limit", value)]), None => request }
+        let request = match params.limit { Some(value) => request.query(&[("limit", value)]), None => request };
+        Request::new(request)
     }
-    pub fn create_sync_episode_deletion(&self, params: CreateSyncEpisodeDeletionParams) -> reqwest_middleware::RequestBuilder {
+    pub fn create_sync_episode_deletion(&self, params: CreateSyncEpisodeDeletionParams) -> Request<CreateSyncEpisodeDeletionResponse> {
         let path = "/s/shows/{show_slug}/sync/episodes/{episode_id}/deletion".to_owned();
         let path = path.replace("{show_slug}", &encode_path(&params.show_slug.to_string()));
         let path = path.replace("{episode_id}", &encode_path(&params.episode_id.to_string()));
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
-        match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
+        let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
+        Request::new(request)
     }
-    pub fn create_team_invitation(&self, params: CreateTeamInvitationParams) -> reqwest_middleware::RequestBuilder {
+    pub fn create_team_invitation(&self, params: CreateTeamInvitationParams) -> Request<CreateTeamInvitationResponse> {
         let path = "/s/team/invitations".to_owned();
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
-        request.json(&params.body)
+        let request = request.json(&params.body);
+        Request::new(request)
     }
-    pub fn update_team_invitation_role(&self, params: UpdateTeamInvitationRoleParams) -> reqwest_middleware::RequestBuilder {
+    pub fn update_team_invitation_role(&self, params: UpdateTeamInvitationRoleParams) -> Request<UpdateTeamInvitationRoleResponse> {
         let path = "/s/team/invitations/{invitation_id}".to_owned();
         let path = path.replace("{invitation_id}", &encode_path(&params.invitation_id.to_string()));
         let request = self.http.request(reqwest::Method::PUT, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
-        request.json(&params.body)
+        let request = request.json(&params.body);
+        Request::new(request)
     }
-    pub fn revoke_team_invitation(&self, params: RevokeTeamInvitationParams) -> reqwest_middleware::RequestBuilder {
+    pub fn revoke_team_invitation(&self, params: RevokeTeamInvitationParams) -> Request<RevokeTeamInvitationResponse> {
         let path = "/s/team/invitations/{invitation_id}".to_owned();
         let path = path.replace("{invitation_id}", &encode_path(&params.invitation_id.to_string()));
         let request = self.http.request(reqwest::Method::DELETE, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
-        match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
+        let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
+        Request::new(request)
     }
-    pub fn list_team_members(&self) -> reqwest_middleware::RequestBuilder {
+    pub fn list_team_members(&self) -> Request<ListTeamMembersResponse> {
         let path = "/s/team/members".to_owned();
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
-        match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
+        let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
+        Request::new(request)
     }
-    pub fn update_team_member_role(&self, params: UpdateTeamMemberRoleParams) -> reqwest_middleware::RequestBuilder {
+    pub fn update_team_member_role(&self, params: UpdateTeamMemberRoleParams) -> Request<UpdateTeamMemberRoleResponse> {
         let path = "/s/team/members/{user_id}".to_owned();
         let path = path.replace("{user_id}", &encode_path(&params.user_id.to_string()));
         let request = self.http.request(reqwest::Method::PUT, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
-        request.json(&params.body)
+        let request = request.json(&params.body);
+        Request::new(request)
     }
-    pub fn remove_team_member(&self, params: RemoveTeamMemberParams) -> reqwest_middleware::RequestBuilder {
+    pub fn remove_team_member(&self, params: RemoveTeamMemberParams) -> Request<RemoveTeamMemberResponse> {
         let path = "/s/team/members/{user_id}".to_owned();
         let path = path.replace("{user_id}", &encode_path(&params.user_id.to_string()));
         let request = self.http.request(reqwest::Method::DELETE, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
-        match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
+        let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
+        Request::new(request)
     }
-    pub fn list_client_teams(&self) -> reqwest_middleware::RequestBuilder {
+    pub fn list_client_teams(&self) -> Request<ListClientTeamsResponse> {
         let path = "/s/teams".to_owned();
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
-        match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
+        let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
+        Request::new(request)
     }
-    pub fn whoami(&self) -> reqwest_middleware::RequestBuilder {
+    pub fn whoami(&self) -> Request<WhoamiResponse> {
         let path = "/s/whoami".to_owned();
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
-        match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request }
+        let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
+        Request::new(request)
     }
 }

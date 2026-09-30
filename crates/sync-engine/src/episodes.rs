@@ -118,18 +118,30 @@ pub async fn create(api: &Api, args: EpisodeCreate) -> Result<()> {
             "content_type": content_type, "byte_length": length, "source_sha256": hash,
             "description": args.description,
         }))? });
-        let response = api.send(request).await?;
-        let session = api.accept(response, &[200, 201]).await?;
-        record.upload_session_id = string(&session, "upload_session_id")?.into();
-        record.team_id = string(&session, "team_id")?.into();
-        record.show_id = string(&session, "show_id")?.into();
-        record.episode_id = session["episode_id"].as_str().unwrap_or("").into();
-        record.expires_at = number(&session, "expires_at")?;
-        record.phase = string(&session, "phase")?.into();
-        record.completed_parts = serde_json::from_value(session["completed_parts"].clone())?;
+        let response = api.request(request).await?;
+        let session = match response {
+            p::CreateEpisodeUploadSessionResponse::Status200(session)
+            | p::CreateEpisodeUploadSessionResponse::Status201(session) => session,
+            response => return Err(api.response_error(response).await),
+        };
+        record.upload_session_id = session.upload_session_id.clone();
+        record.team_id = session.team_id.clone();
+        record.show_id = session.show_id.clone();
+        record.episode_id = session.episode_id.clone().unwrap_or_default();
+        record.expires_at = session.expires_at;
+        record.phase = match session.phase {
+            p::EpisodeUploadSessionPhase::Created => "created",
+            p::EpisodeUploadSessionPhase::Uploading => "uploading",
+            p::EpisodeUploadSessionPhase::Processing => "processing",
+            p::EpisodeUploadSessionPhase::Completed => "completed",
+            p::EpisodeUploadSessionPhase::Failed => "failed",
+            p::EpisodeUploadSessionPhase::Expired => "expired",
+        }
+        .into();
+        record.completed_parts = session.completed_parts.clone();
         write_private_json(&resume_path, &record)?;
         if record.phase != "finalizing" {
-            let part_size = u64::try_from(number(&session, "part_size")?)?;
+            let part_size = u64::try_from(session.part_size)?;
             ensure!(part_size >= 5 << 20, "invalid upload part size {part_size}");
             let count = length.div_ceil(part_size);
             ensure!(count <= 10000, "episode source requires too many parts");
@@ -144,7 +156,7 @@ pub async fn create(api: &Api, args: EpisodeCreate) -> Result<()> {
             saved_progress(&record);
             if !missing.is_empty() {
                 let response = api
-                    .send(api.client().presign_episode_upload_session_parts(
+                    .request(api.client().presign_episode_upload_session_parts(
                         p::PresignEpisodeUploadSessionPartsParams {
                             upload_session_id: record.upload_session_id.clone(),
                             body: p::PresignEpisodeUploadSessionParts {
@@ -153,26 +165,21 @@ pub async fn create(api: &Api, args: EpisodeCreate) -> Result<()> {
                         },
                     ))
                     .await?;
-                let signed = api.accept(response, &[201]).await?;
-                let parts = signed["parts"].as_array().context("missing signed parts")?;
+                let parts = match response {
+                    p::PresignEpisodeUploadSessionPartsResponse::Status201(signed) => signed.parts,
+                    response => return Err(api.response_error(response).await),
+                };
                 let mut pending = missing.into_iter().collect::<HashSet<_>>();
                 for part in parts {
-                    let number = number(part, "part_number")?;
+                    let number = part.part_number;
                     ensure!(
                         pending.remove(&number),
                         "unexpected or duplicate signed part {number}"
                     );
                     let offset = (number as u64 - 1) * part_size;
                     let size = part_size.min(length - offset);
-                    let etag = upload_part(
-                        api,
-                        &path,
-                        offset,
-                        size,
-                        string(part, "method")?,
-                        string(part, "upload_url")?,
-                    )
-                    .await?;
+                    let etag =
+                        upload_part(api, &path, offset, size, "PUT", &part.upload_url).await?;
                     record.completed_parts.push(p::CompletedEpisodeUploadPart {
                         part_number: number,
                         etag,
@@ -189,17 +196,21 @@ pub async fn create(api: &Api, args: EpisodeCreate) -> Result<()> {
         record.phase = "finalizing".into();
         write_private_json(&resume_path, &record)?;
     }
-    let response =
-        api.send(api.client().complete_episode_upload_session(
+    let response = api
+        .request(api.client().complete_episode_upload_session(
             p::CompleteEpisodeUploadSessionParams {
                 upload_session_id: record.upload_session_id.clone(),
                 body: serde_json::from_value(json!({"publication": args.publication}))?,
             },
         ))
         .await?;
-    let episode = api.accept(response, &[200, 201]).await?;
-    record.episode_id = string(&episode, "id")?.into();
-    record.show_id = string(&episode, "show_id")?.into();
+    let episode = match response {
+        p::CompleteEpisodeUploadSessionResponse::Status200(episode)
+        | p::CompleteEpisodeUploadSessionResponse::Status201(episode) => episode,
+        response => return Err(api.response_error(response).await),
+    };
+    record.episode_id = episode.id;
+    record.show_id = episode.show_id;
     ensure!(
         crate::valid_id(&record.episode_id, "ep_"),
         "invalid episode management identifier"

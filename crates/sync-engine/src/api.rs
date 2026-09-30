@@ -1,8 +1,7 @@
-use crate::{auth::StoredAuth, config::Config};
+use crate::{auth::StoredAuth, config::Config, publicapi as p};
 use anyhow::{Context, Result, bail, ensure};
 use reqwest::{Client, Response};
 use reqwest_middleware::{ClientWithMiddleware, RequestBuilder};
-use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::{
     future::Future,
@@ -136,31 +135,23 @@ impl Api {
         self.wait(read_bounded(response, limit)).await
     }
 
-    pub async fn decode<T: DeserializeOwned>(&self, response: Response) -> Result<T> {
-        serde_json::from_slice(&self.bytes(response, 4 << 20).await?).context("decode API response")
+    pub async fn request<R: p::Response>(&self, request: p::Request<R>) -> Result<R> {
+        self.wait(request.send_with(|request| self.send(request)))
+            .await
     }
 
-    pub async fn json(&self, request: RequestBuilder, statuses: &[u16]) -> Result<Value> {
-        let response = self.send(request).await?;
-        self.accept(response, statuses).await
-    }
-
-    pub async fn accept(&self, response: Response, statuses: &[u16]) -> Result<Value> {
-        if !statuses.contains(&response.status().as_u16()) {
-            return Err(self.response_error(response).await);
-        }
-        if response.status() == reqwest::StatusCode::NO_CONTENT {
-            return Ok(Value::Null);
-        }
-        self.decode(response).await
-    }
-
-    pub async fn response_error(&self, response: Response) -> anyhow::Error {
-        let status = response.status().as_u16();
+    pub async fn response_error<R: p::Response>(&self, response: R) -> anyhow::Error {
+        let status = response.status();
         if status == 401 {
             return AuthenticationRequired.into();
         }
-        let raw = self.bytes(response, 64 << 10).await.unwrap_or_default();
+        let error = match self.wait(async { Ok(response.into_error().await) }).await {
+            Ok(error) => error,
+            Err(error) => return error,
+        };
+        let p::Error::Http { body: raw, .. } = error else {
+            return error.into();
+        };
         let message = serde_json::from_slice::<Value>(&raw)
             .ok()
             .and_then(|body| {
