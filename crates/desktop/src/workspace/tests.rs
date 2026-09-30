@@ -50,6 +50,21 @@ async fn live_not_imported(cx: &mut TestAppContext) {
         Root::new(view, window, cx)
     });
     let workspace = workspace.unwrap();
+    cx.update_window(handle.into(), |_, window, cx| {
+        let view = workspace.read(cx);
+        assert!(
+            view.loading && !view.loaded,
+            "startup catalog gate was not reached"
+        );
+        window.render_frame(cx);
+        assert!(window.try_find("welcome-action").is_none());
+        window.click("sign-in", cx);
+        assert!(
+            !workspace.read(cx).authenticating,
+            "startup opened a second sign-in flow"
+        );
+    })
+    .unwrap();
     wait_for(cx, &workspace, |view| {
         view.loaded && !view.episode_loading && !view.source_loading
     })
@@ -99,6 +114,13 @@ async fn live_not_imported(cx: &mut TestAppContext) {
             "persistence check resynced the source"
         );
         window.render_frame(cx);
+        assert!(
+            window
+                .find("open-playlist")
+                .label()
+                .unwrap()
+                .starts_with("Open YouTube source:")
+        );
         assert!(
             window.try_find("filter-not-imported").is_some(),
             "YouTube failures have no Not imported tab"

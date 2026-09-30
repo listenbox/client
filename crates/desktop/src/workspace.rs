@@ -362,7 +362,7 @@ impl Workspace {
     }
 
     fn login(&mut self, cx: &mut Context<Self>) {
-        if self.authenticating || self.stopping.is_some() {
+        if self.authenticating || self.loading || self.stopping.is_some() {
             return;
         }
         self.authenticating = true;
@@ -1025,6 +1025,16 @@ impl Workspace {
 
     fn detail(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let t = Tokens::current(cx);
+        if !self.loaded && self.loading {
+            return div()
+                .flex()
+                .items_center()
+                .gap_3()
+                .py(px(tokens::SPACE))
+                .child(Spinner::new().small())
+                .child(div().text_color(t.muted).child("Loading your podcasts…"))
+                .into_any_element();
+        }
         if !self.loaded {
             return div().flex().flex_col().items_start().gap(px(tokens::SPACE)).max_w(px(600.)).py(px(tokens::SPACE * 2.))
                 .child(div().text_size(px(tokens::PAGE_TITLE)).font_weight(FontWeight::BOLD).child("Your playlists. Your podcast."))
@@ -1057,8 +1067,11 @@ impl Workspace {
                         .on_click(cx.listener(|view, _, _, cx| { if let Some(url) = view.show().and_then(|show| view.client.show_url(show).ok()) { cx.open_url(&url); } })))))
             .child(div().border_t_1().border_color(t.divider).pt(px(tokens::SPACE)).flex().flex_col().gap_2()
                 .child(div().font_weight(FontWeight::SEMIBOLD).child("YouTube source"))
-                .child(Button::new("open-playlist").ghost().justify_start().w_full().min_w_0().icon(assets::IconName::ExternalLink)
-                    .child(div().flex_1().min_w_0().truncate().child(source))
+                .child(Button::new("open-playlist").ghost().w_full().min_w_0()
+                    .accessibility_label(format!("Open YouTube source: {source}"))
+                    .child(div().w_full().flex().items_center().gap_2()
+                        .child(Icon::new(assets::IconName::ExternalLink))
+                        .child(div().flex_1().min_w_0().truncate().child(source)))
                     .on_click(move |_, _, cx| cx.open_url(&source_link)))
                 .child(div().text_size(px(12.)).text_color(t.muted).child(if is_playlist { "Episodes follow the playlist’s order. Removed videos leave this podcast on the next sync." } else { "This podcast imports a YouTube video. Sync again to resume unfinished transfers." })));
         if !show.has_active_subscription {
@@ -1220,13 +1233,17 @@ impl Render for Workspace {
                                             .ghost()
                                             .label(if self.authenticating {
                                                 "Finish in your browser…"
+                                            } else if self.loading && !self.loaded {
+                                                "Loading…"
                                             } else if self.loaded {
                                                 "Log out"
                                             } else {
                                                 "Sign in"
                                             })
                                             .disabled(
-                                                self.authenticating || self.stopping.is_some(),
+                                                self.authenticating
+                                                    || (self.loading && !self.loaded)
+                                                    || self.stopping.is_some(),
                                             )
                                             .on_click(cx.listener(|view, _, _, cx| {
                                                 if view.loaded {

@@ -361,7 +361,13 @@ impl Workspace {
             pane = pane.child(self.episode_row(row, cx));
         }
         if self.episode_loading || self.source_loading {
-            pane = pane.child(div().py_3().text_color(t.muted).child("Loading episodes…"));
+            pane = pane.child(div().py_3().text_color(t.muted).child(
+                match (self.episode_loading, self.source_loading) {
+                    (true, true) => "Loading episodes and imports…",
+                    (true, false) => "Loading episodes…",
+                    _ => "Loading saved imports…",
+                },
+            ));
         } else if let Some(error) = &self.episode_error {
             pane = pane
                 .child(div().text_color(t.danger).child(error.clone()))
