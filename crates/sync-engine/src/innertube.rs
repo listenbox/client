@@ -138,6 +138,13 @@ impl YouTube {
     }
 
     pub async fn snapshot(&self, api: &Api, id: &str) -> Result<PlaylistSnapshot> {
+        let (_, page) = self.playlist_head(api, id).await?;
+        self.complete_playlist(api, page).await
+    }
+
+    /// Read only the first page before creating an audio podcast. Video
+    /// admission completes the same scan before checking total storage.
+    pub(crate) async fn playlist_head(&self, api: &Api, id: &str) -> Result<(String, Playlist)> {
         api.wait(async {
             self.parse_failed.set(false);
             let actions = self.client.actions().await?;
@@ -148,7 +155,35 @@ impl YouTube {
                     params: Some("wgYCCAA=".into()),
                 })
                 .await?;
-            let mut page = Playlist::new(&actions, &response, false).await?;
+            let page = Playlist::new(&actions, &response, false).await?;
+            let data = page.data().await?;
+            ensure!(
+                !self.parse_failed.get(),
+                "YouTube playlist could not be parsed completely; no changes were made"
+            );
+            for alert in data.alerts {
+                match alert {
+                    PlaylistAlert::Alert(alert) | PlaylistAlert::AlertWithButton(alert)
+                        if matches!(alert.alert_type.as_str(), "INFO" | "WARNING") => {}
+                    _ => bail!("YouTube could not list this playlist"),
+                }
+            }
+            let title = data
+                .info
+                .title
+                .filter(|title| !title.trim().is_empty())
+                .context("YouTube playlist missing title")?;
+            Ok((title, page))
+        })
+        .await
+    }
+
+    pub(crate) async fn complete_playlist(
+        &self,
+        api: &Api,
+        mut page: Playlist,
+    ) -> Result<PlaylistSnapshot> {
+        api.wait(async {
             let mut title = None;
             let mut present = Vec::new();
             let mut estimated_seconds = 0_i64;

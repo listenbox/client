@@ -360,6 +360,7 @@ async fn live_import(cx: &mut TestAppContext) {
     let runtime = Arc::new(tokio::runtime::Runtime::new().unwrap());
     let config = Config::load(None).unwrap();
     let source = std::fs::read_to_string(config.directory.join("test-playlist-url")).unwrap();
+    let recover_scan = config.directory.join("test-import-scan-failure").exists();
     let client = Client::desktop(config).unwrap();
     let cancel = CancellationToken::new();
     cx.update(gpui_kit::init);
@@ -399,23 +400,41 @@ async fn live_import(cx: &mut TestAppContext) {
         );
     })
     .unwrap();
-    wait_for(cx, &view, |view| !view.importing).await;
+    wait_for(cx, &view, |view| !view.importing && !view.loading).await;
     cx.update_window(handle.into(), |_, window, cx| {
         let state = view.read(cx);
-        assert!(state.error.is_none(), "{:?}", state.error);
+        if recover_scan {
+            let error = state
+                .error
+                .as_ref()
+                .expect("continuation failure was never observed");
+            assert!(error.message.contains("was created"), "{error:?}");
+            assert!(
+                !state.import_open,
+                "created podcast stayed on the import form"
+            );
+            assert!(
+                state.source_items.is_empty(),
+                "incomplete scan admitted media"
+            );
+        } else {
+            assert!(state.error.is_none(), "{:?}", state.error);
+        }
         assert_eq!(state.catalog.shows.len(), 1);
         assert_eq!(
             state.show().unwrap().youtube_source(),
             Some(source.as_str())
         );
-        assert!(
-            state
-                .reports
-                .values()
-                .any(|report| report.starts_with("1 added")),
-            "{:?}",
-            state.reports
-        );
+        if !recover_scan {
+            assert!(
+                state
+                    .reports
+                    .values()
+                    .any(|report| report.starts_with("1 added")),
+                "{:?}",
+                state.reports
+            );
+        }
         window.render_frame(cx);
         assert!(window.try_find("save-source").is_none());
         window.click("sync-now", cx);
@@ -427,7 +446,7 @@ async fn live_import(cx: &mut TestAppContext) {
         view.read(cx)
             .reports
             .values()
-            .any(|report| report.starts_with("0 added"))
+            .any(|report| report.starts_with(if recover_scan { "1 added" } else { "0 added" }))
     }));
     cancel.cancel();
 }
