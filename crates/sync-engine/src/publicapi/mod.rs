@@ -1169,6 +1169,8 @@ pub struct EpisodePackage {
     pub team_id: TeamID,
     #[serde(rename = "upload_session_id")]
     pub upload_session_id: UploadSessionID,
+    #[serde(rename = "uploads")]
+    pub uploads: std::vec::Vec<EpisodePackageUpload>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1181,6 +1183,15 @@ pub enum EpisodePackageStatus {
     Failed,
     #[serde(rename = "expired")]
     Expired,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EpisodePackageUpload {
+    #[serde(rename = "object_index")]
+    pub object_index: i64,
+    #[serde(rename = "parts")]
+    pub parts: std::vec::Vec<PresignedEpisodeUploadPart>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

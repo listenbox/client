@@ -347,6 +347,10 @@ pub(crate) async fn import_video(
     let result: Result<()> = async {
         ensure!(session.part_size >= 5 << 20, "invalid package part size");
         for (ordinal, object) in objects.iter().enumerate() {
+            let initial = session
+                .uploads
+                .iter()
+                .find(|upload| upload.object_index == ordinal as i64);
             let mut offset = 0;
             let mut number = 1;
             while offset < object.byte_length {
@@ -356,28 +360,33 @@ pub(crate) async fn import_video(
                     number += 1;
                     continue;
                 }
-                let signed = api
-                    .json(
-                        api.client().presign_episode_package_parts(
-                            p::PresignEpisodePackagePartsParams {
-                                upload_session_id: session.upload_session_id.clone(),
-                                object_index: ordinal as i64,
-                                body: p::PresignEpisodeUploadSessionParts {
-                                    part_numbers: vec![number],
+                let parts = if number == 1
+                    && let Some(initial) = initial
+                {
+                    initial.parts.clone()
+                } else {
+                    let signed: p::PresignedEpisodeUploadParts = serde_json::from_value(
+                        api.json(
+                            api.client().presign_episode_package_parts(
+                                p::PresignEpisodePackagePartsParams {
+                                    upload_session_id: session.upload_session_id.clone(),
+                                    object_index: ordinal as i64,
+                                    body: p::PresignEpisodeUploadSessionParts {
+                                        part_numbers: vec![number],
+                                    },
                                 },
-                            },
-                        ),
-                        &[200],
-                    )
-                    .await?;
-                let parts = signed["parts"]
-                    .as_array()
-                    .context("missing package signed parts")?;
+                            ),
+                            &[200],
+                        )
+                        .await?,
+                    )?;
+                    signed.parts
+                };
                 if parts.is_empty() {
                     break;
                 }
                 ensure!(
-                    parts.len() == 1 && parts[0]["part_number"] == number,
+                    parts.len() == 1 && parts[0].part_number == number,
                     "invalid signed package part"
                 );
                 let length = session.part_size.min(object.byte_length - offset);
@@ -387,7 +396,7 @@ pub(crate) async fn import_video(
                     offset as u64,
                     length as u64,
                     "PUT",
-                    string(&parts[0], "upload_url")?,
+                    &parts[0].upload_url,
                 )
                 .await?;
                 journal.save_part(&manifest.operation_id, ordinal, number)?;
