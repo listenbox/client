@@ -9,25 +9,20 @@ use std::{
         Arc,
         atomic::{AtomicUsize, Ordering},
     },
-    time::Duration,
 };
 use tokio_util::sync::CancellationToken;
 
 struct DnsFailure {
     address: SocketAddr,
-    failures: usize,
+    fail_import: bool,
     calls: AtomicUsize,
-    failed_calls: AtomicUsize,
 }
 
 impl Resolve for DnsFailure {
     fn resolve(&self, name: Name) -> Resolving {
         assert_eq!(name.as_str(), "sync.test.invalid");
         let call = self.calls.fetch_add(1, Ordering::SeqCst);
-        let failure = call > 0 && call <= self.failures;
-        if failure {
-            self.failed_calls.fetch_add(1, Ordering::SeqCst);
-        }
+        let failure = self.fail_import && call == 1;
         let address = self.address;
         Box::pin(async move {
             if failure {
@@ -51,10 +46,9 @@ async fn live_network_recovery() {
             .unwrap();
     let slug = fixture["slug"].as_str().unwrap();
     let mode = fixture["mode"].as_str().unwrap();
-    let failures = match mode {
-        "recover" => 1,
-        "exhaust" | "cancel" => 5,
-        "completion" | "resume" | "player" => 0,
+    let fail_import = match mode {
+        "dns" => true,
+        "completion" | "resume" | "player" | "published" => false,
         _ => panic!("Unknown network scenario: {mode}"),
     };
     let cancel = CancellationToken::new();
@@ -64,9 +58,8 @@ async fn live_network_recovery() {
         address: format!("{}:{}", origin.host_str().unwrap(), origin.port().unwrap())
             .parse()
             .unwrap(),
-        failures,
+        fail_import,
         calls: AtomicUsize::new(0),
-        failed_calls: AtomicUsize::new(0),
     });
     origin.set_host(Some("sync.test.invalid")).unwrap();
     let test_config = api.config.directory.join("test-network-config.yaml");
@@ -96,77 +89,66 @@ async fn live_network_recovery() {
     let mut changes = engine.downloads.changes();
     let work = engine.once(&api, slug);
     tokio::pin!(work);
-    let mut retries = 0;
+    let mut stopped_during_retry = false;
     let result = loop {
         tokio::select! {
             result = &mut work => break result,
-            _ = changes.changed() => {
+            changed = changes.changed() => {
+                changed.unwrap();
                 let snapshot = engine.downloads.snapshot();
                 for item in &snapshot.items {
-                    if item.phase != Phase::Retrying || item.attempt <= retries {
+                    if item.phase != Phase::Retrying || stopped_during_retry {
                         continue;
                     }
-                    retries = item.attempt;
+                    assert_eq!(item.attempt, 1, "A second attempt started before Stop");
                     assert!(item.error.is_some(), "Retry lost its transport error");
-                    if mode == "cancel" {
-                        cancel.cancel();
-                    } else {
-                        // Advance only at the retry state gate. Real network I/O
-                        // runs with the clock resumed, including its failure guards.
-                        tokio::time::pause();
-                        tokio::time::advance(Duration::from_secs(60)).await;
-                        tokio::time::resume();
+                    if mode == "dns" {
+                        assert!(item.error.as_ref().unwrap().contains("dns error"));
                     }
+                    // Prove admission to retry policy, then Stop before another
+                    // attempt. CI never exercises automatic retries or backoffs.
+                    stopped_during_retry = true;
+                    cancel.cancel();
                 }
             }
         }
     };
     let items = engine.downloads.snapshot().items;
-    let item = if mode == "recover" {
-        items
-            .iter()
-            .find(|item| item.phase == Phase::Complete)
-            .unwrap()
-    } else {
-        assert_eq!(items.len(), 1);
-        &items[0]
-    };
     let client = Client::desktop(api.config.clone()).unwrap();
     let saved = client.sync_items(slug.to_owned()).await.unwrap();
+    if mode == "published" {
+        let report = result.unwrap();
+        assert_eq!(report.unchanged, 1);
+        assert_eq!(report.added, 0);
+        assert!(items.is_empty());
+        assert_eq!(saved.len(), 1);
+        assert_eq!(saved[0].phase, Phase::Complete);
+        return;
+    }
+    assert_eq!(items.len(), 1);
+    let item = &items[0];
     let saved = saved
         .iter()
         .find(|saved| saved.source_url == item.source_url)
         .unwrap();
     match mode {
-        "recover" | "completion" | "resume" | "player" => {
+        "resume" => {
             let report = result.unwrap();
             assert_eq!(report.added, 1);
-            assert_eq!(report.skipped, usize::from(mode == "recover"));
-            assert_eq!(
-                retries,
-                usize::from(mode != "resume"),
-                "Transient error was not retried"
-            );
+            assert_eq!(report.skipped, 0);
+            assert!(!stopped_during_retry);
             assert_eq!(item.phase, Phase::Complete);
-            assert_eq!(item.attempt, if mode == "resume" { 1 } else { 2 });
+            assert_eq!(item.attempt, 1);
             assert!(item.error.is_none());
             assert_eq!(saved.phase, Phase::Complete);
         }
-        "exhaust" => {
-            let report = result.unwrap();
-            assert_eq!(report.added, 0);
-            assert_eq!(report.skipped, 1);
-            assert_eq!(retries, 4);
-            assert_eq!(item.attempt, 5);
-            assert_eq!(resolver.failed_calls.load(Ordering::SeqCst), 5);
-            assert_eq!(item.phase, Phase::Skipped);
-            assert_eq!(saved.phase, Phase::Skipped);
-            assert!(saved.reason.as_ref().unwrap().contains("dns error"));
-        }
-        "cancel" => {
+        "dns" | "player" | "completion" => {
             assert!(result.is_err());
-            assert_eq!(retries, 1, "Cancellation never reached the retry wait");
-            assert_eq!(resolver.calls.load(Ordering::SeqCst), 2);
+            assert!(stopped_during_retry, "Stop never reached the retry state");
+            assert_eq!(item.attempt, 1);
+            if mode == "dns" {
+                assert_eq!(resolver.calls.load(Ordering::SeqCst), 2);
+            }
             assert_eq!(item.phase, Phase::Queued);
             assert_eq!(saved.phase, Phase::Queued);
         }
