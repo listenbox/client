@@ -89,14 +89,25 @@ where
                 .to_vec(),
         )
     };
-    let response = fetch(FetchRequest {
+    let response = match fetch(FetchRequest {
         url,
         method,
         headers: pairs,
         body,
     })
     .await
-    .map_err(|e| rquickjs::Exception::throw_message(&ctx, &e.to_string()))?;
+    {
+        Ok(response) => response,
+        Err(error) => {
+            let exception = rquickjs::Exception::from_message(ctx.clone(), &error.message)?;
+            if let Some(info) = error.info {
+                exception
+                    .as_object()
+                    .set("info", ctx.json_parse(info.to_string())?)?;
+            }
+            return Err(exception.throw());
+        }
+    };
     let options = Object::new(ctx.clone())?;
     options.set("status", response.status)?;
     options.set(

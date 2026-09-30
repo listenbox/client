@@ -69,6 +69,7 @@ pub fn episode_id(value: &str) -> Result<String, String> {
 mod database;
 mod download;
 pub mod downloads;
+mod errors;
 pub mod sync;
 
 pub fn redact(message: &str) -> String {
