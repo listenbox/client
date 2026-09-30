@@ -1133,6 +1133,8 @@ pub struct EpisodeListItem {
     pub show_id: ShowID,
     #[serde(rename = "slug", default, skip_serializing_if = "Option::is_none")]
     pub slug: std::option::Option<NonEmptyString>,
+    #[serde(rename = "source_url", default, skip_serializing_if = "Option::is_none")]
+    pub source_url: std::option::Option<std::string::String>,
     #[serde(rename = "status")]
     pub status: EpisodeStatus,
     #[serde(rename = "thumbnail_url", default, skip_serializing_if = "Option::is_none")]

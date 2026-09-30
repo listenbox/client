@@ -109,6 +109,8 @@ pub struct ByteRange {
 pub struct Download {
     pub id: String,
     pub source_id: String,
+    pub source_url: String,
+    pub position: Option<i64>,
     pub source_title: String,
     pub title: String,
     pub duration_seconds: Option<u64>,
@@ -122,6 +124,25 @@ pub struct Download {
 }
 
 impl Download {
+    pub(crate) fn queued(source_id: &str, source_title: &str, video_id: &str, title: &str) -> Self {
+        Self {
+            id: format!("{source_id}/{video_id}"),
+            source_id: source_id.into(),
+            source_title: source_title.into(),
+            source_url: format!("https://www.youtube.com/watch?v={video_id}"),
+            position: None,
+            title: title.into(),
+            duration_seconds: None,
+            reason: None,
+            phase: Phase::Queued,
+            attempt: 0,
+            total: 0,
+            ranges: Vec::new(),
+            error: None,
+            rate: None,
+        }
+    }
+
     pub fn received(&self) -> u64 {
         self.ranges.iter().map(|range| range.received).sum()
     }
@@ -267,20 +288,9 @@ impl DownloadManager {
             .iter()
             .map(|(video_id, title)| {
                 let id = format!("{source_id}/{video_id}");
-                state.items.push(Download {
-                    id: id.clone(),
-                    source_id: source_id.into(),
-                    source_title: source_title.into(),
-                    title: title.clone(),
-                    duration_seconds: None,
-                    reason: None,
-                    phase: Phase::Queued,
-                    attempt: 0,
-                    total: 0,
-                    ranges: Vec::new(),
-                    error: None,
-                    rate: None,
-                });
+                state
+                    .items
+                    .push(Download::queued(source_id, source_title, video_id, title));
                 Transfer {
                     manager: self.clone(),
                     id,
@@ -297,6 +307,30 @@ pub struct Transfer {
 }
 
 impl Transfer {
+    pub(crate) fn item(&self) -> Download {
+        self.manager
+            .state
+            .read()
+            .snapshot
+            .items
+            .iter()
+            .find(|item| item.id == self.id)
+            .expect("Transfer belongs to its manager")
+            .clone()
+    }
+
+    pub(crate) fn position(&self, position: i64) {
+        self.update(|item| item.position = Some(position));
+    }
+
+    pub(crate) fn queued(&self) {
+        self.update(|item| {
+            item.phase = Phase::Queued;
+            item.error = None;
+            item.reason = None;
+        });
+    }
+
     fn update(&self, update: impl FnOnce(&mut Download)) {
         if let Some(item) = self
             .manager
@@ -449,6 +483,11 @@ pub struct ActiveTransfer {
 }
 
 impl ActiveTransfer {
+    pub(crate) fn cancelled(mut self) {
+        self.transfer.queued();
+        self.finished = true;
+    }
+
     pub fn finish(mut self, result: &anyhow::Result<()>) {
         if let Err(error) = result {
             self.transfer.error(error);

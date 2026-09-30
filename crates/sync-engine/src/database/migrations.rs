@@ -57,10 +57,10 @@ mod tests {
         let before = runner().get_applied_migrations(&mut connection).unwrap();
         let mut migrations = runner().get_migrations().clone();
         migrations.push(
-            Migration::unapplied("V2__pending", "CREATE TABLE pending(id INTEGER);").unwrap(),
+            Migration::unapplied("V3__pending", "CREATE TABLE pending(id INTEGER);").unwrap(),
         );
         migrations
-            .push(Migration::unapplied("V3__broken", "INSERT INTO absent VALUES(1);").unwrap());
+            .push(Migration::unapplied("V4__broken", "INSERT INTO absent VALUES(1);").unwrap());
         assert!(
             Runner::new(&migrations)
                 .set_grouped(true)

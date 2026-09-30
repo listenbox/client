@@ -1,5 +1,9 @@
 //! Private transfer journal shared by CLI and desktop. Catalogs remain live API data.
-use crate::publicapi as p;
+use crate::{
+    downloads::{Download, Phase},
+    innertube::Video,
+    publicapi as p,
+};
 use anyhow::{Context, Result};
 use parking_lot::Mutex;
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
@@ -93,22 +97,102 @@ impl Database {
         origin: &str,
         show: &str,
         collection: &str,
-        urls: &[String],
+        videos: &[Video],
+        can_remove: bool,
     ) -> Result<()> {
         let mut connection = self.connections.writer.lock();
         let tx = connection.transaction()?;
-        tx.execute(
-            "DELETE FROM source_items WHERE origin IS ?1 AND show_slug IS ?2",
-            params![origin, show],
-        )?;
-        for (position, url) in urls.iter().enumerate() {
+        let urls: std::collections::HashSet<_> = videos
+            .iter()
+            .map(|video| format!("https://www.youtube.com/watch?v={}", video.id))
+            .collect();
+        if can_remove {
+            let previous = {
+                let mut statement = tx.prepare(
+                    "SELECT source_url FROM source_items WHERE origin IS ?1 AND show_slug IS ?2",
+                )?;
+                statement
+                    .query_map(params![origin, show], |row| row.get::<_, String>(0))?
+                    .collect::<Result<Vec<_>, _>>()?
+            };
+            for url in previous {
+                if !urls.contains(&url) {
+                    tx.execute("DELETE FROM source_items WHERE origin IS ?1 AND show_slug IS ?2 AND source_url IS ?3", params![origin, show, url])?;
+                }
+            }
+        }
+        for (position, video) in videos.iter().enumerate() {
+            let url = format!("https://www.youtube.com/watch?v={}", video.id);
             tx.execute(
-                "INSERT INTO source_items VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT DO NOTHING",
-                params![origin, show, collection, url, position as i64],
+                "INSERT INTO source_items (origin, show_slug, collection_url, source_url, position, title, duration_seconds, phase)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'queued')
+                 ON CONFLICT(origin, show_slug, source_url) DO UPDATE SET
+                 position=excluded.position, title=excluded.title, duration_seconds=excluded.duration_seconds",
+                params![origin, show, collection, url, position as i64, video.title, video.duration_seconds.map(i64::try_from).transpose()?],
             )?;
         }
         tx.commit()?;
         Ok(())
+    }
+
+    pub fn outcome(&self, origin: &str, show: &str, item: &Download) -> Result<()> {
+        let phase = match item.phase {
+            Phase::Complete => "complete",
+            Phase::Skipped => "skipped",
+            Phase::Failed => "failed",
+            _ => "queued",
+        };
+        self.connections.writer.lock().execute(
+            "UPDATE source_items SET title=?4, duration_seconds=?5, phase=?6, reason=?7, error=?8
+             WHERE origin IS ?1 AND show_slug IS ?2 AND source_url IS ?3",
+            params![
+                origin,
+                show,
+                item.source_url,
+                item.title,
+                item.duration_seconds.map(i64::try_from).transpose()?,
+                phase,
+                item.reason,
+                item.error
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn published(&self, origin: &str, show: &str, source: &str) -> Result<()> {
+        self.connections.writer.lock().execute(
+            "UPDATE source_items SET phase='complete', reason=NULL, error=NULL WHERE origin IS ?1 AND show_slug IS ?2 AND source_url IS ?3",
+            params![origin, show, source],
+        )?;
+        Ok(())
+    }
+
+    pub fn items(&self, origin: &str, show: &str) -> Result<Vec<Download>> {
+        self.read(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT source_url, position, title, duration_seconds, phase, reason, error
+                 FROM source_items WHERE origin IS ?1 AND show_slug IS ?2 ORDER BY position, source_url",
+            )?;
+            let rows = statement.query_map(params![origin, show], |row| {
+                let source_url: String = row.get(0)?;
+                let video_id = source_url.strip_prefix("https://www.youtube.com/watch?v=").ok_or(rusqlite::Error::InvalidQuery)?;
+                let mut item = Download::queued(show, show, video_id, &row.get::<_, String>(2)?);
+                item.source_url = source_url;
+                item.position = Some(row.get(1)?);
+                item.duration_seconds = row.get::<_, Option<i64>>(3)?.map(|seconds| seconds as u64);
+                item.phase = match row.get::<_, String>(4)?.as_str() {
+                    "complete" => Phase::Complete,
+                    "skipped" => Phase::Skipped,
+                    "failed" => Phase::Failed,
+                    "queued" => Phase::Queued,
+                    _ => return Err(rusqlite::Error::InvalidQuery),
+                };
+                item.reason = row.get(5)?;
+                item.error = row.get(6)?;
+                Ok(item)
+            })?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
     }
 
     pub fn download(&self, operation: &str, name: &str, identity: &str) -> Result<()> {

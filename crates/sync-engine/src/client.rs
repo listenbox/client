@@ -36,6 +36,16 @@ impl Client {
     pub fn downloads(&self) -> DownloadManager {
         self.engine.downloads.clone()
     }
+    pub async fn sync_items(&self, slug: String) -> Result<Vec<crate::downloads::Download>> {
+        if !self.has_credentials() {
+            return Err(crate::api::AuthenticationRequired.into());
+        }
+        let (engine, config) = (self.engine.clone(), self.config.clone());
+        tokio::task::spawn_blocking(move || {
+            engine.database(&config)?.items(&config.api_origin, &slug)
+        })
+        .await?
+    }
     pub fn logout(&self) -> Result<()> {
         auth::logout(&self.config)?;
         self.engine.downloads.clear();

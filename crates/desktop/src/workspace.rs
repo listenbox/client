@@ -32,6 +32,10 @@ pub struct Workspace {
     episode_error: Option<String>,
     episode_request: u64,
     episode_cancel: Option<CancellationToken>,
+    source_items: Vec<listenbox_sync_engine::downloads::Download>,
+    source_loading: bool,
+    source_error: Option<String>,
+    show_issues: bool,
     client: Client,
     runtime: Arc<tokio::runtime::Runtime>,
     cancel: CancellationToken,
@@ -156,6 +160,10 @@ enum Message {
         bool,
         anyhow::Result<listenbox_sync_engine::publicapi::EpisodePage>,
     ),
+    SourceItems(
+        u64,
+        anyhow::Result<Vec<listenbox_sync_engine::downloads::Download>>,
+    ),
 }
 
 impl Workspace {
@@ -206,6 +214,10 @@ impl Workspace {
             episode_error: None,
             episode_request: 0,
             episode_cancel: None,
+            source_items: vec![],
+            source_loading: false,
+            source_error: None,
+            show_issues: false,
             client,
             runtime,
             lifetime: cancel.clone(),
@@ -391,6 +403,18 @@ impl Workspace {
             }
             Message::Episodes(request, append, result) => {
                 self.episodes_received(request, append, result)
+            }
+            Message::SourceItems(request, result) => {
+                if request == self.episode_request {
+                    self.source_loading = false;
+                    match result {
+                        Ok(items) => self.source_items = items,
+                        Err(error) => {
+                            self.source_error =
+                                Some(format!("Could not load saved imports. {error:#}"))
+                        }
+                    }
+                }
             }
             Message::Drained(mode, result) => {
                 if mode == Shutdown::Quit {
@@ -580,6 +604,7 @@ impl Workspace {
 
     fn select(&mut self, slug: Option<String>, _window: &mut Window, cx: &mut Context<Self>) {
         self.selected = slug;
+        self.show_issues = false;
         self.settings_open = false;
         self.cookie_input = settings::cookie_input(_window, cx);
         self.import_open = false;
@@ -1091,97 +1116,6 @@ impl Workspace {
         ))
         .into_any_element()
     }
-
-    fn transfers(&self, cx: &mut Context<Self>) -> AnyElement {
-        let t = Tokens::current(cx);
-        let mut rows = div()
-            .flex()
-            .flex_col()
-            .gap(px(tokens::GAP))
-            .mt(px(tokens::SPACE))
-            .border_t_1()
-            .border_color(t.divider)
-            .pt(px(tokens::SPACE))
-            .child(
-                div().flex().justify_between().items_center().child(
-                    div()
-                        .text_size(px(tokens::TITLE))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .child("Transfers"),
-                ),
-            );
-        if self.progress.items.is_empty() {
-            rows = rows.child(
-                div()
-                    .py(px(tokens::SPACE))
-                    .text_color(t.muted)
-                    .child("New episodes will appear here as they sync."),
-            );
-        }
-        for item in self.progress.items.iter().rev().take(100) {
-            let mut row = div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .py_3()
-                .border_b_1()
-                .border_color(t.divider)
-                .child(
-                    div()
-                        .flex()
-                        .justify_between()
-                        .gap_4()
-                        .child(div().flex_1().min_w_0().child(item.title.clone()).child(
-                            div().text_size(px(12.)).text_color(t.muted).child(
-                                match item.duration_seconds {
-                                    Some(seconds) => format!(
-                                        "{} · {}",
-                                        item.source_title,
-                                        episodes::duration(seconds)
-                                    ),
-                                    None => item.source_title.clone(),
-                                },
-                            ),
-                        ))
-                        .child(
-                            div()
-                                .text_color(if item.phase == Phase::Failed {
-                                    t.danger
-                                } else {
-                                    t.muted
-                                })
-                                .child(item.phase.label()),
-                        ),
-                );
-            if item.phase == Phase::Downloading {
-                let value = if item.total == 0 {
-                    0.
-                } else {
-                    100. * item.received() as f32 / item.total as f32
-                };
-                row = row
-                    .child(
-                        Progress::new(SharedString::from(format!("progress-{}", item.id)))
-                            .value(value)
-                            .accessibility_label(format!("Downloading {}", item.title)),
-                    )
-                    .child(div().text_size(px(12.)).text_color(t.muted).child(format!(
-                        "{:.1} / {:.1} MB · {:.1} MB/s",
-                        item.received() as f64 / 1_000_000.,
-                        item.total as f64 / 1_000_000.,
-                        item.bytes_per_second() as f64 / 1_000_000.
-                    )));
-            }
-            if let Some(reason) = &item.reason {
-                row = row.child(div().text_color(t.muted).child(reason.clone()));
-            }
-            if let Some(error) = &item.error {
-                row = row.child(div().text_color(t.danger).child(error.clone()));
-            }
-            rows = rows.child(row);
-        }
-        rows.into_any_element()
-    }
 }
 
 impl Render for Workspace {
@@ -1354,7 +1288,7 @@ impl Render for Workspace {
                                 self.detail(window, cx)
                             })
                             .when(self.loaded && !self.settings_open, |pane| {
-                                pane.child(self.episode_list(cx)).child(self.transfers(cx))
+                                pane.child(self.episode_list(cx))
                             }),
                     ),
             )

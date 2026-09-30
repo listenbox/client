@@ -11,6 +11,229 @@ use std::{cell::Cell, rc::Rc, time::Duration};
 // checks do not silently substitute a fake API; the parent explicitly invokes it.
 #[gpui_kit::test]
 #[ignore = "requires the parent workspace's ephemeral Listenbox services"]
+async fn live_not_imported(cx: &mut TestAppContext) {
+    let config = Config::load(None).unwrap();
+    let fixture: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(config.directory.join("test-not-imported.json")).unwrap(),
+    )
+    .unwrap();
+    let slug = fixture["slug"].as_str().unwrap().to_owned();
+    let runtime = Arc::new(tokio::runtime::Runtime::new().unwrap());
+    let client = Client::desktop(config).unwrap();
+    let catalog = runtime
+        .block_on(client.catalog(CancellationToken::new()))
+        .unwrap();
+    let cancel = CancellationToken::new();
+    cx.update(gpui_kit::init);
+    cx.executor().allow_parking();
+    let mut workspace = None;
+    let handle = cx.open_window(size(px(1080.), px(1040.)), |window, cx| {
+        tokens::apply(window, cx);
+        let view = cx.new(|cx| {
+            let mut view = Workspace::new(
+                client,
+                runtime,
+                cancel.clone(),
+                TaskTracker::new(),
+                window,
+                cx,
+            );
+            // Gate the startup scan until the saved results have been inspected.
+            for show in &catalog.shows {
+                view.reports
+                    .insert(show.slug.clone(), "Previous sync saved".into());
+            }
+            view.selected = Some(slug.clone());
+            view
+        });
+        workspace = Some(view.clone());
+        Root::new(view, window, cx)
+    });
+    let workspace = workspace.unwrap();
+    wait_for(cx, &workspace, |view| {
+        view.loaded && !view.episode_loading && !view.source_loading
+    })
+    .await;
+    if matches!(fixture["mode"].as_str(), Some("lost" | "success")) {
+        cx.update_window(handle.into(), |_, window, cx| {
+            let view = workspace.read(cx);
+            assert!(
+                view.jobs.is_empty(),
+                "persistence check resynced the source"
+            );
+            assert_eq!(view.source_items.len(), 1);
+            if fixture["mode"].as_str() == Some("lost") {
+                assert_eq!(view.source_items[0].phase, Phase::Failed);
+                assert!(view.source_items[0].error.is_some());
+            } else {
+                assert_eq!(view.source_items[0].phase, Phase::Complete);
+            }
+            let rows = view.episode_rows();
+            assert_eq!(
+                rows.len(),
+                1,
+                "published source duplicated its failed transfer"
+            );
+            assert!(rows[0].episode.is_some());
+            assert!(!rows[0].issue());
+            window.render_frame(cx);
+            assert!(
+                window.try_find("filter-not-imported").is_none(),
+                "published source retained the Not imported tab"
+            );
+            let video = fixture["video"].as_str().unwrap();
+            assert!(
+                window
+                    .try_find(SharedString::from(format!("open-source-{slug}/{video}")))
+                    .is_none()
+            );
+        })
+        .unwrap();
+        cancel.cancel();
+        return;
+    }
+    cx.update_window(handle.into(), |_, window, cx| {
+        assert_eq!(workspace.read(cx).episodes.len(), 1);
+        assert!(
+            workspace.read(cx).jobs.is_empty(),
+            "persistence check resynced the source"
+        );
+        window.render_frame(cx);
+        assert!(
+            window.try_find("filter-not-imported").is_some(),
+            "YouTube failures have no Not imported tab"
+        );
+        window.click("filter-not-imported", cx);
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("filter-not-imported").label(),
+            Some("Not imported (3)")
+        );
+        let rows = workspace.read(cx).episode_rows();
+        let issues: Vec<_> = rows.iter().filter(|row| row.issue()).collect();
+        assert_eq!(issues.len(), 3);
+        for (row, key) in issues.iter().zip(["skipped", "failed", "signin"]) {
+            let item = row.item.as_ref().unwrap();
+            assert_eq!(
+                item.source_url,
+                format!(
+                    "https://www.youtube.com/watch?v={}",
+                    fixture[key].as_str().unwrap()
+                )
+            );
+            assert!(!item.title.is_empty());
+            assert!(
+                item.reason.is_some() || item.error.is_some(),
+                "saved {key} failure lost its explanation"
+            );
+        }
+        assert!(
+            issues[2]
+                .item
+                .as_ref()
+                .unwrap()
+                .error
+                .as_ref()
+                .unwrap()
+                .contains("Settings")
+        );
+        for key in ["skipped", "failed", "signin"] {
+            let id = fixture[key].as_str().unwrap();
+            assert!(
+                window
+                    .try_find(SharedString::from(format!("open-source-{slug}/{id}")))
+                    .is_some(),
+                "saved {key} video has no YouTube action"
+            );
+        }
+        let failed = fixture["failed"].as_str().unwrap();
+        window.click(
+            SharedString::from(format!("open-source-{slug}/{failed}")),
+            cx,
+        );
+    })
+    .unwrap();
+    assert_eq!(
+        cx.opened_url(),
+        Some(format!(
+            "https://www.youtube.com/watch?v={}",
+            fixture["failed"].as_str().unwrap()
+        ))
+    );
+    let other = fixture["other"].as_str().unwrap();
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.click(SharedString::from(format!("show-{other}")), cx);
+    })
+    .unwrap();
+    wait_for(cx, &workspace, |view| {
+        !view.episode_loading && !view.source_loading
+    })
+    .await;
+    cx.update_window(handle.into(), |_, window, cx| {
+        let view = workspace.read(cx);
+        assert_eq!(view.selected.as_deref(), Some(other));
+        assert!(!view.show_issues, "podcast selection kept the old filter");
+        assert!(
+            view.episode_rows().is_empty(),
+            "another podcast inherited failed imports"
+        );
+        window.render_frame(cx);
+        assert!(
+            window.try_find("filter-not-imported").is_none(),
+            "empty podcast has a Not imported tab"
+        );
+        window.click(SharedString::from(format!("show-{slug}")), cx);
+    })
+    .unwrap();
+    wait_for(cx, &workspace, |view| {
+        !view.episode_loading && !view.source_loading
+    })
+    .await;
+    cx.update(|cx| {
+        assert_eq!(
+            workspace
+                .read(cx)
+                .episode_rows()
+                .iter()
+                .filter(|row| row.issue())
+                .count(),
+            3
+        )
+    });
+    if fixture["mode"].as_str() == Some("recover") {
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.click("filter-not-imported", cx);
+            window.click("sync-now", cx);
+            assert_eq!(
+                workspace.read(cx).jobs.len(),
+                1,
+                "recovery sync was not admitted"
+            );
+        })
+        .unwrap();
+        wait_for(cx, &workspace, |view| {
+            view.jobs.is_empty() && !view.episode_loading && !view.source_loading
+        })
+        .await;
+        cx.update_window(handle.into(), |_, window, cx| {
+            let rows = workspace.read(cx).episode_rows();
+            assert_eq!(rows.len(), 1);
+            assert!(rows[0].episode.is_some());
+            assert!(!rows[0].issue());
+            window.render_frame(cx);
+            assert!(
+                window.try_find("filter-not-imported").is_none(),
+                "successful sync retained the Not imported tab"
+            );
+            assert!(window.try_find("filter-episodes").is_some());
+        })
+        .unwrap();
+    }
+    cancel.cancel();
+}
+
+#[gpui_kit::test]
+#[ignore = "requires the parent workspace's ephemeral Listenbox services"]
 async fn live_backend(cx: &mut TestAppContext) {
     let runtime = Arc::new(tokio::runtime::Runtime::new().unwrap());
     let client = Client::desktop(Config::load(None).unwrap()).unwrap();

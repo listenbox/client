@@ -112,8 +112,16 @@ GPUI Kit’s default component composition.
 ## Purpose and hierarchy
 
 The app keeps imported YouTube podcasts current automatically. The reading order
-is **team → import action → podcast → source and sync status → transfers**.
+is **team → import action → podcast → source and sync status → Episodes**.
 Teams own the library scope. A podcast never becomes the parent of a team.
+
+The selected podcast's Episodes list is the merged status surface: published
+episodes from the API appear alongside active and persisted source items scoped
+to that podcast. Published rows retain API array order; pending source rows may
+be placed around them by saved source position without reordering the API
+sequence. The `Not imported` filter appears only when failed or skipped source
+items exist, shows each item's reason or error and an `Open in YouTube` action,
+and is hidden when the issue count reaches zero.
 
 The 240px sidebar and the working pane have aligned 56px toolbars. Listenbox is
 a quiet 14px semibold application label; account and Reload actions occupy the
@@ -144,7 +152,7 @@ Use the named constants in `src/tokens.rs`, with a 4px spacing base.
 | Sidebar action height | 36px | Stable through normal, disabled and loading states. |
 | Control padding | 12px | Action text sits inside its visible button boundary. |
 | Related control gap | 12px | Team picker and import button form one group. |
-| Main pane inset / section gap | 24px | Separate source, status and transfer regions. |
+| Main pane inset / section gap | 24px | Separate source, status and episode-list regions. |
 | List row gap | 4px | Compact, continuous library, without individual cards. |
 | Artwork-to-text gap | 12px | Shared by all podcast rows. |
 | Control radius | 10px | Rounded rectangles, not capsules. |
@@ -209,7 +217,7 @@ sizes. It retains at most 128 covers, releases evicted GPU images, prunes covers
 that leave the catalog, and clears on logout or explicit Reload. Preview assets
 are synthetic fixtures with provenance in `tests/fixtures/README.md`.
 
-## Sync and transfers
+## Sync and episode status
 
 Existing imports sync on startup and hourly while Listenbox is running. Sync
 now requests another immediate pass. Stop cancels the current work and saves
@@ -220,12 +228,15 @@ The engine owns checkpoints, transfers and the scan cadence for CLI and desktop.
 Import failure after creation keeps the podcast available to resume by slug.
 Never suggest importing a second podcast to recover the first.
 
-Transfers are flat rows separated by quiet dividers. Each row pairs the episode
-and podcast titles with a phase on the right. Downloads show a horizontal
-progress bar, received/total bytes and measured throughput. There is no queue or
-upload pause/resume control. Checkpoints recover crashes and unexpected
-interruptions. Empty states describe real next steps and never invent activity
-or podcast content.
+The selected podcast's Episodes list uses flat rows separated by quiet dividers.
+It merges published API episodes with active and persisted source items while
+preserving the API array order and the podcast scope. Failed and skipped source
+rows show their reason or error and a ghost `Open in YouTube` action. The
+`Not imported` filter is conditional on those rows and disappears when none
+remain. Downloads show a horizontal progress bar, received/total bytes and
+measured throughput. There is no queue or upload pause/resume control.
+Checkpoints recover crashes and unexpected interruptions. Empty states describe
+real next steps and never invent activity or podcast content.
 
 ## Window behavior
 

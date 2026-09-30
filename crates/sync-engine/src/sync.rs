@@ -87,6 +87,14 @@ pub async fn inventory(api: &Api, slug: &str) -> Result<p::SyncInventory> {
 }
 
 impl Engine {
+    pub(crate) fn database(&self, config: &crate::config::Config) -> Result<Database> {
+        let mut saved = self.journal.lock();
+        if saved.is_none() {
+            *saved = Some(Database::open(&config.directory)?);
+        }
+        Ok(saved.as_ref().context("Missing sync journal")?.clone())
+    }
+
     fn next_scan_at(&self) -> tokio::time::Instant {
         let periods = self.scan_anchor.elapsed().as_secs() / WATCH_INTERVAL.as_secs();
         self.scan_anchor + Duration::from_secs((periods + 1) * WATCH_INTERVAL.as_secs())
@@ -131,13 +139,7 @@ impl Engine {
             .open(api.config.directory.join(format!("sync-{lock_key}.lock")))?;
         lock.try_lock()
             .context("Another client is already syncing this show on this computer")?;
-        let journal = {
-            let mut saved = self.journal.lock();
-            if saved.is_none() {
-                *saved = Some(Database::open(&api.config.directory)?);
-            }
-            saved.as_ref().context("Missing sync journal")?.clone()
-        };
+        let journal = self.database(&api.config)?;
         let before = inventory(api, slug).await?;
         let collection = before.show.youtube_source().context(
             "This podcast has no YouTube import. Import a playlist to create a new podcast.",
@@ -174,15 +176,20 @@ impl Engine {
             .iter()
             .map(|video| format!("https://www.youtube.com/watch?v={}", video.id))
             .collect();
-        if snapshot.can_remove {
-            journal.snapshot(&api.config.api_origin, slug, collection, &ordered_urls)?;
-        }
+        journal.snapshot(
+            &api.config.api_origin,
+            slug,
+            collection,
+            &snapshot.present,
+            snapshot.can_remove,
+        )?;
         let remote: HashSet<String> = snapshot
             .present
             .iter()
             .map(|video| format!("https://www.youtube.com/watch?v={}", video.id))
             .collect();
         for episode in &before.episodes {
+            journal.published(&api.config.api_origin, slug, &episode.source_url)?;
             journal.forget(&api.config.api_origin, slug, &episode.source_url)?;
         }
         let existing: HashMap<&str, &p::SyncEpisode> = before
@@ -218,6 +225,14 @@ impl Engine {
         );
         for (video, transfer) in additions.iter().zip(&transfers) {
             transfer.duration(video.duration_seconds);
+            transfer.position(
+                snapshot
+                    .present
+                    .iter()
+                    .position(|item| item.id == video.id)
+                    .context("Missing source position")? as i64,
+            );
+            journal.outcome(&api.config.api_origin, slug, &transfer.item())?;
         }
         let audio = before.show.source_kind == p::ShowSourceKind::Audio;
         let mut work = stream::iter(additions.iter().zip(transfers).map(|(video, transfer)| {
@@ -227,8 +242,7 @@ impl Engine {
                 let active = match api.wait(async { Ok(transfer.acquire().await) }).await {
                     Ok(active) => active,
                     Err(error) => {
-                        transfer.phase(crate::downloads::Phase::Failed);
-                        transfer.error(&error);
+                        transfer.queued();
                         return Err(error);
                     }
                 };
@@ -248,11 +262,19 @@ impl Engine {
                 if let Ok(ImportOutcome::Skipped(reason)) = &result {
                     transfer.skipped(reason);
                 }
-                let outcome = result
-                    .as_ref()
-                    .map(|_| ())
-                    .map_err(|error| anyhow::anyhow!("{error:#}"));
-                active.finish(&outcome);
+                if api.cancel.is_cancelled() && result.is_err() {
+                    active.cancelled();
+                } else {
+                    let outcome = result.as_ref().map(|_| ()).map_err(|error| {
+                        if error.is::<crate::cookies::SignInRequired>() {
+                            anyhow::Error::new(crate::cookies::SignInRequired)
+                        } else {
+                            anyhow::anyhow!("{error:#}")
+                        }
+                    });
+                    active.finish(&outcome);
+                }
+                journal.outcome(&api.config.api_origin, slug, &transfer.item())?;
                 result
             }
         }))

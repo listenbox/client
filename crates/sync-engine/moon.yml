@@ -23,6 +23,18 @@ tasks:
     deps: [client:prerequisites]
     inputs: ['@group(sources)', 'project://client?group=sources']
     command: pkgx +llvm.org +cmake.org cargo-nextest nextest run --locked -p listenbox-sync-engine
+  build-e2e:
+    description: Build the historical-journal fixture used by the parent API's integrated CLI recovery proof.
+    deps: [client:prerequisites]
+    inputs: ['@group(sources)', 'project://client?group=sources']
+    script: |-
+      set -euo pipefail
+      mkdir -p dist
+      pkgx +llvm.org +cmake.org cargo test --locked -p listenbox-sync-engine --test v1_journal --no-run --message-format=json > dist/test-build.json
+      executable="$(pkgx jq -r 'select(.reason == "compiler-artifact" and .profile.test and .executable != null) | .executable' dist/test-build.json)"
+      test -n "$executable"
+      cp "$executable" dist/listenbox-journal-e2e
+    outputs: [dist/listenbox-journal-e2e]
   test-media:
     description: Decode real AAC/Opus/AVC fixtures through the release-linked media preparation code.
     deps: [client:prerequisites]
