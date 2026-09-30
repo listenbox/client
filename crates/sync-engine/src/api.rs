@@ -1,5 +1,5 @@
 use crate::{auth::StoredAuth, config::Config};
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use reqwest::{Client, Response};
 use reqwest_middleware::{ClientWithMiddleware, RequestBuilder};
 use serde::de::DeserializeOwned;
@@ -78,7 +78,7 @@ impl Api {
     pub async fn wait<T>(&self, work: impl Future<Output = Result<T>>) -> Result<T> {
         tokio::select! {
             biased;
-            _ = self.cancel.cancelled() => Err(crate::errors::Interrupted.into()),
+            _ = self.cancel.cancelled() => bail!("operation interrupted; resumable source upload state preserved"),
             result = work => result,
         }
     }

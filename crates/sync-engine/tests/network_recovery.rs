@@ -17,6 +17,7 @@ struct DnsFailure {
     address: SocketAddr,
     failures: usize,
     calls: AtomicUsize,
+    failed_calls: AtomicUsize,
 }
 
 impl Resolve for DnsFailure {
@@ -24,6 +25,9 @@ impl Resolve for DnsFailure {
         assert_eq!(name.as_str(), "sync.test.invalid");
         let call = self.calls.fetch_add(1, Ordering::SeqCst);
         let failure = call > 0 && call <= self.failures;
+        if failure {
+            self.failed_calls.fetch_add(1, Ordering::SeqCst);
+        }
         let address = self.address;
         Box::pin(async move {
             if failure {
@@ -62,6 +66,7 @@ async fn live_network_recovery() {
             .unwrap(),
         failures,
         calls: AtomicUsize::new(0),
+        failed_calls: AtomicUsize::new(0),
     });
     origin.set_host(Some("sync.test.invalid")).unwrap();
     let test_config = api.config.directory.join("test-network-config.yaml");
@@ -117,10 +122,15 @@ async fn live_network_recovery() {
         }
     };
     let items = engine.downloads.snapshot().items;
-    let item = items
-        .iter()
-        .find(|item| item.phase != Phase::Skipped)
-        .unwrap();
+    let item = if mode == "recover" {
+        items
+            .iter()
+            .find(|item| item.phase == Phase::Complete)
+            .unwrap()
+    } else {
+        assert_eq!(items.len(), 1);
+        &items[0]
+    };
     let client = Client::desktop(api.config.clone()).unwrap();
     let saved = client.sync_items(slug.to_owned()).await.unwrap();
     let saved = saved
@@ -143,14 +153,15 @@ async fn live_network_recovery() {
             assert_eq!(saved.phase, Phase::Complete);
         }
         "exhaust" => {
-            let error = result.unwrap_err();
-            assert!(format!("{error:#}").contains("dns error"));
+            let report = result.unwrap();
+            assert_eq!(report.added, 0);
+            assert_eq!(report.skipped, 1);
             assert_eq!(retries, 4);
             assert_eq!(item.attempt, 5);
-            assert_eq!(resolver.calls.load(Ordering::SeqCst), 6);
-            assert_eq!(item.phase, Phase::Failed);
-            assert_eq!(saved.phase, Phase::Failed);
-            assert!(saved.error.is_some());
+            assert_eq!(resolver.failed_calls.load(Ordering::SeqCst), 5);
+            assert_eq!(item.phase, Phase::Skipped);
+            assert_eq!(saved.phase, Phase::Skipped);
+            assert!(saved.reason.as_ref().unwrap().contains("dns error"));
         }
         "cancel" => {
             assert!(result.is_err());

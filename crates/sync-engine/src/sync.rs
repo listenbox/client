@@ -290,22 +290,21 @@ impl Engine {
                     }
                     attempt += 1;
                 };
+                // A non-retryable episode error or a spent retry budget skips
+                // this run. Its journal remains available for a later sync.
+                let result = match result {
+                    Err(error) if !api.cancel.is_cancelled() => {
+                        Ok(ImportOutcome::Skipped(crate::redact(&format!("{error:#}"))))
+                    }
+                    result => result,
+                };
                 if let Ok(ImportOutcome::Skipped(reason)) = &result {
                     transfer.skipped(reason);
                 }
-                if result.as_ref().is_err_and(|error| {
-                    api.cancel.is_cancelled() || classify(error) == Category::Cancelled
-                }) {
+                if api.cancel.is_cancelled() && result.is_err() {
                     active.cancelled();
                 } else {
-                    let outcome = result.as_ref().map(|_| ()).map_err(|error| {
-                        if error.is::<crate::cookies::SignInRequired>() {
-                            anyhow::Error::new(crate::cookies::SignInRequired)
-                        } else {
-                            anyhow::anyhow!("{error:#}")
-                        }
-                    });
-                    active.finish(&outcome);
+                    active.finish(&Ok(()));
                 }
                 journal.outcome(&api.config.api_origin, slug, &transfer.item())?;
                 result
@@ -337,12 +336,6 @@ impl Engine {
                     .collect::<Vec<_>>()
                     .join("; ")
             );
-            if failures
-                .iter()
-                .any(|error| error.is::<crate::cookies::SignInRequired>())
-            {
-                return Err(anyhow::Error::new(crate::cookies::SignInRequired).context(message));
-            }
             bail!(message);
         }
 

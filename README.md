@@ -195,14 +195,14 @@ An active paid audio or video plan is required for synchronization. The desktop 
 
 The engine requests a listing that includes hidden videos and follows every continuation before reconciling canonical item URLs. Each new video ID gets a playback check, even when playlist metadata labels it unavailable. Playable videos become episodes; unavailable videos are skipped without retries until the next sync. A playlist with no playable videos can still be imported and populated later. Informational and warning alerts allow imports but prevent deleting missing episodes because YouTube may have hidden them. Removed videos are deleted only after an alert-free scan and only when imported into this podcast. Unavailable videos and manually uploaded episodes are preserved. Playlist order becomes RSS order; real publication dates stay intact. Reordering does not repeat media work.
 
-The sync engine owns four error categories:
+The sync engine owns two episode error categories:
 
 | Category | Sync behavior |
 | --- | --- |
-| Retryable | DNS, connection, timeout and interrupted HTTP body failures retry up to four times after the initial attempt, with cancellable delays of 1, 2, 4 and 8 seconds. Saved download ranges and prepared uploads are reused. Exhaustion reports failure and preserves work for the next sync. |
-| Skip | Explicitly unavailable playback is skipped until the next sync. |
-| Cancelled | Stop preserves unfinished work as queued and interrupts retry delays immediately. |
-| Failed | Sign-in requirements, API rejections, invalid responses and local processing errors report failure without automatic retries. |
+| Retryable | DNS, connection, timeout and interrupted HTTP body failures retry up to four times after the initial attempt, with cancellable delays of 1, 2, 4 and 8 seconds. Saved download ranges and prepared uploads are reused. After exhaustion the episode is skipped for this run, preserving its reason and saved work for the next sync. |
+| Skip | Unavailable playback, sign-in requirements, API rejections, invalid responses and local processing errors skip the episode for this run. The desktop lists it under Not imported with its reason. Other episodes continue syncing. |
+
+Stop interrupts the synchronization and its retry delays, preserving unfinished work as queued. It is control flow, independent of the episode error categories. Errors reading the playlist, reading the backend inventory or recording durable outcomes stop the whole run.
 
 For creator-managed podcasts, read or change order through the same ordering API:
 

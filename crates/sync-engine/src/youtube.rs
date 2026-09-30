@@ -280,12 +280,7 @@ pub(crate) async fn import_video(
                 Ok(())
             }
             .await;
-            if let Err(error) = downloaded {
-                if crate::errors::classify(&error) == crate::errors::Category::Skip {
-                    return Ok(ImportOutcome::Skipped(error.to_string()));
-                }
-                return Err(error);
-            }
+            downloaded?;
             if let Some(transfer) = transfer {
                 transfer.phase(crate::downloads::Phase::Preparing);
             }

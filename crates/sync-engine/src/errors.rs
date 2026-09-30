@@ -1,4 +1,4 @@
-//! One bounded error policy for source resolution, transfer and sync outcomes.
+//! Episode error policy. The sync token owns cancellation independently.
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -6,31 +6,14 @@ use serde::{Deserialize, Serialize};
 pub(crate) enum Category {
     /// DNS, connections, timeouts and interrupted HTTP bodies.
     Retryable,
-    /// The source explicitly disallows playback; check again on the next sync.
+    /// Skip this episode for this run, retaining the reason for the next sync.
     Skip,
-    /// Explicit cancellation preserves resumable work in the queue.
-    Cancelled,
-    /// Authentication, API rejection, invalid contracts or local processing failures.
-    Failed,
 }
 
 const CATEGORY_INFO: &str = "listenbox_error_category";
 
-#[derive(Debug)]
-pub(crate) struct Interrupted;
-
-impl std::fmt::Display for Interrupted {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("operation interrupted; resumable source upload state preserved")
-    }
-}
-impl std::error::Error for Interrupted {}
-
 pub(crate) fn classify(error: &anyhow::Error) -> Category {
     for cause in error.chain() {
-        if cause.is::<Interrupted>() {
-            return Category::Cancelled;
-        }
         if cause.is::<crate::download::MediaUnavailable>() {
             return Category::Skip;
         }
@@ -58,7 +41,7 @@ pub(crate) fn classify(error: &anyhow::Error) -> Category {
             return Category::Retryable;
         }
     }
-    Category::Failed
+    Category::Skip
 }
 
 /// Preserve the category through the embedded JS exception, without matching
