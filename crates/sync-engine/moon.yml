@@ -24,17 +24,23 @@ tasks:
     inputs: ['@group(sources)', 'project://client?group=sources']
     command: pkgx +llvm.org +cmake.org cargo-nextest nextest run --locked -p listenbox-sync-engine
   build-e2e:
-    description: Build the historical-journal fixture used by the parent API's integrated CLI recovery proof.
+    description: Build sync fixtures used by the parent API's integrated recovery proofs.
     deps: [client:prerequisites]
     inputs: ['@group(sources)', 'project://client?group=sources']
     script: |-
       set -euo pipefail
       mkdir -p dist
-      pkgx +llvm.org +cmake.org cargo test --locked -p listenbox-sync-engine --test v1_journal --no-run --message-format=json > dist/test-build.json
-      executable="$(pkgx jq -r 'select(.reason == "compiler-artifact" and .profile.test and .executable != null) | .executable' dist/test-build.json)"
-      test -n "$executable"
-      cp "$executable" dist/listenbox-journal-e2e
-    outputs: [dist/listenbox-journal-e2e]
+      pkgx +llvm.org +cmake.org cargo test --locked -p listenbox-sync-engine --test v1_journal --test network_recovery --no-run --message-format=json > dist/test-build.json
+      for fixture in v1_journal network_recovery; do
+        executable="$(pkgx jq -r --arg fixture "$fixture" 'select(.reason == "compiler-artifact" and .profile.test and .target.name == $fixture and .executable != null) | .executable' dist/test-build.json)"
+        test -n "$executable"
+        if [ "$fixture" = v1_journal ]; then
+          cp "$executable" dist/listenbox-journal-e2e
+        else
+          cp "$executable" dist/listenbox-network-e2e
+        fi
+      done
+    outputs: [dist/listenbox-journal-e2e, dist/listenbox-network-e2e]
   test-media:
     description: Decode real AAC/Opus/AVC fixtures through the release-linked media preparation code.
     deps: [client:prerequisites]

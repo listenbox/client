@@ -78,8 +78,8 @@ async fn live_not_imported(cx: &mut TestAppContext) {
             );
             assert_eq!(view.source_items.len(), 1);
             if fixture["mode"].as_str() == Some("lost") {
-                assert_eq!(view.source_items[0].phase, Phase::Failed);
-                assert!(view.source_items[0].error.is_some());
+                assert_eq!(view.source_items[0].phase, Phase::Skipped);
+                assert!(view.source_items[0].reason.is_some());
             } else {
                 assert_eq!(view.source_items[0].phase, Phase::Complete);
             }
@@ -134,8 +134,9 @@ async fn live_not_imported(cx: &mut TestAppContext) {
         let rows = workspace.read(cx).episode_rows();
         let issues: Vec<_> = rows.iter().filter(|row| row.issue()).collect();
         assert_eq!(issues.len(), 3);
-        for (row, key) in issues.iter().zip(["skipped", "failed", "signin"]) {
+        for (row, key) in issues.iter().zip(["skipped", "no_stream", "signin"]) {
             let item = row.item.as_ref().unwrap();
+            assert_eq!(item.phase, Phase::Skipped);
             assert_eq!(
                 item.source_url,
                 format!(
@@ -154,12 +155,22 @@ async fn live_not_imported(cx: &mut TestAppContext) {
                 .item
                 .as_ref()
                 .unwrap()
-                .error
+                .reason
                 .as_ref()
                 .unwrap()
                 .contains("Settings")
         );
-        for key in ["skipped", "failed", "signin"] {
+        assert!(
+            issues[1]
+                .item
+                .as_ref()
+                .unwrap()
+                .reason
+                .as_ref()
+                .unwrap()
+                .contains("no downloadable stream URLs")
+        );
+        for key in ["skipped", "no_stream", "signin"] {
             let id = fixture[key].as_str().unwrap();
             assert!(
                 window
@@ -168,9 +179,9 @@ async fn live_not_imported(cx: &mut TestAppContext) {
                 "saved {key} video has no YouTube action"
             );
         }
-        let failed = fixture["failed"].as_str().unwrap();
+        let no_stream = fixture["no_stream"].as_str().unwrap();
         window.click(
-            SharedString::from(format!("open-source-{slug}/{failed}")),
+            SharedString::from(format!("open-source-{slug}/{no_stream}")),
             cx,
         );
     })
@@ -179,7 +190,7 @@ async fn live_not_imported(cx: &mut TestAppContext) {
         cx.opened_url(),
         Some(format!(
             "https://www.youtube.com/watch?v={}",
-            fixture["failed"].as_str().unwrap()
+            fixture["no_stream"].as_str().unwrap()
         ))
     );
     let other = fixture["other"].as_str().unwrap();
