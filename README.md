@@ -64,6 +64,10 @@ In the parent workspace, it also waits for the OpenAPI client and configuration
 generators; standalone checkouts use the committed generated Rust sources.
 Moon caches deliverable binaries under `dist/`, never Cargo's `target/` directory.
 
+The YouTube.js fork is bundled with Aube. The bundler replaces
+`vendor/bundle/cf-worker.js` only when its contents change, so Cargo can reuse
+the Rust crates that embed it. This task does not use Moon's output cache.
+
 ### Worktree disk usage
 
 Cargo downloads share `registry` and `git` under `CARGO_HOME` (normally
@@ -170,6 +174,10 @@ moonx desktop:dev
 ```
 
 Moon installs the pinned Dioxus CLI (`dx` 0.7.10) into `crates/desktop/dist/dev-tools` and runs `dx serve --hot-patch` with the desktop's `hot-reload` feature. Subsecond patches rendering and UI event code in the running app. Each patch refreshes GPUI's window and recreates element callbacks while retaining the workspace, input entities, and active sync jobs. Failed builds leave the development session available for the next edit.
+
+Starting a new `dx` session recompiles the desktop executable to capture linker
+arguments, even when its source is unchanged. Cargo reuses unchanged dependency
+crates. Keep the session running for fast live patches.
 
 Changes to fields or field types of live structs, startup code, and running async tasks require a full rebuild (`r` in the `dx` terminal). Hotpatching does not migrate retained state or restart existing futures. `dx` owns source watching and compilation; dependency and configuration changes also need a rebuild. Quit Listenbox stops the app and leaves `dx` available to reopen it with `o`; closing the window keeps the app running. Ctrl-C stops the development session and requests normal application shutdown.
 

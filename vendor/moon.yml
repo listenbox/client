@@ -18,20 +18,11 @@ tasks:
       internal: true
   bundle:
     deps: [~:install]
-    command: aube -C youtubejs exec --no-install esbuild
-    args:
-      - src/platform/cf-worker.ts
-      - --bundle
-      - --target=es2020
-      - --keep-names
-      - --minify
-      - --format=esm
-      - --define:global=globalThis
-      - --conditions=module
-      - --outfile=../bundle/cf-worker.js
-      - --platform=node
-    inputs: ['@group(sources)']
+    command: bash bundle.sh
+    inputs: ['@group(sources)', bundle.sh]
     outputs: [bundle/cf-worker.js]
+    options:
+      cache: false
   test:
     deps: [~:bundle]
     command: aube -C youtubejs exec --no-install vitest run --root .. --globals --testTimeout 30000 tests/youtubejs.test.js

@@ -67,7 +67,7 @@ tasks:
       runInCI: false
   lint:
     deps: [~:prerequisites]
-    inputs: ["@group(sources)", tools/**/*.sh]
+    inputs: ["@group(sources)", tools/**/*.sh, vendor/*.sh]
     command: bash tools/lint.sh
   build:
     deps: [cli:build, desktop:build]
