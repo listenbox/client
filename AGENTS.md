@@ -1,5 +1,8 @@
 # Rust client
 
+- Repository and submodule fetch/push remotes and `.gitmodules` URLs use SSH.
+  GitHub Actions checkout may use HTTPS.
+
 - Run `shellcheck` on every shell script you create or change. `moon run client:lint`
   checks the client's shell scripts with the installed ShellCheck binary.
 
