@@ -4,6 +4,8 @@
 )]
 
 mod artwork;
+#[cfg(all(debug_assertions, feature = "hot-reload"))]
+mod hot_reload;
 mod platform;
 mod quit;
 mod tokens;
@@ -85,6 +87,8 @@ fn main() -> anyhow::Result<()> {
                         workspace::Workspace::new(client, runtime_ui, cancel, tasks, window, cx)
                     });
                     platform::install(&view, window, cx);
+                    #[cfg(all(debug_assertions, feature = "hot-reload"))]
+                    hot_reload::connect(&view, window, cx);
                     cx.spawn(async move |cx| {
                         if shutdown_signal.await.is_ok() {
                             cx.update(|cx| cx.dispatch_action(&platform::Quit));

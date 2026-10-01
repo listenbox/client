@@ -15,33 +15,28 @@ fileGroups:
     - tests/**/*
     - Cargo.toml
 tasks:
+  dev-tools:
+    description: Install the pinned Subsecond build and watch driver.
+    command: cargo install --locked --root dist/dev-tools dioxus-cli --version 0.7.10
+    inputs: [Cargo.toml, moon.yml]
+    outputs: [dist/dev-tools/bin/dx]
+    options:
+      runInCI: false
   dev:
-    description: Watch client sources, rebuild the debug app, and connect to local Listenbox services.
-    deps: [client:prerequisites]
+    description: Hotpatch the running desktop UI with Subsecond against local Listenbox services.
+    deps: [client:prerequisites, ~:dev-tools]
     preset: server
     env:
       RUST_BACKTRACE: '1'
     script: |-
       set -eu
       cd ../..
-      mkdir -p .cache
-      cargo metadata --locked --no-deps --format-version 1 > .cache/desktop-metadata.json
-      pkgx jq -er '
-        INDEX(.packages[]; .manifest_path | rtrimstr("/Cargo.toml")) as $packages |
-        [.packages[] | select(.name == "listenbox-desktop") |
-          recurse(.dependencies[] | select(.path != null and .kind != "dev") |
-            $packages[.path] // error("Local desktop dependency is not a workspace member")) |
-          .manifest_path | rtrimstr("/Cargo.toml")] | unique[]
-      ' .cache/desktop-metadata.json > .cache/desktop-watch-paths
-      export LISTENBOX_DEV_WATCHER_PID=$$
-      exec pkgx watchexec@2.7.3 --restart --debounce 300ms --stop-timeout 5s \
-        --project-origin . --watch-file .cache/desktop-watch-paths \
-        --watch config --watch tools \
-        --watch Cargo.toml --watch Cargo.lock --watch rust-toolchain.toml \
-        --watch .cargo --watch moon.yml --watch .moon/workspace.yml \
-        --ignore '**/dist/**' --shell none -- sh tools/dev-desktop.sh
+      exec crates/desktop/dist/dev-tools/bin/dx serve \
+        --desktop --hot-patch --package listenbox-desktop --features hot-reload \
+        --locked --args="--config $PWD/config/dev.yaml"
     options:
       cache: false
+      interactive: true
       runInCI: false
       os: macos
   build:
@@ -49,7 +44,7 @@ tasks:
     inputs: ['@group(sources)', 'project://client?group=sources']
     script: |-
       set -euo pipefail
-      pkgx +llvm.org +cmake.org cargo build --locked -p listenbox-desktop
+      cargo build --locked -p listenbox-desktop
       mkdir -p dist
       cp ../../target/debug/listenbox-desktop dist/listenbox-desktop
     outputs: [dist/listenbox-desktop]
@@ -60,7 +55,7 @@ tasks:
     script: |-
       set -euo pipefail
       cd ../..
-      pkgx +llvm.org +cmake.org cargo build --locked --release -p listenbox-desktop
+      cargo build --locked --release -p listenbox-desktop
       mkdir -p crates/desktop/dist/release
       cp target/release/listenbox-desktop crates/desktop/dist/release/listenbox-desktop
       cp .cache/ffmpeg/NOTICE.txt crates/desktop/dist/release/FFmpeg-NOTICE.txt
@@ -121,15 +116,15 @@ tasks:
   test:
     deps: [client:prerequisites]
     inputs: ['@group(sources)', 'project://client?group=sources']
-    command: pkgx +llvm.org +cmake.org cargo test --locked -p listenbox-desktop
+    command: cargo test --locked -p listenbox-desktop --features hot-reload
   build-e2e:
     deps: [client:prerequisites]
     inputs: ['@group(sources)', 'project://client?group=sources']
     script: |-
       set -euo pipefail
       mkdir -p dist
-      pkgx +llvm.org +cmake.org cargo test --locked -p listenbox-desktop --no-run --message-format=json > dist/test-build.json
-      executable="$(pkgx jq -r 'select(.reason == "compiler-artifact" and .profile.test and .executable != null) | .executable' dist/test-build.json)"
+      cargo test --locked -p listenbox-desktop --no-run --message-format=json > dist/test-build.json
+      executable="$(jq -r 'select(.reason == "compiler-artifact" and .profile.test and .executable != null) | .executable' dist/test-build.json)"
       test -n "$executable"
       cp "$executable" dist/listenbox-desktop-e2e
     outputs: [dist/listenbox-desktop-e2e]

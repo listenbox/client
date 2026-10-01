@@ -21,7 +21,10 @@ jobs:
           version: '2.5.1'
           node-version: '26.5.0'
           run-install: false
-      - uses: pkgxdev/setup@v5
+      - run: brew install cmake llvm
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest@0.9.146
       - uses: moonrepo/setup-toolchain@v0
         with:
           moon-version: '2.5.5'
@@ -35,7 +38,6 @@ jobs:
             ~/.cargo/git
             ${{ runner.temp }}/kache
             .moon/cache/outputs
-            ~/.pkgx
           key: rust-kache-v1-0.27.0-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.kache.toml', '.cargo/config.toml', 'rust-toolchain.toml', 'tools/native-ffmpeg.rs') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', '**/moon.yml', '.moon/**/*.yml', '.github/workflows/ci.yaml', '.github/workflows/release.yaml') }}-${{ github.sha }}
           restore-keys: |
             rust-kache-v1-0.27.0-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.kache.toml', '.cargo/config.toml', 'rust-toolchain.toml', 'tools/native-ffmpeg.rs') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', '**/moon.yml', '.moon/**/*.yml', '.github/workflows/ci.yaml', '.github/workflows/release.yaml') }}-

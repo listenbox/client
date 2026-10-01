@@ -4,12 +4,16 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+hot-reload = ["dep:dioxus-devtools"]
+
 [build-dependencies]
 embed-resource = "3"
 image = { version = "0.25", default-features = false, features = ["ico", "png"] }
 resvg = { version = "0.46", default-features = false }
 
 [dependencies]
+dioxus-devtools = { version = "=0.7.10", optional = true }
 listenbox-sync-engine = { path = "../sync-engine" }
 gpui-kit = "=0.6.6"
 anyhow = "1"

@@ -1,5 +1,8 @@
 # Rust client
 
+- Run `shellcheck` on every shell script you create or change. `moon run client:lint`
+  checks the client's shell scripts with the installed ShellCheck binary.
+
 - CLI and desktop share `crates/sync-engine`; put HTTP, format selection,
   configuration, and sync behavior there.
 - Debug builds default to `~/.cache/listenbox/dev/`. Release builds use

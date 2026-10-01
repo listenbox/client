@@ -34,12 +34,6 @@ fileGroups:
 taskOptions:
   cache: true
 tasks:
-  secrets:
-    command: bash tools/check-secrets.sh
-    inputs: []
-    options:
-      cache: false
-      runInCI: always
   native-ffmpeg:
     inputs: [tools/native-ffmpeg.rs, rust-toolchain.toml]
     script: |-
@@ -74,12 +68,7 @@ tasks:
   lint:
     deps: [~:prerequisites]
     inputs: ["@group(sources)", tools/**/*.sh]
-    script: |-
-      set -euo pipefail
-      cargo fmt --all
-      rustfmt --edition 2024 tools/*.rs
-      pkgx shellcheck tools/*.sh
-      pkgx +llvm.org +cmake.org cargo clippy --locked --workspace --all-targets -- -D warnings
+    command: bash tools/lint.sh
   build:
     deps: [cli:build, desktop:build]
     inputs: []
@@ -87,7 +76,7 @@ tasks:
     deps: [cli:test, client-engine:test, client-youtubei:test, desktop:test]
     inputs: []
   check:
-    deps: [~:secrets, ~:lint, ~:test, ~:build]
+    deps: [~:lint, ~:test, ~:build]
     inputs: []
     options:
       runInCI: false
@@ -106,7 +95,7 @@ tasks:
     inputs: ['@group(sources)']
     script: |-
       set -euo pipefail
-      pkgx +llvm.org +cmake.org cargo build --locked --release -p listenbox
+      cargo build --locked --release -p listenbox
       mkdir -p dist/release
       cp target/release/listenbox dist/release/
       cp crates/desktop/dist/release/listenbox-desktop dist/release/listenbox-desktop

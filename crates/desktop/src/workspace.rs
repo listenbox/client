@@ -1133,6 +1133,18 @@ impl Workspace {
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        #[cfg(feature = "hot-reload")]
+        {
+            dioxus_devtools::subsecond::call(|| self.render_workspace(window, cx))
+        }
+        #[cfg(not(feature = "hot-reload"))]
+        self.render_workspace(window, cx)
+    }
+}
+
+impl Workspace {
+    // Keep the hotpatch boundary's return type independent of the element tree.
+    fn render_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let t = Tokens::current(cx);
         let quit_notice = if self.stopping.is_some() {
             Some(("Finishing current work…", 1.))
@@ -1351,6 +1363,7 @@ impl Render for Workspace {
                         ),
                 )
             })
+            .into_any_element()
     }
 }
 

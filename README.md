@@ -11,7 +11,21 @@ A Rust monorepo for the Listenbox desktop app, CLI and shared synchronization en
 
 ## Build
 
-Install Rust via rustup, [Moon](https://moonrepo.dev), [pkgx](https://pkgx.sh), [kache 0.27.0](https://github.com/kunobi-ninja/kache/releases/tag/v0.27.0), a C compiler, make and tar. Rust is pinned in `rust-toolchain.toml`. Source builds also use Node.js 26 and [Aube](https://aube.sh); shipped applications need neither.
+Install Rust via rustup, [Moon](https://moonrepo.dev), [kache 0.27.0](https://github.com/kunobi-ninja/kache/releases/tag/v0.27.0), a C compiler, make, tar, CMake, libclang, pkg-config, jq, ShellCheck, and cargo-nextest. Rust is pinned in `rust-toolchain.toml`. Source builds also use Node.js 26 and [Aube](https://aube.sh); shipped applications need neither.
+
+On macOS, install missing native tools with Homebrew:
+
+```sh
+brew install cmake llvm pkgconf jq shellcheck cargo-nextest
+```
+
+On Ubuntu 24.04, install the build dependencies with APT:
+
+```sh
+sudo apt-get install build-essential cmake clang libclang-dev pkg-config jq shellcheck libasound2-dev libfontconfig1-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev libxcb1-dev libx11-xcb-dev libx11-dev libegl1-mesa-dev libvulkan-dev libssl-dev
+```
+
+CMake builds the bundled `zlib-ng` dependency; libclang generates the FFmpeg and GPUI bindings. Moon invokes Cargo and the installed tools directly. The devbox Ansible setup provisions Rust 1.98.1, kache 0.27.0, cargo-nextest 0.9.146, ShellCheck, and the Ubuntu build dependencies.
 
 ```sh
 # Install once per machine, outside a checkout (or use the prebuilt release).
@@ -42,7 +56,7 @@ From either workspace:
 ```sh
 moon run client:lint       # Format Rust, check shell scripts, and run Clippy
 moon run client:test       # Run each crate's existing test runner
-moon run client:check      # Secrets, lint, tests, and debug builds
+moon run client:check      # Lint, tests, and debug builds
 ```
 
 Build, lint, and test tasks retain the native FFmpeg prerequisite.
@@ -149,15 +163,15 @@ In the parent Listenbox workspace, start the backend and dashboard in one termin
 moonx dev
 ```
 
-Then start the desktop watcher in another terminal, from either workspace:
+Then start the desktop development session in another terminal, from either workspace:
 
 ```sh
 moonx desktop:dev
 ```
 
-This follows [Mazit's watchexec workflow](https://github.com/meoyawn/mazit/blob/main/Taskfile.yaml): source changes rebuild and restart the debug app after a 300 ms debounce. Changes to engine and YouTube code, migrations, assets, Cargo manifests, and local config are watched too. Failed builds leave the watcher running for the next edit. Quit Listenbox ends the watcher; closing the window keeps the app running. Ctrl-C stops the watcher and app. Restart signals use the app's normal cancel-and-drain path, with a five-second force-stop guard; the engine recovers interrupted work from its journal.
+Moon installs the pinned Dioxus CLI (`dx` 0.7.10) into `crates/desktop/dist/dev-tools` and runs `dx serve --hot-patch` with the desktop's `hot-reload` feature. Subsecond patches rendering and UI event code in the running app. Each patch refreshes GPUI's window and recreates element callbacks while retaining the workspace, input entities, and active sync jobs. Failed builds leave the development session available for the next edit.
 
-The watched crate directories come from `cargo metadata`, following the desktop's transitive local dependencies. There is no hand-maintained crate list, and CLI source edits do not restart the desktop. Cargo reuses unchanged crate artifacts through `desktop:build`. Restart `moonx desktop:dev` after adding or removing a local crate dependency so it discovers the changed dependency graph.
+Changes to fields or field types of live structs, startup code, and running async tasks require a full rebuild (`r` in the `dx` terminal). Hotpatching does not migrate retained state or restart existing futures. `dx` owns source watching and compilation; dependency and configuration changes also need a rebuild. Quit Listenbox stops the app and leaves `dx` available to reopen it with `o`; closing the window keeps the app running. Ctrl-C stops the development session and requests normal application shutdown.
 
 `config/dev.yaml` points at `http://localhost:8080` (public API) and `http://localhost:5174` (dashboard sign-in). Debug builds automatically log HTTP method, route, response status, elapsed milliseconds, and trace ID to stderr; release builds omit these diagnostics. Desktop debug startup also prints the active profile and SQLite path. Signed media URLs and credentials are omitted from diagnostics. Debug builds use the worktree-independent `~/.cache/listenbox/dev` profile, isolating credentials and resumable work from the release profile. To use the same dev login from the CLI, run from the client repository:
 
@@ -274,8 +288,6 @@ E2E tests use the same code with isolated homes and explicit local configuration
 Generated API and configuration modules are committed in `sync-engine`, so this monorepo builds independently. The parent workspace regenerates them through Moon from `packages/openapi/spec/public.responsible.ts` and `client.responsible.ts` before client builds. Its integration command is `moon run api:test-e2e`; both workspaces use `moon ci`.
 
 ## Keeping private data out of the repository
-
-Run `moon run client:secrets` before publishing changes. It uses [Gitleaks](https://github.com/gitleaks/gitleaks) to scan all locally available Git history, staged and unstaged edits, and new non-ignored files. `moon ci` always runs this check without caching. Findings are redacted. The additional file-content rules catch personal home paths and personal email addresses; Git author and committer identities remain public attribution.
 
 Keep credentials, sync databases, downloaded media, and logs in the client profile, outside tracked source. The development profile lives in `~/.cache/listenbox/dev` outside the checkout. Local environment files, credentials, SQLite journals, logs, and signing keys are also ignored. Use synthetic data for fixtures and screenshots, and review images manually: a text scanner cannot establish that an image contains no private information.
 

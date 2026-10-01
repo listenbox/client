@@ -19,8 +19,8 @@ tasks:
     inputs: ['@group(sources)', 'project://client?group=sources']
     script: |-
       set -euo pipefail
-      pkgx +llvm.org +cmake.org cargo build --locked -p youtubei
+      cargo build --locked -p youtubei
   test:
     deps: [client:prerequisites]
     inputs: ['@group(sources)', 'project://client?group=sources']
-    command: pkgx +llvm.org +cmake.org cargo test --locked -p youtubei
+    command: cargo test --locked -p youtubei

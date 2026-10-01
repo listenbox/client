@@ -9,6 +9,10 @@ use std::{env, error::Error, fs, path::Path};
 fn main() -> Result<(), Box<dyn Error>> {
     println!("cargo:rerun-if-changed=assets/icon.png");
     println!("cargo:rerun-if-changed=assets/tray.svg");
+    if cfg!(feature = "hot-reload") && env::var("CARGO_CFG_TARGET_OS")? == "macos" {
+        // Subsecond's fat binary includes GPUI's otherwise unused IOSurface code.
+        println!("cargo:rustc-link-lib=framework=IOSurface");
+    }
     let out = std::path::PathBuf::from(env::var_os("OUT_DIR").ok_or("missing OUT_DIR")?);
 
     // Generate both variants on every host so they can be inspected together.
