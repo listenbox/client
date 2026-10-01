@@ -9,11 +9,12 @@ pub async fn run(api: &Api, command: EpisodeCommand) -> Result<()> {
             let mut seen = HashSet::new();
             loop {
                 let page = match api
-                    .request(api.client().list_episodes(p::ListEpisodesParams {
+                    .client()
+                    .list_episodes(p::ListEpisodesParams {
                         show_slug: show.clone(),
                         limit: Some(i64::from(limit)),
                         cursor,
-                    }))
+                    })
                     .await?
                 {
                     p::ListEpisodesResponse::Status200(value) => value,
@@ -57,12 +58,10 @@ pub async fn run(api: &Api, command: EpisodeCommand) -> Result<()> {
         EpisodeCommand::Delete { episode, yes } => {
             ensure!(yes, "episodes delete: --yes is required");
             let result = match api
-                .request(
-                    api.client()
-                        .create_episode_deletion(p::CreateEpisodeDeletionParams {
-                            episode_id: episode.clone(),
-                        }),
-                )
+                .client()
+                .create_episode_deletion(p::CreateEpisodeDeletionParams {
+                    episode_id: episode.clone(),
+                })
                 .await?
             {
                 p::CreateEpisodeDeletionResponse::Status202(value) => value,
@@ -73,7 +72,8 @@ pub async fn run(api: &Api, command: EpisodeCommand) -> Result<()> {
                 api.client()
                     .episode_deletion_events(p::EpisodeDeletionEventsParams {
                         episode_deletion_run_id: result.episode_deletion_run_id,
-                    }),
+                    })
+                    .await?,
                 "episode",
                 "episode_id",
                 &episode,

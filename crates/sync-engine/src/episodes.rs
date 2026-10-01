@@ -113,12 +113,11 @@ pub async fn create(api: &Api, args: EpisodeCreate) -> Result<()> {
         Err(error) => return Err(error.into()),
     };
     if !["finalizing", "processing", "completed"].contains(&record.phase.as_str()) {
-        let request = api.client().create_episode_upload_session(p::CreateEpisodeUploadSessionParams { body: serde_json::from_value(json!({
+        let response = api.client().create_episode_upload_session(p::CreateEpisodeUploadSessionParams { body: serde_json::from_value(json!({
             "show_slug": args.show, "title": args.title, "file_name": path.file_name().context("source filename")?.to_string_lossy(),
             "content_type": content_type, "byte_length": length, "source_sha256": hash,
             "description": args.description,
-        }))? });
-        let response = api.request(request).await?;
+        }))? }).await?;
         let session = match response {
             p::CreateEpisodeUploadSessionResponse::Status200(session)
             | p::CreateEpisodeUploadSessionResponse::Status201(session) => session,
@@ -156,14 +155,15 @@ pub async fn create(api: &Api, args: EpisodeCreate) -> Result<()> {
             saved_progress(&record);
             if !missing.is_empty() {
                 let response = api
-                    .request(api.client().presign_episode_upload_session_parts(
+                    .client()
+                    .presign_episode_upload_session_parts(
                         p::PresignEpisodeUploadSessionPartsParams {
                             upload_session_id: record.upload_session_id.clone(),
                             body: p::PresignEpisodeUploadSessionParts {
                                 part_numbers: missing.clone(),
                             },
                         },
-                    ))
+                    )
                     .await?;
                 let parts = match response {
                     p::PresignEpisodeUploadSessionPartsResponse::Status201(signed) => signed.parts,
@@ -197,12 +197,11 @@ pub async fn create(api: &Api, args: EpisodeCreate) -> Result<()> {
         write_private_json(&resume_path, &record)?;
     }
     let response = api
-        .request(api.client().complete_episode_upload_session(
-            p::CompleteEpisodeUploadSessionParams {
-                upload_session_id: record.upload_session_id.clone(),
-                body: serde_json::from_value(json!({"publication": args.publication}))?,
-            },
-        ))
+        .client()
+        .complete_episode_upload_session(p::CompleteEpisodeUploadSessionParams {
+            upload_session_id: record.upload_session_id.clone(),
+            body: serde_json::from_value(json!({"publication": args.publication}))?,
+        })
         .await?;
     let episode = match response {
         p::CompleteEpisodeUploadSessionResponse::Status200(episode)
@@ -227,7 +226,8 @@ pub async fn create(api: &Api, args: EpisodeCreate) -> Result<()> {
         api.client()
             .episode_upload_session_events(p::EpisodeUploadSessionEventsParams {
                 upload_session_id: record.upload_session_id.clone(),
-            }),
+            })
+            .await?,
     )
     .await?;
     loop {

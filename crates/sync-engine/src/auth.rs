@@ -39,24 +39,20 @@ pub async fn login_with(
     mut open_browser: impl FnMut(&str),
 ) -> Result<()> {
     let mut response = api
-        .request(
-            api.client()
-                .create_cli_authorization(p::CreateCLIAuthorizationParams {
-                    body: serde_json::from_value(json!({"client": client, "scopes": SCOPES}))?,
-                }),
-        )
+        .client()
+        .create_cli_authorization(p::CreateCLIAuthorizationParams {
+            body: serde_json::from_value(json!({"client": client, "scopes": SCOPES}))?,
+        })
         .await?;
     if matches!(response, p::CreateCLIAuthorizationResponse::Status401(()))
         && api.credential.is_some()
     {
         api.credential = None;
         response = api
-            .request(
-                api.client()
-                    .create_cli_authorization(p::CreateCLIAuthorizationParams {
-                        body: serde_json::from_value(json!({"client": client, "scopes": SCOPES}))?,
-                    }),
-            )
+            .client()
+            .create_cli_authorization(p::CreateCLIAuthorizationParams {
+                body: serde_json::from_value(json!({"client": client, "scopes": SCOPES}))?,
+            })
             .await?;
     }
     let created = match response {
@@ -86,14 +82,15 @@ pub async fn login_with(
     let mut events = Events::open(
         api,
         api.client()
-            .cli_authorization_events(p::CliAuthorizationEventsParams { code: created.code }),
+            .cli_authorization_events(p::CliAuthorizationEventsParams { code: created.code })
+            .await?,
     )
     .await?;
     let event = events.next(api).await?;
     match string(&event, "type")? {
         "cli.authorization.approved" => {
             api.credential = Some(credential.to_owned());
-            let identity = match api.request(api.client().whoami()).await? {
+            let identity = match api.client().whoami().await? {
                 p::WhoamiResponse::Status200(value) => value,
                 response => return Err(api.response_error(response).await),
             };
@@ -136,7 +133,7 @@ pub fn logout(config: &crate::config::Config) -> Result<()> {
 }
 
 pub async fn status(api: &Api) -> Result<()> {
-    let identity = match api.request(api.client().whoami()).await? {
+    let identity = match api.client().whoami().await? {
         p::WhoamiResponse::Status200(value) => value,
         response => return Err(api.response_error(response).await),
     };

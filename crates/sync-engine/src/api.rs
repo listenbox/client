@@ -66,12 +66,13 @@ impl Api {
         Ok(reqwest_middleware::ClientBuilder::new(builder.build()?).build())
     }
 
-    pub fn client(&self) -> crate::publicapi::Client {
+    pub fn client(&self) -> p::Client<&Self> {
         crate::publicapi::Client::new(
             self.http.clone(),
             self.config.api_origin.clone(),
             self.credential.clone(),
         )
+        .with_transport(self)
     }
 
     pub async fn wait<T>(&self, work: impl Future<Output = Result<T>>) -> Result<T> {
@@ -135,11 +136,6 @@ impl Api {
         self.wait(read_bounded(response, limit)).await
     }
 
-    pub async fn request<R: p::Response>(&self, request: p::Request<R>) -> Result<R> {
-        self.wait(request.send_with(|request| self.send(request)))
-            .await
-    }
-
     pub async fn response_error<R: p::Response>(&self, response: R) -> anyhow::Error {
         let status = response.status();
         if status == 401 {
@@ -168,6 +164,19 @@ impl Api {
             _ => &message,
         };
         anyhow::anyhow!("HTTP {status}: {hint}")
+    }
+}
+
+impl p::Transport for &Api {
+    type Error = anyhow::Error;
+
+    async fn execute<R: p::Response>(&self, request: RequestBuilder, limit: usize) -> Result<R> {
+        self.wait(async {
+            R::decode(self.send(request).await?, limit)
+                .await
+                .map_err(Into::into)
+        })
+        .await
     }
 }
 

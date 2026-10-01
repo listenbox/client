@@ -78,7 +78,7 @@ pub async fn import(
         )
     });
     let slug = crate::slug(&slug).map_err(anyhow::Error::msg)?;
-    let shows: Vec<p::Show> = match api.request(api.client().list_shows()).await? {
+    let shows: Vec<p::Show> = match api.client().list_shows().await? {
         p::ListShowsResponse::Status200(value) => value,
         response => return Err(api.response_error(response).await),
     };
@@ -86,7 +86,7 @@ pub async fn import(
         !shows.iter().any(|show| show.slug == slug),
         "Podcast {slug:?} already exists. Use sync to resume an imported podcast, or choose a new slug."
     );
-    let capacity: p::ImportCapacity = match api.request(api.client().get_import_capacity()).await? {
+    let capacity: p::ImportCapacity = match api.client().get_import_capacity().await? {
         p::GetImportCapacityResponse::Status200(value) => value,
         response => return Err(api.response_error(response).await),
     };
@@ -162,13 +162,13 @@ pub async fn import(
                 capacity.video_remaining_seconds as f64 / 3600.0,
             )).into());
     }
-    let show = match api.request(api.client().create_show(p::CreateShowParams {
+    let show = match api.client().create_show(p::CreateShowParams {
         body: p::CreateShow {
             id: format!("shw_{}", &uuid::Uuid::new_v4().simple().to_string()[..16]),
             title, slug: slug.clone(), source_kind: kind.clone(), language: "en".into(),
             image_asset_id: None, youtube_source_url: Some(canonical.clone()),
         },
-    })).await.with_context(|| format!("Create podcast {slug:?}. If creation completed but its reply was lost, reload your podcasts and resume with sync."))? {
+    }).await.with_context(|| format!("Create podcast {slug:?}. If creation completed but its reply was lost, reload your podcasts and resume with sync."))? {
         p::CreateShowResponse::Status201(show) => show,
         response => return Err(api.response_error(response).await).with_context(|| format!("Create podcast {slug:?}. If creation completed but its reply was lost, reload your podcasts and resume with sync.")),
     };
@@ -335,12 +335,10 @@ pub(crate) async fn import_video(
         transfer.phase(crate::downloads::Phase::Uploading);
     }
     let response = api
-        .request(
-            api.client()
-                .create_episode_package(p::CreateEpisodePackageParams {
-                    body: manifest.clone(),
-                }),
-        )
+        .client()
+        .create_episode_package(p::CreateEpisodePackageParams {
+            body: manifest.clone(),
+        })
         .await?;
     let session = match response {
         p::CreateEpisodePackageResponse::Status201(session) => session,
@@ -373,15 +371,14 @@ pub(crate) async fn import_video(
                     initial.parts.clone()
                 } else {
                     let signed: p::PresignedEpisodeUploadParts = match api
-                        .request(api.client().presign_episode_package_parts(
-                            p::PresignEpisodePackagePartsParams {
-                                upload_session_id: session.upload_session_id.clone(),
-                                object_index: ordinal as i64,
-                                body: p::PresignEpisodeUploadSessionParts {
-                                    part_numbers: vec![number],
-                                },
+                        .client()
+                        .presign_episode_package_parts(p::PresignEpisodePackagePartsParams {
+                            upload_session_id: session.upload_session_id.clone(),
+                            object_index: ordinal as i64,
+                            body: p::PresignEpisodeUploadSessionParts {
+                                part_numbers: vec![number],
                             },
-                        ))
+                        })
                         .await?
                     {
                         p::PresignEpisodePackagePartsResponse::Status200(value) => value,
@@ -412,12 +409,10 @@ pub(crate) async fn import_video(
             }
         }
         let completed = match api
-            .request(
-                api.client()
-                    .complete_episode_package(p::CompleteEpisodePackageParams {
-                        upload_session_id: session.upload_session_id.clone(),
-                    }),
-            )
+            .client()
+            .complete_episode_package(p::CompleteEpisodePackageParams {
+                upload_session_id: session.upload_session_id.clone(),
+            })
             .await?
         {
             p::CompleteEpisodePackageResponse::Status200(value) => value,

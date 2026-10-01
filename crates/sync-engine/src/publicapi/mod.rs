@@ -4190,41 +4190,26 @@ async fn read_body(mut response: reqwest::Response, limit: usize) -> Result<Vec<
     Ok(body)
 }
 
-/// The response type is fixed by the OpenAPI operation, including every declared status.
-#[derive(Debug)]
-pub struct Request<R> {
-    builder: reqwest_middleware::RequestBuilder,
-    limit: usize,
-    response: std::marker::PhantomData<fn() -> R>,
+/// Configure application transport policy once, including sending and response reads.
+pub trait Transport: Sync {
+    type Error: From<Error> + Send;
+    fn execute<R: Response>(&self, request: reqwest_middleware::RequestBuilder, limit: usize)
+        -> impl std::future::Future<Output = Result<R, Self::Error>> + Send;
 }
-impl<R: Response> Request<R> {
-    fn new(builder: reqwest_middleware::RequestBuilder) -> Self {
-        Self { builder, limit: 4 << 20, response: std::marker::PhantomData }
-    }
-    /// Cap buffered JSON and raw bodies. Streaming and unknown responses stay unread.
-    pub fn body_limit(mut self, limit: usize) -> Self { self.limit = limit; self }
-    /// Access the underlying builder for transport configuration or raw HTTP handling.
-    pub fn into_builder(self) -> reqwest_middleware::RequestBuilder { self.builder }
-    pub fn build(self) -> reqwest::Result<reqwest::Request> { self.builder.build() }
-    pub async fn send(self) -> Result<R, Error> {
-        R::decode(self.builder.send().await.map_err(Error::from)?, self.limit).await
-    }
-    /// Keep application transport policy while using the operation's generated decoder.
-    pub async fn send_with<E, F, Fut>(self, send: F) -> Result<R, E>
-    where
-        E: From<Error>,
-        F: FnOnce(reqwest_middleware::RequestBuilder) -> Fut,
-        Fut: std::future::Future<Output = Result<reqwest::Response, E>>,
-    {
-        R::decode(send(self.builder).await?, self.limit).await.map_err(E::from)
+impl Transport for () {
+    type Error = Error;
+    async fn execute<R: Response>(&self, request: reqwest_middleware::RequestBuilder, limit: usize) -> Result<R, Error> {
+        R::decode(request.send().await.map_err(Error::from)?, limit).await
     }
 }
 
 #[derive(Clone, Debug)]
-pub struct Client {
+pub struct Client<T = ()> {
     http: reqwest_middleware::ClientWithMiddleware,
     base_url: String,
     bearer_token: Option<String>,
+    body_limit: usize,
+    transport: T,
 }
 fn encode_path(value: &str) -> String {
     value.bytes().map(|byte| {
@@ -4234,337 +4219,344 @@ fn encode_path(value: &str) -> String {
     }).collect()
 }
 impl Client {
-    /// Every operation uses this client's middleware when its request is sent.
+    /// Operations send and decode directly through this client's middleware.
     pub fn new(http: reqwest_middleware::ClientWithMiddleware, base_url: String, bearer_token: Option<String>) -> Self {
-        Self { http, base_url: base_url.trim_end_matches('/').to_owned(), bearer_token }
+        Self { http, base_url: base_url.trim_end_matches('/').to_owned(), bearer_token, body_limit: 4 << 20, transport: () }
     }
-    pub fn openapi(&self) -> Request<OpenapiResponse> {
+}
+impl<T: Transport> Client<T> {
+    /// Cap buffered JSON and raw bodies for every operation. Streaming and unknown responses stay unread.
+    pub fn body_limit(mut self, limit: usize) -> Self { self.body_limit = limit; self }
+    pub fn with_transport<U: Transport>(self, transport: U) -> Client<U> {
+        Client { http: self.http, base_url: self.base_url, bearer_token: self.bearer_token, body_limit: self.body_limit, transport }
+    }
+    pub async fn openapi(&self) -> Result<OpenapiResponse, T::Error> {
         let path = "/".to_owned();
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
-        Request::new(request)
+        self.transport.execute(request, self.body_limit).await
     }
-    pub fn head_openapi(&self) -> Request<HeadOpenapiResponse> {
+    pub async fn head_openapi(&self) -> Result<HeadOpenapiResponse, T::Error> {
         let path = "/".to_owned();
         let request = self.http.request(reqwest::Method::HEAD, format!("{}{}", self.base_url, path)).header("Accept", "*/*");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
-        Request::new(request)
+        self.transport.execute(request, self.body_limit).await
     }
-    pub fn create_cli_authorization(&self, params: CreateCLIAuthorizationParams) -> Request<CreateCLIAuthorizationResponse> {
+    pub async fn create_cli_authorization(&self, params: CreateCLIAuthorizationParams) -> Result<CreateCLIAuthorizationResponse, T::Error> {
         let path = "/cli/authorizations".to_owned();
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         let request = request.json(&params.body);
-        Request::new(request)
+        self.transport.execute(request, self.body_limit).await
     }
-    pub fn cli_authorization_events(&self, params: CliAuthorizationEventsParams) -> Request<CliAuthorizationEventsResponse> {
+    pub async fn cli_authorization_events(&self, params: CliAuthorizationEventsParams) -> Result<CliAuthorizationEventsResponse, T::Error> {
         let path = "/cli/authorizations/{code}/events".to_owned();
         let path = path.replace("{code}", &encode_path(&params.code.to_string()));
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "text/event-stream");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
-        Request::new(request)
+        self.transport.execute(request, self.body_limit).await
     }
-    pub fn episode_deletion_events(&self, params: EpisodeDeletionEventsParams) -> Request<EpisodeDeletionEventsResponse> {
+    pub async fn episode_deletion_events(&self, params: EpisodeDeletionEventsParams) -> Result<EpisodeDeletionEventsResponse, T::Error> {
         let path = "/s/episode-deletions/{episode_deletion_run_id}/events".to_owned();
         let path = path.replace("{episode_deletion_run_id}", &encode_path(&params.episode_deletion_run_id.to_string()));
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "text/event-stream");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
-        Request::new(request)
+        self.transport.execute(request, self.body_limit).await
     }
-    pub fn create_episode_package(&self, params: CreateEpisodePackageParams) -> Request<CreateEpisodePackageResponse> {
+    pub async fn create_episode_package(&self, params: CreateEpisodePackageParams) -> Result<CreateEpisodePackageResponse, T::Error> {
         let path = "/s/episode-packages".to_owned();
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         let request = request.json(&params.body);
-        Request::new(request)
+        self.transport.execute(request, self.body_limit).await
     }
-    pub fn cancel_episode_package(&self, params: CancelEpisodePackageParams) -> Request<CancelEpisodePackageResponse> {
+    pub async fn cancel_episode_package(&self, params: CancelEpisodePackageParams) -> Result<CancelEpisodePackageResponse, T::Error> {
         let path = "/s/episode-packages/{upload_session_id}".to_owned();
         let path = path.replace("{upload_session_id}", &encode_path(&params.upload_session_id.to_string()));
         let request = self.http.request(reqwest::Method::DELETE, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
-        Request::new(request)
+        self.transport.execute(request, self.body_limit).await
     }
-    pub fn complete_episode_package(&self, params: CompleteEpisodePackageParams) -> Request<CompleteEpisodePackageResponse> {
+    pub async fn complete_episode_package(&self, params: CompleteEpisodePackageParams) -> Result<CompleteEpisodePackageResponse, T::Error> {
         let path = "/s/episode-packages/{upload_session_id}/complete".to_owned();
         let path = path.replace("{upload_session_id}", &encode_path(&params.upload_session_id.to_string()));
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
-        Request::new(request)
+        self.transport.execute(request, self.body_limit).await
     }
-    pub fn presign_episode_package_parts(&self, params: PresignEpisodePackagePartsParams) -> Request<PresignEpisodePackagePartsResponse> {
+    pub async fn presign_episode_package_parts(&self, params: PresignEpisodePackagePartsParams) -> Result<PresignEpisodePackagePartsResponse, T::Error> {
         let path = "/s/episode-packages/{upload_session_id}/objects/{object_index}/parts".to_owned();
         let path = path.replace("{upload_session_id}", &encode_path(&params.upload_session_id.to_string()));
         let path = path.replace("{object_index}", &encode_path(&params.object_index.to_string()));
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         let request = request.json(&params.body);
-        Request::new(request)
+        self.transport.execute(request, self.body_limit).await
     }
-    pub fn create_episode_upload_session(&self, params: CreateEpisodeUploadSessionParams) -> Request<CreateEpisodeUploadSessionResponse> {
+    pub async fn create_episode_upload_session(&self, params: CreateEpisodeUploadSessionParams) -> Result<CreateEpisodeUploadSessionResponse, T::Error> {
         let path = "/s/episode-upload-sessions".to_owned();
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         let request = request.json(&params.body);
-        Request::new(request)
+        self.transport.execute(request, self.body_limit).await
     }
-    pub fn get_episode_upload_session(&self, params: GetEpisodeUploadSessionParams) -> Request<GetEpisodeUploadSessionResponse> {
+    pub async fn get_episode_upload_session(&self, params: GetEpisodeUploadSessionParams) -> Result<GetEpisodeUploadSessionResponse, T::Error> {
         let path = "/s/episode-upload-sessions/{upload_session_id}".to_owned();
         let path = path.replace("{upload_session_id}", &encode_path(&params.upload_session_id.to_string()));
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
-        Request::new(request)
+        self.transport.execute(request, self.body_limit).await
     }
-    pub fn update_episode_upload_session(&self, params: UpdateEpisodeUploadSessionParams) -> Request<UpdateEpisodeUploadSessionResponse> {
+    pub async fn update_episode_upload_session(&self, params: UpdateEpisodeUploadSessionParams) -> Result<UpdateEpisodeUploadSessionResponse, T::Error> {
         let path = "/s/episode-upload-sessions/{upload_session_id}".to_owned();
         let path = path.replace("{upload_session_id}", &encode_path(&params.upload_session_id.to_string()));
         let request = self.http.request(reqwest::Method::PUT, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         let request = request.json(&params.body);
-        Request::new(request)
+        self.transport.execute(request, self.body_limit).await
     }
-    pub fn cancel_episode_upload_session(&self, params: CancelEpisodeUploadSessionParams) -> Request<CancelEpisodeUploadSessionResponse> {
+    pub async fn cancel_episode_upload_session(&self, params: CancelEpisodeUploadSessionParams) -> Result<CancelEpisodeUploadSessionResponse, T::Error> {
         let path = "/s/episode-upload-sessions/{upload_session_id}".to_owned();
         let path = path.replace("{upload_session_id}", &encode_path(&params.upload_session_id.to_string()));
         let request = self.http.request(reqwest::Method::DELETE, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
-        Request::new(request)
+        self.transport.execute(request, self.body_limit).await
     }
-    pub fn complete_episode_upload_session(&self, params: CompleteEpisodeUploadSessionParams) -> Request<CompleteEpisodeUploadSessionResponse> {
+    pub async fn complete_episode_upload_session(&self, params: CompleteEpisodeUploadSessionParams) -> Result<CompleteEpisodeUploadSessionResponse, T::Error> {
         let path = "/s/episode-upload-sessions/{upload_session_id}/complete".to_owned();
         let path = path.replace("{upload_session_id}", &encode_path(&params.upload_session_id.to_string()));
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         let request = request.json(&params.body);
-        Request::new(request)
+        self.transport.execute(request, self.body_limit).await
     }
-    pub fn episode_upload_session_events(&self, params: EpisodeUploadSessionEventsParams) -> Request<EpisodeUploadSessionEventsResponse> {
+    pub async fn episode_upload_session_events(&self, params: EpisodeUploadSessionEventsParams) -> Result<EpisodeUploadSessionEventsResponse, T::Error> {
         let path = "/s/episode-upload-sessions/{upload_session_id}/events".to_owned();
         let path = path.replace("{upload_session_id}", &encode_path(&params.upload_session_id.to_string()));
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "text/event-stream");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
-        Request::new(request)
+        self.transport.execute(request, self.body_limit).await
     }
-    pub fn presign_episode_upload_session_parts(&self, params: PresignEpisodeUploadSessionPartsParams) -> Request<PresignEpisodeUploadSessionPartsResponse> {
+    pub async fn presign_episode_upload_session_parts(&self, params: PresignEpisodeUploadSessionPartsParams) -> Result<PresignEpisodeUploadSessionPartsResponse, T::Error> {
         let path = "/s/episode-upload-sessions/{upload_session_id}/parts/presign".to_owned();
         let path = path.replace("{upload_session_id}", &encode_path(&params.upload_session_id.to_string()));
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         let request = request.json(&params.body);
-        Request::new(request)
+        self.transport.execute(request, self.body_limit).await
     }
-    pub fn create_episode_deletion(&self, params: CreateEpisodeDeletionParams) -> Request<CreateEpisodeDeletionResponse> {
+    pub async fn create_episode_deletion(&self, params: CreateEpisodeDeletionParams) -> Result<CreateEpisodeDeletionResponse, T::Error> {
         let path = "/s/episodes/{episode_id}/deletions".to_owned();
         let path = path.replace("{episode_id}", &encode_path(&params.episode_id.to_string()));
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
-        Request::new(request)
+        self.transport.execute(request, self.body_limit).await
     }
-    pub fn create_image_upload_presign(&self, params: CreateImageUploadPresignParams) -> Request<CreateImageUploadPresignResponse> {
+    pub async fn create_image_upload_presign(&self, params: CreateImageUploadPresignParams) -> Result<CreateImageUploadPresignResponse, T::Error> {
         let path = "/s/image-uploads/presign".to_owned();
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         let request = request.json(&params.body);
-        Request::new(request)
+        self.transport.execute(request, self.body_limit).await
     }
-    pub fn complete_image_upload(&self, params: CompleteImageUploadParams) -> Request<CompleteImageUploadResponse> {
+    pub async fn complete_image_upload(&self, params: CompleteImageUploadParams) -> Result<CompleteImageUploadResponse, T::Error> {
         let path = "/s/image-uploads/{image_asset_id}/complete".to_owned();
         let path = path.replace("{image_asset_id}", &encode_path(&params.image_asset_id.to_string()));
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         let request = request.json(&params.body);
-        Request::new(request)
+        self.transport.execute(request, self.body_limit).await
     }
-    pub fn get_import_capacity(&self) -> Request<GetImportCapacityResponse> {
+    pub async fn get_import_capacity(&self) -> Result<GetImportCapacityResponse, T::Error> {
         let path = "/s/import-capacity".to_owned();
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
-        Request::new(request)
+        self.transport.execute(request, self.body_limit).await
     }
-    pub fn import_rss(&self, params: ImportRSSParams) -> Request<ImportRSSResponse> {
+    pub async fn import_rss(&self, params: ImportRSSParams) -> Result<ImportRSSResponse, T::Error> {
         let path = "/s/rss-imports".to_owned();
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         let request = request.json(&params.body);
-        Request::new(request)
+        self.transport.execute(request, self.body_limit).await
     }
-    pub fn import_rss_run_events(&self, params: ImportRSSRunEventsParams) -> Request<ImportRSSRunEventsResponse> {
+    pub async fn import_rss_run_events(&self, params: ImportRSSRunEventsParams) -> Result<ImportRSSRunEventsResponse, T::Error> {
         let path = "/s/rss-imports/{import_run_id}/events".to_owned();
         let path = path.replace("{import_run_id}", &encode_path(&params.import_run_id.to_string()));
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "text/event-stream");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
-        Request::new(request)
+        self.transport.execute(request, self.body_limit).await
     }
-    pub fn show_deletion_events(&self, params: ShowDeletionEventsParams) -> Request<ShowDeletionEventsResponse> {
+    pub async fn show_deletion_events(&self, params: ShowDeletionEventsParams) -> Result<ShowDeletionEventsResponse, T::Error> {
         let path = "/s/show-deletions/{show_deletion_run_id}/events".to_owned();
         let path = path.replace("{show_deletion_run_id}", &encode_path(&params.show_deletion_run_id.to_string()));
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "text/event-stream");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
-        Request::new(request)
+        self.transport.execute(request, self.body_limit).await
     }
-    pub fn list_shows(&self) -> Request<ListShowsResponse> {
+    pub async fn list_shows(&self) -> Result<ListShowsResponse, T::Error> {
         let path = "/s/shows".to_owned();
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
-        Request::new(request)
+        self.transport.execute(request, self.body_limit).await
     }
-    pub fn create_show(&self, params: CreateShowParams) -> Request<CreateShowResponse> {
+    pub async fn create_show(&self, params: CreateShowParams) -> Result<CreateShowResponse, T::Error> {
         let path = "/s/shows".to_owned();
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         let request = request.json(&params.body);
-        Request::new(request)
+        self.transport.execute(request, self.body_limit).await
     }
-    pub fn create_show_deletion(&self, params: CreateShowDeletionParams) -> Request<CreateShowDeletionResponse> {
+    pub async fn create_show_deletion(&self, params: CreateShowDeletionParams) -> Result<CreateShowDeletionResponse, T::Error> {
         let path = "/s/shows/{show_slug}/deletions".to_owned();
         let path = path.replace("{show_slug}", &encode_path(&params.show_slug.to_string()));
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
-        Request::new(request)
+        self.transport.execute(request, self.body_limit).await
     }
-    pub fn get_episode_order(&self, params: GetEpisodeOrderParams) -> Request<GetEpisodeOrderResponse> {
+    pub async fn get_episode_order(&self, params: GetEpisodeOrderParams) -> Result<GetEpisodeOrderResponse, T::Error> {
         let path = "/s/shows/{show_slug}/episode-order".to_owned();
         let path = path.replace("{show_slug}", &encode_path(&params.show_slug.to_string()));
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
-        Request::new(request)
+        self.transport.execute(request, self.body_limit).await
     }
-    pub fn set_episode_order(&self, params: SetEpisodeOrderParams) -> Request<SetEpisodeOrderResponse> {
+    pub async fn set_episode_order(&self, params: SetEpisodeOrderParams) -> Result<SetEpisodeOrderResponse, T::Error> {
         let path = "/s/shows/{show_slug}/episode-order".to_owned();
         let path = path.replace("{show_slug}", &encode_path(&params.show_slug.to_string()));
         let request = self.http.request(reqwest::Method::PUT, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         let request = request.json(&params.body);
-        Request::new(request)
+        self.transport.execute(request, self.body_limit).await
     }
-    pub fn list_episodes(&self, params: ListEpisodesParams) -> Request<ListEpisodesResponse> {
+    pub async fn list_episodes(&self, params: ListEpisodesParams) -> Result<ListEpisodesResponse, T::Error> {
         let path = "/s/shows/{show_slug}/episodes".to_owned();
         let path = path.replace("{show_slug}", &encode_path(&params.show_slug.to_string()));
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         let request = match params.limit { Some(value) => request.query(&[("limit", value)]), None => request };
         let request = match params.cursor { Some(value) => request.query(&[("cursor", value)]), None => request };
-        Request::new(request)
+        self.transport.execute(request, self.body_limit).await
     }
-    pub fn create_show_invitation(&self, params: CreateShowInvitationParams) -> Request<CreateShowInvitationResponse> {
+    pub async fn create_show_invitation(&self, params: CreateShowInvitationParams) -> Result<CreateShowInvitationResponse, T::Error> {
         let path = "/s/shows/{show_slug}/invitations".to_owned();
         let path = path.replace("{show_slug}", &encode_path(&params.show_slug.to_string()));
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         let request = request.json(&params.body);
-        Request::new(request)
+        self.transport.execute(request, self.body_limit).await
     }
-    pub fn update_show_invitation_role(&self, params: UpdateShowInvitationRoleParams) -> Request<UpdateShowInvitationRoleResponse> {
+    pub async fn update_show_invitation_role(&self, params: UpdateShowInvitationRoleParams) -> Result<UpdateShowInvitationRoleResponse, T::Error> {
         let path = "/s/shows/{show_slug}/invitations/{invitation_id}".to_owned();
         let path = path.replace("{show_slug}", &encode_path(&params.show_slug.to_string()));
         let path = path.replace("{invitation_id}", &encode_path(&params.invitation_id.to_string()));
         let request = self.http.request(reqwest::Method::PUT, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         let request = request.json(&params.body);
-        Request::new(request)
+        self.transport.execute(request, self.body_limit).await
     }
-    pub fn revoke_show_invitation(&self, params: RevokeShowInvitationParams) -> Request<RevokeShowInvitationResponse> {
+    pub async fn revoke_show_invitation(&self, params: RevokeShowInvitationParams) -> Result<RevokeShowInvitationResponse, T::Error> {
         let path = "/s/shows/{show_slug}/invitations/{invitation_id}".to_owned();
         let path = path.replace("{show_slug}", &encode_path(&params.show_slug.to_string()));
         let path = path.replace("{invitation_id}", &encode_path(&params.invitation_id.to_string()));
         let request = self.http.request(reqwest::Method::DELETE, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
-        Request::new(request)
+        self.transport.execute(request, self.body_limit).await
     }
-    pub fn list_show_members(&self, params: ListShowMembersParams) -> Request<ListShowMembersResponse> {
+    pub async fn list_show_members(&self, params: ListShowMembersParams) -> Result<ListShowMembersResponse, T::Error> {
         let path = "/s/shows/{show_slug}/members".to_owned();
         let path = path.replace("{show_slug}", &encode_path(&params.show_slug.to_string()));
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
-        Request::new(request)
+        self.transport.execute(request, self.body_limit).await
     }
-    pub fn update_show_member_role(&self, params: UpdateShowMemberRoleParams) -> Request<UpdateShowMemberRoleResponse> {
+    pub async fn update_show_member_role(&self, params: UpdateShowMemberRoleParams) -> Result<UpdateShowMemberRoleResponse, T::Error> {
         let path = "/s/shows/{show_slug}/members/{user_id}".to_owned();
         let path = path.replace("{show_slug}", &encode_path(&params.show_slug.to_string()));
         let path = path.replace("{user_id}", &encode_path(&params.user_id.to_string()));
         let request = self.http.request(reqwest::Method::PUT, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         let request = request.json(&params.body);
-        Request::new(request)
+        self.transport.execute(request, self.body_limit).await
     }
-    pub fn remove_show_member(&self, params: RemoveShowMemberParams) -> Request<RemoveShowMemberResponse> {
+    pub async fn remove_show_member(&self, params: RemoveShowMemberParams) -> Result<RemoveShowMemberResponse, T::Error> {
         let path = "/s/shows/{show_slug}/members/{user_id}".to_owned();
         let path = path.replace("{show_slug}", &encode_path(&params.show_slug.to_string()));
         let path = path.replace("{user_id}", &encode_path(&params.user_id.to_string()));
         let request = self.http.request(reqwest::Method::DELETE, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
-        Request::new(request)
+        self.transport.execute(request, self.body_limit).await
     }
-    pub fn get_sync_inventory(&self, params: GetSyncInventoryParams) -> Request<GetSyncInventoryResponse> {
+    pub async fn get_sync_inventory(&self, params: GetSyncInventoryParams) -> Result<GetSyncInventoryResponse, T::Error> {
         let path = "/s/shows/{show_slug}/sync".to_owned();
         let path = path.replace("{show_slug}", &encode_path(&params.show_slug.to_string()));
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         let request = match params.cursor { Some(value) => request.query(&[("cursor", value)]), None => request };
         let request = match params.limit { Some(value) => request.query(&[("limit", value)]), None => request };
-        Request::new(request)
+        self.transport.execute(request, self.body_limit).await
     }
-    pub fn create_sync_episode_deletion(&self, params: CreateSyncEpisodeDeletionParams) -> Request<CreateSyncEpisodeDeletionResponse> {
+    pub async fn create_sync_episode_deletion(&self, params: CreateSyncEpisodeDeletionParams) -> Result<CreateSyncEpisodeDeletionResponse, T::Error> {
         let path = "/s/shows/{show_slug}/sync/episodes/{episode_id}/deletion".to_owned();
         let path = path.replace("{show_slug}", &encode_path(&params.show_slug.to_string()));
         let path = path.replace("{episode_id}", &encode_path(&params.episode_id.to_string()));
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
-        Request::new(request)
+        self.transport.execute(request, self.body_limit).await
     }
-    pub fn create_team_invitation(&self, params: CreateTeamInvitationParams) -> Request<CreateTeamInvitationResponse> {
+    pub async fn create_team_invitation(&self, params: CreateTeamInvitationParams) -> Result<CreateTeamInvitationResponse, T::Error> {
         let path = "/s/team/invitations".to_owned();
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         let request = request.json(&params.body);
-        Request::new(request)
+        self.transport.execute(request, self.body_limit).await
     }
-    pub fn update_team_invitation_role(&self, params: UpdateTeamInvitationRoleParams) -> Request<UpdateTeamInvitationRoleResponse> {
+    pub async fn update_team_invitation_role(&self, params: UpdateTeamInvitationRoleParams) -> Result<UpdateTeamInvitationRoleResponse, T::Error> {
         let path = "/s/team/invitations/{invitation_id}".to_owned();
         let path = path.replace("{invitation_id}", &encode_path(&params.invitation_id.to_string()));
         let request = self.http.request(reqwest::Method::PUT, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         let request = request.json(&params.body);
-        Request::new(request)
+        self.transport.execute(request, self.body_limit).await
     }
-    pub fn revoke_team_invitation(&self, params: RevokeTeamInvitationParams) -> Request<RevokeTeamInvitationResponse> {
+    pub async fn revoke_team_invitation(&self, params: RevokeTeamInvitationParams) -> Result<RevokeTeamInvitationResponse, T::Error> {
         let path = "/s/team/invitations/{invitation_id}".to_owned();
         let path = path.replace("{invitation_id}", &encode_path(&params.invitation_id.to_string()));
         let request = self.http.request(reqwest::Method::DELETE, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
-        Request::new(request)
+        self.transport.execute(request, self.body_limit).await
     }
-    pub fn list_team_members(&self) -> Request<ListTeamMembersResponse> {
+    pub async fn list_team_members(&self) -> Result<ListTeamMembersResponse, T::Error> {
         let path = "/s/team/members".to_owned();
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
-        Request::new(request)
+        self.transport.execute(request, self.body_limit).await
     }
-    pub fn update_team_member_role(&self, params: UpdateTeamMemberRoleParams) -> Request<UpdateTeamMemberRoleResponse> {
+    pub async fn update_team_member_role(&self, params: UpdateTeamMemberRoleParams) -> Result<UpdateTeamMemberRoleResponse, T::Error> {
         let path = "/s/team/members/{user_id}".to_owned();
         let path = path.replace("{user_id}", &encode_path(&params.user_id.to_string()));
         let request = self.http.request(reqwest::Method::PUT, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         let request = request.json(&params.body);
-        Request::new(request)
+        self.transport.execute(request, self.body_limit).await
     }
-    pub fn remove_team_member(&self, params: RemoveTeamMemberParams) -> Request<RemoveTeamMemberResponse> {
+    pub async fn remove_team_member(&self, params: RemoveTeamMemberParams) -> Result<RemoveTeamMemberResponse, T::Error> {
         let path = "/s/team/members/{user_id}".to_owned();
         let path = path.replace("{user_id}", &encode_path(&params.user_id.to_string()));
         let request = self.http.request(reqwest::Method::DELETE, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
-        Request::new(request)
+        self.transport.execute(request, self.body_limit).await
     }
-    pub fn list_client_teams(&self) -> Request<ListClientTeamsResponse> {
+    pub async fn list_client_teams(&self) -> Result<ListClientTeamsResponse, T::Error> {
         let path = "/s/teams".to_owned();
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
-        Request::new(request)
+        self.transport.execute(request, self.body_limit).await
     }
-    pub fn whoami(&self) -> Request<WhoamiResponse> {
+    pub async fn whoami(&self) -> Result<WhoamiResponse, T::Error> {
         let path = "/s/whoami".to_owned();
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
-        Request::new(request)
+        self.transport.execute(request, self.body_limit).await
     }
 }

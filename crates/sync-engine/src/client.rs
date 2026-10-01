@@ -73,11 +73,12 @@ impl Client {
         }
         Ok(
             match api
-                .request(api.client().list_episodes(p::ListEpisodesParams {
+                .client()
+                .list_episodes(p::ListEpisodesParams {
                     show_slug: slug,
                     cursor,
                     limit: Some(50),
-                }))
+                })
                 .await?
             {
                 p::ListEpisodesResponse::Status200(value) => value,
@@ -105,10 +106,11 @@ impl Client {
         if api.credential.is_none() {
             return Err(crate::api::AuthenticationRequired.into());
         }
+        let client = api.client();
         let (teams, shows, account) = tokio::try_join!(
-            api.request(api.client().list_client_teams()),
-            api.request(api.client().list_shows()),
-            api.request(api.client().whoami())
+            client.list_client_teams(),
+            client.list_shows(),
+            client.whoami()
         )?;
         let teams = match teams {
             p::ListClientTeamsResponse::Status200(teams) => teams,

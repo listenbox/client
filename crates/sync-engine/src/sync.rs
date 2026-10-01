@@ -50,11 +50,12 @@ pub async fn inventory(api: &Api, slug: &str) -> Result<p::SyncInventory> {
     let mut complete: Option<p::SyncInventory> = None;
     loop {
         let result = match api
-            .request(api.client().get_sync_inventory(p::GetSyncInventoryParams {
+            .client()
+            .get_sync_inventory(p::GetSyncInventoryParams {
                 show_slug: slug.into(),
                 cursor,
                 limit: Some(500),
-            }))
+            })
             .await?
         {
             p::GetSyncInventoryResponse::Status200(value) => value,
@@ -376,10 +377,11 @@ impl Engine {
 pub async fn set_order(api: &Api, slug: &str, episode_ids: Vec<String>) -> Result<p::EpisodeOrder> {
     Ok(
         match api
-            .request(api.client().set_episode_order(p::SetEpisodeOrderParams {
+            .client()
+            .set_episode_order(p::SetEpisodeOrderParams {
                 show_slug: slug.into(),
                 body: p::SetEpisodeOrder { episode_ids },
-            }))
+            })
             .await?
         {
             p::SetEpisodeOrderResponse::Status200(value) => value,
@@ -390,13 +392,11 @@ pub async fn set_order(api: &Api, slug: &str, episode_ids: Vec<String>) -> Resul
 
 async fn delete(api: &Api, slug: &str, episode: &str) -> Result<()> {
     let result = match api
-        .request(
-            api.client()
-                .create_sync_episode_deletion(p::CreateSyncEpisodeDeletionParams {
-                    show_slug: slug.into(),
-                    episode_id: episode.into(),
-                }),
-        )
+        .client()
+        .create_sync_episode_deletion(p::CreateSyncEpisodeDeletionParams {
+            show_slug: slug.into(),
+            episode_id: episode.into(),
+        })
         .await?
     {
         p::CreateSyncEpisodeDeletionResponse::Status202(value) => value,
@@ -407,7 +407,8 @@ async fn delete(api: &Api, slug: &str, episode: &str) -> Result<()> {
         api.client()
             .episode_deletion_events(p::EpisodeDeletionEventsParams {
                 episode_deletion_run_id: result.episode_deletion_run_id,
-            }),
+            })
+            .await?,
     )
     .await?;
     loop {

@@ -11,8 +11,8 @@ pub struct Events {
 }
 
 impl Events {
-    pub async fn open<R: p::Response>(api: &Api, request: p::Request<R>) -> Result<Self> {
-        let response = match api.request(request).await?.into_stream() {
+    pub async fn open<R: p::Response>(api: &Api, response: R) -> Result<Self> {
+        let response = match response.into_stream() {
             Ok(response) => response,
             Err(response) => return Err(api.response_error(response).await),
         };

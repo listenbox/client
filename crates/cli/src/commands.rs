@@ -12,10 +12,8 @@ pub async fn shows(api: &Api, command: ShowCommand) -> Result<()> {
         ShowCommand::Order { show, episode } => {
             let order: p::EpisodeOrder = if episode.is_empty() {
                 match api
-                    .request(
-                        api.client()
-                            .get_episode_order(p::GetEpisodeOrderParams { show_slug: show }),
-                    )
+                    .client()
+                    .get_episode_order(p::GetEpisodeOrderParams { show_slug: show })
                     .await?
                 {
                     p::GetEpisodeOrderResponse::Status200(value) => value,
@@ -61,7 +59,7 @@ pub async fn shows(api: &Api, command: ShowCommand) -> Result<()> {
             result?;
         }
         ShowCommand::List => {
-            let result = match api.request(api.client().list_shows()).await? {
+            let result = match api.client().list_shows().await? {
                 p::ListShowsResponse::Status200(value) => value,
                 response => return Err(api.response_error(response).await),
             };
@@ -82,18 +80,21 @@ pub async fn shows(api: &Api, command: ShowCommand) -> Result<()> {
                 Some(path) => Some(upload_artwork(api, &id, &path).await?),
                 None => None,
             };
-            let request = api.client().create_show(p::CreateShowParams {
-                body: p::CreateShow {
-                    id,
-                    title,
-                    slug: slug.clone(),
-                    language,
-                    image_asset_id,
-                    youtube_source_url: None,
-                    source_kind: serde_json::from_value(serde_json::to_value(source_kind)?)?,
-                },
-            });
-            let show = match api.request(request).await? {
+            let response = api
+                .client()
+                .create_show(p::CreateShowParams {
+                    body: p::CreateShow {
+                        id,
+                        title,
+                        slug: slug.clone(),
+                        language,
+                        image_asset_id,
+                        youtube_source_url: None,
+                        source_kind: serde_json::from_value(serde_json::to_value(source_kind)?)?,
+                    },
+                })
+                .await?;
+            let show = match response {
                 p::CreateShowResponse::Status201(show) => show,
                 p::CreateShowResponse::Status409(()) => {
                     bail!("create show: slug {slug:?} already exists")
@@ -109,12 +110,10 @@ pub async fn shows(api: &Api, command: ShowCommand) -> Result<()> {
         ShowCommand::Delete { show, yes } => {
             ensure!(yes, "shows delete: --yes is required");
             let result = match api
-                .request(
-                    api.client()
-                        .create_show_deletion(p::CreateShowDeletionParams {
-                            show_slug: show.clone(),
-                        }),
-                )
+                .client()
+                .create_show_deletion(p::CreateShowDeletionParams {
+                    show_slug: show.clone(),
+                })
                 .await?
             {
                 p::CreateShowDeletionResponse::Status202(value) => value,
@@ -125,7 +124,8 @@ pub async fn shows(api: &Api, command: ShowCommand) -> Result<()> {
                 api.client()
                     .show_deletion_events(p::ShowDeletionEventsParams {
                         show_deletion_run_id: result.show_deletion_run_id,
-                    }),
+                    })
+                    .await?,
                 "show",
                 "show_slug",
                 &show,
@@ -182,13 +182,19 @@ async fn upload_artwork(api: &Api, show: &str, path: &std::path::Path) -> Result
         width == height && (1400..=3000).contains(&width),
         "upload a square image between 1400 and 3000 pixels. Attempted resolution: {width} × {height} pixels"
     );
-    let result = match api.request(api.client().create_image_upload_presign(p::CreateImageUploadPresignParams { body: serde_json::from_value(json!({
-        "show_id": show, "byte_length": raw.len(), "content_type": content_type,
-        "file_name": path.file_name().context("artwork filename")?.to_string_lossy(),
-    }))? })).await? {
-p::CreateImageUploadPresignResponse::Status201(value) => value,
-response => return Err(api.response_error(response).await),
-};
+    let result = match api
+        .client()
+        .create_image_upload_presign(p::CreateImageUploadPresignParams {
+            body: serde_json::from_value(json!({
+                "show_id": show, "byte_length": raw.len(), "content_type": content_type,
+                "file_name": path.file_name().context("artwork filename")?.to_string_lossy(),
+            }))?,
+        })
+        .await?
+    {
+        p::CreateImageUploadPresignResponse::Status201(value) => value,
+        response => return Err(api.response_error(response).await),
+    };
     let response = api
         .send(
             api.http
@@ -203,15 +209,13 @@ response => return Err(api.response_error(response).await),
         response.status()
     );
     let completed = match api
-        .request(
-            api.client()
-                .complete_image_upload(p::CompleteImageUploadParams {
-                    image_asset_id: result.image_asset_id,
-                    body: p::CompleteImageUpload {
-                        object_key: result.object_key,
-                    },
-                }),
-        )
+        .client()
+        .complete_image_upload(p::CompleteImageUploadParams {
+            image_asset_id: result.image_asset_id,
+            body: p::CompleteImageUpload {
+                object_key: result.object_key,
+            },
+        })
         .await?
     {
         p::CompleteImageUploadResponse::Status201(value) => value,
@@ -222,12 +226,13 @@ response => return Err(api.response_error(response).await),
 
 pub async fn import_rss(api: &Api, source: &str, slug: Option<&str>) -> Result<()> {
     let response = api
-        .request(api.client().import_rss(p::ImportRSSParams {
+        .client()
+        .import_rss(p::ImportRSSParams {
             body: p::ImportRSSRequest {
                 source_url: source.into(),
                 slug: slug.map(str::to_owned),
             },
-        }))
+        })
         .await?;
     let created = match response {
         p::ImportRSSResponse::Status202(created) => created,
@@ -244,7 +249,8 @@ pub async fn import_rss(api: &Api, source: &str, slug: Option<&str>) -> Result<(
         api.client()
             .import_rss_run_events(p::ImportRSSRunEventsParams {
                 import_run_id: created.import_run_id,
-            }),
+            })
+            .await?,
     )
     .await?;
     let mut progress = Progress::default();
@@ -283,12 +289,12 @@ pub async fn import_rss(api: &Api, source: &str, slug: Option<&str>) -> Result<(
 
 pub async fn delete_events<R: p::Response>(
     api: &Api,
-    request: p::Request<R>,
+    response: R,
     kind: &str,
     identity_key: &str,
     identity: &str,
 ) -> Result<()> {
-    let mut stream = Events::open(api, request).await?;
+    let mut stream = Events::open(api, response).await?;
     let mut progress = Progress::default();
     loop {
         let event = stream.next(api).await?;
@@ -323,8 +329,8 @@ pub async fn members(api: &Api, command: MemberCommand) -> Result<()> {
     let client = api.client();
     match command {
         MemberCommand::List { show: Some(show) } => {
-            let result = match api
-                .request(client.list_show_members(p::ListShowMembersParams { show_slug: show }))
+            let result = match client
+                .list_show_members(p::ListShowMembersParams { show_slug: show })
                 .await?
             {
                 p::ListShowMembersResponse::Status200(result) => result,
@@ -345,7 +351,7 @@ pub async fn members(api: &Api, command: MemberCommand) -> Result<()> {
             }
         }
         MemberCommand::List { show: None } => {
-            let result = match api.request(client.list_team_members()).await? {
+            let result = match client.list_team_members().await? {
                 p::ListTeamMembersResponse::Status200(result) => result,
                 response => return Err(api.response_error(response).await),
             };
@@ -363,13 +369,11 @@ pub async fn members(api: &Api, command: MemberCommand) -> Result<()> {
             };
             let email = email.trim().to_lowercase();
             let (email, role) = match &show {
-                Some(show) => match api
-                    .request(
-                        client.create_show_invitation(p::CreateShowInvitationParams {
-                            show_slug: show.clone(),
-                            body: p::CreateShowInvitation { email, role },
-                        }),
-                    )
+                Some(show) => match client
+                    .create_show_invitation(p::CreateShowInvitationParams {
+                        show_slug: show.clone(),
+                        body: p::CreateShowInvitation { email, role },
+                    })
                     .await?
                 {
                     p::CreateShowInvitationResponse::Status201(invite) => {
@@ -377,12 +381,10 @@ pub async fn members(api: &Api, command: MemberCommand) -> Result<()> {
                     }
                     response => return Err(api.response_error(response).await),
                 },
-                None => match api
-                    .request(
-                        client.create_team_invitation(p::CreateTeamInvitationParams {
-                            body: p::CreateTeamInvitation { email, role },
-                        }),
-                    )
+                None => match client
+                    .create_team_invitation(p::CreateTeamInvitationParams {
+                        body: p::CreateTeamInvitation { email, role },
+                    })
                     .await?
                 {
                     p::CreateTeamInvitationResponse::Status201(invite) => {
@@ -405,26 +407,22 @@ pub async fn members(api: &Api, command: MemberCommand) -> Result<()> {
                 crate::Role::Write => p::AssignableTeamRole::Write,
             };
             match show {
-                Some(show) => match api
-                    .request(
-                        client.update_show_member_role(p::UpdateShowMemberRoleParams {
-                            show_slug: show,
-                            user_id: member.clone(),
-                            body: p::UpdateShowMemberRole { role: role.clone() },
-                        }),
-                    )
+                Some(show) => match client
+                    .update_show_member_role(p::UpdateShowMemberRoleParams {
+                        show_slug: show,
+                        user_id: member.clone(),
+                        body: p::UpdateShowMemberRole { role: role.clone() },
+                    })
                     .await?
                 {
                     p::UpdateShowMemberRoleResponse::Status204(()) => (),
                     response => return Err(api.response_error(response).await),
                 },
-                None => match api
-                    .request(
-                        client.update_team_member_role(p::UpdateTeamMemberRoleParams {
-                            user_id: member.clone(),
-                            body: p::UpdateTeamMemberRole { role: role.clone() },
-                        }),
-                    )
+                None => match client
+                    .update_team_member_role(p::UpdateTeamMemberRoleParams {
+                        user_id: member.clone(),
+                        body: p::UpdateTeamMemberRole { role: role.clone() },
+                    })
                     .await?
                 {
                     p::UpdateTeamMemberRoleResponse::Status204(()) => (),
@@ -441,20 +439,20 @@ pub async fn members(api: &Api, command: MemberCommand) -> Result<()> {
             };
             ensure!(yes, "members remove: --yes is required");
             match show {
-                Some(show) => match api
-                    .request(client.remove_show_member(p::RemoveShowMemberParams {
+                Some(show) => match client
+                    .remove_show_member(p::RemoveShowMemberParams {
                         show_slug: show,
                         user_id: member.clone(),
-                    }))
+                    })
                     .await?
                 {
                     p::RemoveShowMemberResponse::Status204(()) => (),
                     response => return Err(api.response_error(response).await),
                 },
-                None => match api
-                    .request(client.remove_team_member(p::RemoveTeamMemberParams {
+                None => match client
+                    .remove_team_member(p::RemoveTeamMemberParams {
                         user_id: member.clone(),
-                    }))
+                    })
                     .await?
                 {
                     p::RemoveTeamMemberResponse::Status204(()) => (),
