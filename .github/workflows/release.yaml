@@ -157,7 +157,6 @@ jobs:
     runs-on: ${{ matrix.runner }}
     env:
       KACHE_CONFIG: ${{ github.workspace }}/.kache.toml
-      LISTENBOX_PRODUCTION_RELEASE: ${{ startsWith(github.ref, 'refs/tags/desktop-v') && '1' || '0' }}
       LISTENBOX_SOURCE_COMMIT: ${{ github.sha }}
       LISTENBOX_UPDATE_PUBLIC_KEY: ${{ vars.WINDOWS_UPDATE_PUBLIC_KEY }}
       WINDOWS_UPDATE_PUBLIC_KEY: ${{ vars.WINDOWS_UPDATE_PUBLIC_KEY }}
@@ -307,13 +306,7 @@ jobs:
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 14
-      - uses: actions/upload-artifact@v7
-        with:
-          name: native-windows-${{ matrix.architecture }}
-          path: crates/desktop/dist/windows-${{ matrix.architecture }}/*
-          if-no-files-found: error
       - name: Install verified Inno Setup compiler
-        if: startsWith(github.ref, 'refs/tags/desktop-v')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -326,8 +319,12 @@ jobs:
           $process = Start-Process $installer -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw 'Inno Setup installation failed.' }
       - name: Build per-user upgrade installer
-        if: startsWith(github.ref, 'refs/tags/desktop-v')
         run: ./tools/package-windows.ps1 -Architecture ${{ matrix.architecture }} -Payload crates/desktop/dist/windows-${{ matrix.architecture }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: native-windows-${{ matrix.architecture }}
+          path: crates/desktop/dist/installers/Listenbox-${{ needs.identity.outputs.version }}-windows-${{ matrix.architecture }}-setup.exe
+          if-no-files-found: error
       - name: Sign final installer for WinSparkle and generate appcast
         if: startsWith(github.ref, 'refs/tags/desktop-v')
         run: |

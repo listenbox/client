@@ -40,6 +40,12 @@ the source commit is provenance, never update ordering. Every target comes
 from the tagged commit. Pull requests and master builds publish no stable
 release and receive no production secrets.
 
+Windows PR/master jobs compile the native updater, verify DLL loading and
+compile the same per-user installer as stable releases. Their
+`desktop-validation` environment contains only public updater keys. macOS
+validation packages an ad-hoc development bundle; protected tags enable its
+native updater and Developer ID/notarization path.
+
 The `desktop-release` environment requires owner review and allows only
 `desktop-v*` tags. Its protected jobs sign/notarize the macOS artifact and build
 Windows per-user installers before generating separate architecture appcasts.
