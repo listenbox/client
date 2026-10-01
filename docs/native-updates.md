@@ -34,7 +34,7 @@ credential removal before the update proceeds.
 
 `Cargo.toml` workspace version is the sole release identity: `X.Y.Z`, with
 each component between 0 and 65535. Allocate a strictly greater version, update
-the lockfile and create the matching immutable `desktop-vX.Y.Z` tag. macOS
+the lockfile and create the matching immutable `vX.Y.Z` tag. macOS
 compares `X.Y.Z`; Windows compares `X.Y.Z.0`. Display version is `X.Y.Z`;
 the source commit is provenance, never update ordering. Every target comes
 from the tagged commit. Pull requests and master builds publish no stable
@@ -47,7 +47,7 @@ validation packages an ad-hoc development bundle; protected tags enable its
 native updater and Developer ID/notarization path.
 
 The `desktop-release` environment requires owner review and allows only
-`desktop-v*` tags. Its protected jobs sign/notarize the macOS artifact and build
+`v*` tags. Its protected jobs sign/notarize the macOS artifact and build
 Windows per-user installers before generating separate architecture appcasts.
 Final payload bytes receive Ed25519 signatures after packaging and macOS
 stapling. Missing updater or Apple signing credentials fail closed.

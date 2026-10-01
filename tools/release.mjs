@@ -30,11 +30,11 @@ async function identity(tag) {
   const version = workspace?.match(/^version = "([^"]+)"$/m)?.[1];
   versionParts(version);
   const commit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-  if (tag && tag !== `desktop-v${version}`) throw new Error('Tag and workspace version disagree.');
+  if (tag && tag !== `v${version}`) throw new Error('Tag and workspace version disagree.');
   if (tag && execFileSync('git', ['rev-parse', `${tag}^{commit}`], { encoding: 'utf8' }).trim() !== commit) {
     throw new Error('Tag does not point at the built commit.');
   }
-  return { version, windowsVersion: `${version}.0`, commit, tag: `desktop-v${version}` };
+  return { version, windowsVersion: `${version}.0`, commit, tag: `v${version}` };
 }
 
 function assetName(release, platform) {
@@ -141,7 +141,7 @@ async function api(endpoint, method = 'GET', body, allowMissing = false) {
 async function assertForward(release) {
   const latest = await api('releases/latest', 'GET', undefined, true);
   if (latest && latest.tag_name !== release.tag) {
-    const previous = latest.tag_name.replace(/^desktop-v/, '');
+    const previous = latest.tag_name.replace(/^v/, '');
     if (compareVersions(release.version, previous) <= 0) throw new Error('Refusing stale/out-of-order stable promotion.');
   }
 }

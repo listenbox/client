@@ -2,10 +2,10 @@ name: Native builds and stable releases
 on:
   push:
     branches: [master]
-    tags: [desktop-v*]
+    tags: [v*]
   pull_request:
 concurrency:
-  group: ${{ startsWith(github.ref, 'refs/tags/desktop-v') && 'desktop-stable' || github.ref }}
+  group: ${{ startsWith(github.ref, 'refs/tags/v') && 'desktop-stable' || github.ref }}
   cancel-in-progress: false
 permissions:
   contents: read
@@ -27,14 +27,14 @@ jobs:
       - name: Validate stable release identity
         id: identity
         env:
-          RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/desktop-v') && github.ref_name || '' }}
+          RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
         run: node tools/release.mjs validate "$RELEASE_TAG"
   macos:
     needs: identity
-    environment: ${{ startsWith(github.ref, 'refs/tags/desktop-v') && 'desktop-release' || 'desktop-validation' }}
+    environment: ${{ startsWith(github.ref, 'refs/tags/v') && 'desktop-release' || 'desktop-validation' }}
     runs-on: macos-15
     env:
-      LISTENBOX_PRODUCTION_RELEASE: ${{ startsWith(github.ref, 'refs/tags/desktop-v') && '1' || '0' }}
+      LISTENBOX_PRODUCTION_RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') && '1' || '0' }}
       LISTENBOX_SOURCE_COMMIT: ${{ github.sha }}
       LISTENBOX_UPDATE_PUBLIC_KEY: ${{ vars.MACOS_UPDATE_PUBLIC_KEY }}
       MACOS_UPDATE_PUBLIC_KEY: ${{ vars.MACOS_UPDATE_PUBLIC_KEY }}
@@ -59,7 +59,7 @@ jobs:
           node-version: '26.5.0'
           run-install: false
       - name: Import protected Apple signing credentials
-        if: startsWith(github.ref, 'refs/tags/desktop-v')
+        if: startsWith(github.ref, 'refs/tags/v')
         run: bash tools/macos-signing.sh setup
       - run: brew install cmake llvm
       - uses: taiki-e/install-action@v2
@@ -107,10 +107,10 @@ jobs:
             exit 1
           fi
       - name: Sign final update payload and generate macOS appcast
-        if: startsWith(github.ref, 'refs/tags/desktop-v')
+        if: startsWith(github.ref, 'refs/tags/v')
         run: node tools/release.mjs prepare macos-arm64 crates/desktop/dist/macos/Listenbox-${{ needs.identity.outputs.version }}-macos-arm64.dmg .cache/release-macos
       - name: Remove Apple credentials and ephemeral keychain
-        if: always() && startsWith(github.ref, 'refs/tags/desktop-v')
+        if: always() && startsWith(github.ref, 'refs/tags/v')
         run: bash tools/macos-signing.sh cleanup
       - name: Upload macOS diagnostics
         if: always()
@@ -131,7 +131,7 @@ jobs:
           if-no-files-found: error
 
       - uses: actions/upload-artifact@v7
-        if: startsWith(github.ref, 'refs/tags/desktop-v')
+        if: startsWith(github.ref, 'refs/tags/v')
         with:
           name: release-macos
           path: .cache/release-macos/*
@@ -139,7 +139,7 @@ jobs:
 
   windows:
     needs: identity
-    environment: ${{ startsWith(github.ref, 'refs/tags/desktop-v') && 'desktop-release' || 'desktop-validation' }}
+    environment: ${{ startsWith(github.ref, 'refs/tags/v') && 'desktop-release' || 'desktop-validation' }}
     strategy:
       fail-fast: false
       matrix:
@@ -326,20 +326,20 @@ jobs:
           path: crates/desktop/dist/installers/Listenbox-${{ needs.identity.outputs.version }}-windows-${{ matrix.architecture }}-setup.exe
           if-no-files-found: error
       - name: Sign final installer for WinSparkle and generate appcast
-        if: startsWith(github.ref, 'refs/tags/desktop-v')
+        if: startsWith(github.ref, 'refs/tags/v')
         run: |
           $installer = 'crates/desktop/dist/installers/Listenbox-${{ needs.identity.outputs.version }}-windows-${{ matrix.architecture }}-setup.exe'
           node tools/release.mjs prepare windows-${{ matrix.architecture }} $installer .cache/release-windows-${{ matrix.architecture }}
           if ($LASTEXITCODE -ne 0) { throw 'Update signature/appcast generation failed.' }
       - uses: actions/upload-artifact@v7
-        if: startsWith(github.ref, 'refs/tags/desktop-v')
+        if: startsWith(github.ref, 'refs/tags/v')
         with:
           name: release-windows-${{ matrix.architecture }}
           path: .cache/release-windows-${{ matrix.architecture }}/*
           if-no-files-found: error
 
   publish:
-    if: startsWith(github.ref, 'refs/tags/desktop-v')
+    if: startsWith(github.ref, 'refs/tags/v')
     needs: [identity, macos, windows]
     environment: desktop-release
     runs-on: ubuntu-24.04

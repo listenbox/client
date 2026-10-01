@@ -141,7 +141,7 @@ remains in use.
 ### Desktop releases
 
 Stable desktop releases use the workspace `X.Y.Z` version and matching
-`desktop-vX.Y.Z` tag. Each complete release contains a Developer ID signed,
+`vX.Y.Z` tag. Each complete release contains a Developer ID signed,
 notarized Apple Silicon DMG and Windows x64/ARM64 per-user Setup installers.
 Sparkle on macOS and WinSparkle on Windows provide native update prompts,
 manual checks and persisted automatic-check preferences. Both verify Ed25519
