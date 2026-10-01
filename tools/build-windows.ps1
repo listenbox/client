@@ -68,7 +68,9 @@ $targetKey = $target.Replace('-', '_').ToUpperInvariant()
 Set-Item "Env:CARGO_TARGET_${targetKey}_RUSTFLAGS" '-C target-feature=+crt-static'
 # Exercise the release-linked media runtime on every run, including cache hits.
 Invoke-Checked cargo @('nextest', 'run', '--locked', '--release', '--profile', 'ci', '--success-output', 'immediate', '--target', $target, '-p', 'listenbox-sync-engine', '-E', 'test(native_media_tests::) or binary(native_build)')
-Invoke-Checked cargo @('build', '--locked', '--release', '--target', $target, '-p', 'listenbox-desktop')
+$buildArguments = @('build', '--locked', '--release', '--target', $target, '-p', 'listenbox-desktop')
+if ($env:LISTENBOX_PRODUCTION_RELEASE -eq '1') { $buildArguments += @('--features', 'native-updater') }
+Invoke-Checked cargo $buildArguments
 
 $dist = Join-Path $root 'crates/desktop/dist'
 $package = Join-Path $dist "windows-$Architecture"
@@ -77,6 +79,16 @@ $executable = Join-Path $package 'listenbox-desktop.exe'
 Copy-Item "target/$target/release/listenbox-desktop.exe" $executable -Force
 Copy-Item 'LICENSE', 'THIRD-PARTY-NOTICES.txt' $package -Force
 Copy-Item (Join-Path $env:FFMPEG_DIR 'NOTICE.txt') (Join-Path $package 'FFmpeg-NOTICE.txt') -Force
+if ($env:LISTENBOX_PRODUCTION_RELEASE -eq '1') {
+    $updater = Join-Path $root '.cache/updaters/WinSparkle-0.9.4'
+    $updaterArchitecture = if ($Architecture -eq 'arm64') { 'ARM64' } else { 'x64' }
+    $dll = Join-Path $updater "$updaterArchitecture/Release/WinSparkle.dll"
+    $dllHeaders = & dumpbin.exe /headers $dll
+    if ($LASTEXITCODE -ne 0 -or -not ($dllHeaders -match $platform.Machine)) { throw 'Wrong WinSparkle DLL architecture.' }
+    Copy-Item $dll $package -Force
+    Copy-Item (Join-Path $updater 'COPYING') (Join-Path $package 'WinSparkle-LICENSE.txt') -Force
+    Copy-Item (Join-Path $updater 'COPYING.expat') (Join-Path $package 'WinSparkle-expat-LICENSE.txt') -Force
+}
 
 # A successful compiler exit alone does not prove the package has the right
 # architecture or can load on a clean Windows machine of that architecture.
@@ -97,5 +109,3 @@ if ($dependencies -match '(?i)(VCRUNTIME|MSVCP|ucrtbased|avcodec|avformat|avutil
 # Wait explicitly so a loader/startup failure cannot pass the packaging check.
 $startup = Start-Process -FilePath $executable -ArgumentList '--help' -WindowStyle Hidden -Wait -PassThru
 if ($startup.ExitCode -ne 0) { throw "Desktop startup check failed with exit code $($startup.ExitCode)." }
-Copy-Item $executable (Join-Path $dist "listenbox-desktop-windows-$Architecture.exe") -Force
-Compress-Archive -Path "$package/*" -DestinationPath (Join-Path $dist "listenbox-desktop-windows-$Architecture.zip") -Force

@@ -5,7 +5,13 @@ use gpui_kit::{App, Entity, Menu, MenuItem, Window, actions};
 #[path = "platform/windows.rs"]
 mod windows;
 
-actions!(listenbox, [Logout, Quit, OpenSettings]);
+#[cfg(target_os = "windows")]
+pub use windows::InstallationLock;
+
+actions!(
+    listenbox,
+    [Logout, Quit, OpenSettings, CheckUpdates, AutomaticUpdates]
+);
 
 /// Query the actual shortcut key while its quit attempt is active. macOS can
 /// consume Command-key releases before they reach GPUI's focused view.
@@ -32,6 +38,7 @@ pub fn quit_key_state() -> Option<Box<dyn Fn() -> bool>> {
 }
 
 pub fn install(view: &Entity<Workspace>, window: &mut Window, cx: &mut App) {
+    crate::updater::install(view, cx);
     install_actions(view, cx);
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     status_item::install(view, cx);
@@ -57,13 +64,36 @@ pub fn install_actions(view: &Entity<Workspace>, cx: &mut App) {
         OpenSettings,
         None,
     )]);
-    cx.set_menus(vec![Menu::new("Listenbox").items([
-        MenuItem::action("Settings…", OpenSettings),
+    cx.on_action(|_: &CheckUpdates, cx| {
+        show_window(cx);
+        crate::updater::check();
+    });
+    cx.on_action(|_: &AutomaticUpdates, cx| {
+        crate::updater::toggle_automatic();
+        refresh_menus(cx);
+    });
+    refresh_menus(cx);
+}
+
+pub fn refresh_menus(cx: &mut App) {
+    let mut items = vec![MenuItem::action("Settings…", OpenSettings)];
+    if crate::updater::enabled() {
+        items.extend([
+            MenuItem::action("Check for Updates…", CheckUpdates)
+                .disabled(!crate::updater::can_check()),
+            MenuItem::action("Automatically Check for Updates", AutomaticUpdates)
+                .checked(crate::updater::automatic()),
+        ]);
+    }
+    items.extend([
         MenuItem::separator(),
         MenuItem::action("Log out", Logout),
         MenuItem::separator(),
         MenuItem::action("Quit Listenbox", Quit),
-    ])]);
+    ]);
+    cx.set_menus(vec![Menu::new("Listenbox").items(items)]);
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    status_item::refresh(cx);
 }
 
 pub fn show_window(cx: &mut App) {
@@ -95,6 +125,7 @@ mod status_item {
 
     struct StatusItem {
         _icon: TrayIcon,
+        check: TrayMenuItem,
     }
     impl Global for StatusItem {}
 
@@ -102,7 +133,13 @@ mod status_item {
         let menu = TrayMenu::new();
         let open = TrayMenuItem::new("Open Listenbox", true, None);
         let quit = TrayMenuItem::new("Quit Listenbox", true, None);
-        menu.append_items(&[&open, &quit]).expect("status menu");
+        let check = TrayMenuItem::new("Check for Updates…", crate::updater::can_check(), None);
+        menu.append_items(&[&open]).expect("status menu");
+        if crate::updater::enabled() {
+            menu.append_items(&[&check]).expect("updater status menu");
+        }
+        menu.append_items(&[&quit]).expect("status menu");
+        let check_id = check.id().clone();
         let (open, quit) = (open.id().clone(), quit.id().clone());
         let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
         #[cfg(target_os = "windows")]
@@ -134,6 +171,9 @@ mod status_item {
                         super::show_window(cx);
                     } else if id == quit {
                         view.update(cx, |view, cx| view.shutdown(Shutdown::Quit, cx));
+                    } else if id == check_id {
+                        super::show_window(cx);
+                        crate::updater::check();
                     }
                 });
             }
@@ -158,7 +198,13 @@ mod status_item {
         #[cfg(target_os = "windows")]
         let builder = builder.with_menu_on_left_click(false);
         let icon = builder.build().expect("Listenbox status icon");
-        cx.set_global(StatusItem { _icon: icon });
+        cx.set_global(StatusItem { _icon: icon, check });
+    }
+
+    pub(super) fn refresh(cx: &App) {
+        if let Some(item) = cx.try_global::<StatusItem>() {
+            item.check.set_enabled(crate::updater::can_check());
+        }
     }
 }
 

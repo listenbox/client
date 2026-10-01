@@ -7,6 +7,32 @@ use windows_sys::Win32::{
     },
 };
 
+/// Held until runtime draining and updater cleanup complete. Setup never kills
+/// the application; it refuses replacement while this mutex exists.
+pub struct InstallationLock(windows_sys::Win32::Foundation::HANDLE);
+
+impl InstallationLock {
+    pub fn new() -> anyhow::Result<Self> {
+        let name: Vec<u16> = "Local\\ListenboxDesktop"
+            .encode_utf16()
+            .chain([0])
+            .collect();
+        let handle = unsafe {
+            windows_sys::Win32::System::Threading::CreateMutexW(std::ptr::null(), 0, name.as_ptr())
+        };
+        anyhow::ensure!(!handle.is_null(), "Cannot create installation mutex");
+        Ok(Self(handle))
+    }
+}
+
+impl Drop for InstallationLock {
+    fn drop(&mut self) {
+        unsafe {
+            windows_sys::Win32::Foundation::CloseHandle(self.0);
+        }
+    }
+}
+
 fn hwnd(window: &Window) -> isize {
     let handle = HasWindowHandle::window_handle(window).expect("Listenbox window handle");
     let RawWindowHandle::Win32(handle) = handle.as_raw() else {

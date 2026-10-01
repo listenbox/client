@@ -1,14 +1,51 @@
-name: Native builds
+name: Native builds and stable releases
 on:
   push:
     branches: [master]
+    tags: [desktop-v*]
   pull_request:
+concurrency:
+  group: ${{ startsWith(github.ref, 'refs/tags/desktop-v') && 'desktop-stable' || github.ref }}
+  cancel-in-progress: false
 permissions:
   contents: read
+  actions: read
 jobs:
+  identity:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.identity.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: jdx/aube-action@v1
+        with:
+          version: "2.5.1"
+          node-version: "26.5.0"
+          run-install: false
+      - name: Validate stable release identity
+        id: identity
+        env:
+          RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/desktop-v') && github.ref_name || '' }}
+        run: node tools/release.mjs validate "$RELEASE_TAG"
   macos:
+    needs: identity
+    environment: ${{ startsWith(github.ref, 'refs/tags/desktop-v') && 'desktop-release' || 'desktop-validation' }}
     runs-on: macos-15
     env:
+      LISTENBOX_PRODUCTION_RELEASE: ${{ startsWith(github.ref, 'refs/tags/desktop-v') && '1' || '0' }}
+      LISTENBOX_SOURCE_COMMIT: ${{ github.sha }}
+      LISTENBOX_UPDATE_PUBLIC_KEY: ${{ vars.MACOS_UPDATE_PUBLIC_KEY }}
+      MACOS_UPDATE_PUBLIC_KEY: ${{ vars.MACOS_UPDATE_PUBLIC_KEY }}
+      MACOS_UPDATE_SEED_BASE64: ${{ secrets.MACOS_UPDATE_SEED_BASE64 }}
+      MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      MACOS_SIGNING_IDENTITY: ${{ vars.MACOS_SIGNING_IDENTITY }}
+      MACOS_TEAM_ID: ${{ vars.MACOS_TEAM_ID }}
+      MACOS_NOTARY_KEY_P8_BASE64: ${{ secrets.MACOS_NOTARY_KEY_P8_BASE64 }}
+      MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+      MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
       MACOSX_DEPLOYMENT_TARGET: '13.0'
       KACHE_CONFIG: ${{ github.workspace }}/.kache.toml
     steps:
@@ -21,6 +58,9 @@ jobs:
           version: '2.5.1'
           node-version: '26.5.0'
           run-install: false
+      - name: Import protected Apple signing credentials
+        if: startsWith(github.ref, 'refs/tags/desktop-v')
+        run: bash tools/macos-signing.sh setup
       - run: brew install cmake llvm
       - uses: taiki-e/install-action@v2
         with:
@@ -29,6 +69,8 @@ jobs:
         with:
           moon-version: '2.5.5'
       - run: rustup toolchain install 1.98.1 --profile minimal
+      - name: Prepare pinned updater dependencies
+        run: moon exec --ignore-ci-checks client:updaters
       - name: Cache Cargo sources, kache, and Moon outputs
         uses: actions/cache@v6
         with:
@@ -64,6 +106,12 @@ jobs:
             echo 'FFmpeg must be statically linked.' >&2
             exit 1
           fi
+      - name: Sign final update payload and generate macOS appcast
+        if: startsWith(github.ref, 'refs/tags/desktop-v')
+        run: node tools/release.mjs prepare macos-arm64 crates/desktop/dist/macos/Listenbox-${{ needs.identity.outputs.version }}-macos-arm64.dmg .cache/release-macos
+      - name: Remove Apple credentials and ephemeral keychain
+        if: always() && startsWith(github.ref, 'refs/tags/desktop-v')
+        run: bash tools/macos-signing.sh cleanup
       - name: Upload macOS diagnostics
         if: always()
         uses: actions/upload-artifact@v7
@@ -78,11 +126,20 @@ jobs:
           if-no-files-found: ignore
       - uses: actions/upload-artifact@v7
         with:
-          name: release-macos
+          name: native-macos
           path: crates/desktop/dist/macos/*.dmg
           if-no-files-found: error
 
+      - uses: actions/upload-artifact@v7
+        if: startsWith(github.ref, 'refs/tags/desktop-v')
+        with:
+          name: release-macos
+          path: .cache/release-macos/*
+          if-no-files-found: error
+
   windows:
+    needs: identity
+    environment: ${{ startsWith(github.ref, 'refs/tags/desktop-v') && 'desktop-release' || 'desktop-validation' }}
     strategy:
       fail-fast: false
       matrix:
@@ -100,12 +157,15 @@ jobs:
     runs-on: ${{ matrix.runner }}
     env:
       KACHE_CONFIG: ${{ github.workspace }}/.kache.toml
+      LISTENBOX_PRODUCTION_RELEASE: ${{ startsWith(github.ref, 'refs/tags/desktop-v') && '1' || '0' }}
+      LISTENBOX_SOURCE_COMMIT: ${{ github.sha }}
+      LISTENBOX_UPDATE_PUBLIC_KEY: ${{ vars.WINDOWS_UPDATE_PUBLIC_KEY }}
+      WINDOWS_UPDATE_PUBLIC_KEY: ${{ vars.WINDOWS_UPDATE_PUBLIC_KEY }}
+      WINDOWS_UPDATE_SEED_BASE64: ${{ secrets.WINDOWS_UPDATE_SEED_BASE64 }}
       LLVM_VERSION: '22.1.8'
     defaults:
       run:
         shell: pwsh
-    outputs:
-      release-version: ${{ steps.version.outputs.version }}
     steps:
       - run: git config --global core.autocrlf input
       - uses: actions/checkout@v7
@@ -174,7 +234,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Cargo metadata failed.' }
           $desktop = @($metadata.packages | Where-Object { $_.name -eq 'listenbox-desktop' })
           if ($desktop.Count -ne 1) { throw 'Expected exactly one listenbox-desktop package.' }
-          $version = "$($desktop[0].version)+$($env:GITHUB_SHA.Substring(0, 12))"
+          $version = $desktop[0].version
           "version=$version" >> $env:GITHUB_OUTPUT
           $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
           $component = if ('${{ matrix.architecture }}' -eq 'arm64') { 'ARM64' } else { 'x86.x64' }
@@ -222,6 +282,8 @@ jobs:
         with:
           path: .cache/ffmpeg-${{ matrix.target }}
           key: ${{ steps.ffmpeg-cache.outputs.cache-primary-key }}
+      - name: Prepare pinned updater dependencies
+        run: moon exec --ignore-ci-checks client:updaters
       - name: Build and verify release
         env:
           MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
@@ -247,51 +309,65 @@ jobs:
           retention-days: 14
       - uses: actions/upload-artifact@v7
         with:
+          name: native-windows-${{ matrix.architecture }}
+          path: crates/desktop/dist/windows-${{ matrix.architecture }}/*
+          if-no-files-found: error
+      - name: Install verified Inno Setup compiler
+        if: startsWith(github.ref, 'refs/tags/desktop-v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download is-6_7_3 --repo jrsoftware/issrc --pattern innosetup-6.7.3.exe --dir $env:RUNNER_TEMP
+          if ($LASTEXITCODE -ne 0) { throw 'Inno Setup download failed.' }
+          $installer = Join-Path $env:RUNNER_TEMP 'innosetup-6.7.3.exe'
+          if ((Get-FileHash $installer -Algorithm SHA256).Hash -ne '9c73c3bae7ed48d44112a0f48e66742c00090bdb5bef71d9d3c056c66e97b732') { throw 'Inno Setup checksum mismatch.' }
+          $signature = Get-AuthenticodeSignature $installer
+          if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'Pyrsys B.V.') { throw 'Invalid Inno Setup publisher.' }
+          $process = Start-Process $installer -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw 'Inno Setup installation failed.' }
+      - name: Build per-user upgrade installer
+        if: startsWith(github.ref, 'refs/tags/desktop-v')
+        run: ./tools/package-windows.ps1 -Architecture ${{ matrix.architecture }} -Payload crates/desktop/dist/windows-${{ matrix.architecture }}
+      - name: Sign final installer for WinSparkle and generate appcast
+        if: startsWith(github.ref, 'refs/tags/desktop-v')
+        run: |
+          $installer = 'crates/desktop/dist/installers/Listenbox-${{ needs.identity.outputs.version }}-windows-${{ matrix.architecture }}-setup.exe'
+          node tools/release.mjs prepare windows-${{ matrix.architecture }} $installer .cache/release-windows-${{ matrix.architecture }}
+          if ($LASTEXITCODE -ne 0) { throw 'Update signature/appcast generation failed.' }
+      - uses: actions/upload-artifact@v7
+        if: startsWith(github.ref, 'refs/tags/desktop-v')
+        with:
           name: release-windows-${{ matrix.architecture }}
-          path: |
-            crates/desktop/dist/listenbox-desktop-windows-${{ matrix.architecture }}.exe
-            crates/desktop/dist/listenbox-desktop-windows-${{ matrix.architecture }}.zip
+          path: .cache/release-windows-${{ matrix.architecture }}/*
           if-no-files-found: error
 
   publish:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-    needs: [macos, windows]
+    if: startsWith(github.ref, 'refs/tags/desktop-v')
+    needs: [identity, macos, windows]
+    environment: desktop-release
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      MACOS_UPDATE_PUBLIC_KEY: ${{ vars.MACOS_UPDATE_PUBLIC_KEY }}
+      WINDOWS_UPDATE_PUBLIC_KEY: ${{ vars.WINDOWS_UPDATE_PUBLIC_KEY }}
     steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: jdx/aube-action@v1
+        with:
+          version: '2.5.1'
+          node-version: '26.5.0'
+          run-install: false
+      - uses: moonrepo/setup-toolchain@v0
+        with:
+          moon-version: '2.5.5'
       - uses: actions/download-artifact@v8
         with:
           pattern: release-*
           merge-multiple: true
           path: artifacts
-      - name: Publish desktop release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          DESKTOP_RELEASE_VERSION: ${{ needs.windows.outputs.release-version }}
-        run: |
-          set -euo pipefail
-          test -n "$DESKTOP_RELEASE_VERSION"
-          macos_version="${DESKTOP_RELEASE_VERSION%%+*}"
-          test -f "artifacts/Listenbox-${macos_version}-macos-arm64.dmg"
-          test -f artifacts/listenbox-desktop-windows-x64.exe
-          test -f artifacts/listenbox-desktop-windows-x64.zip
-          test -f artifacts/listenbox-desktop-windows-arm64.exe
-          test -f artifacts/listenbox-desktop-windows-arm64.zip
-          tag="desktop-v${DESKTOP_RELEASE_VERSION}"
-          cat > "$RUNNER_TEMP/release-notes.md" <<'NOTES'
-          Desktop builds from master:
-
-          - **macOS Apple Silicon**: open the DMG and drag Listenbox to Applications. The app is ad-hoc signed and is not notarized.
-          - **Windows x64**: Intel and AMD PCs; also runs through emulation on Windows 11 ARM.
-          - **Windows ARM64**: native build for Snapdragon/ARM Windows PCs.
-
-          Windows ZIPs include the executable and third-party license notices. The matching EXEs can be run directly. Windows executables are unsigned. Interactive testing is still required.
-          NOTES
-          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-            gh release upload "$tag" --repo "$GITHUB_REPOSITORY" --clobber artifacts/*
-          else
-            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-              --prerelease --latest=false --title "Listenbox Desktop ${DESKTOP_RELEASE_VERSION}" \
-              --notes-file "$RUNNER_TEMP/release-notes.md" artifacts/*
-          fi
+      - name: Verify immutable assets and promote complete stable release
+        run: moon exec --ignore-ci-checks client:release-publish

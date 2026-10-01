@@ -4603,6 +4603,7 @@ name = "listenbox-desktop"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "cc",
  "dioxus-devtools",
  "embed-resource",
  "futures-util",
