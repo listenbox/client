@@ -71,17 +71,20 @@ impl Client {
         if api.credential.is_none() {
             return Err(crate::api::AuthenticationRequired.into());
         }
-        Ok(serde_json::from_value(
-            api.json(
-                api.client().list_episodes(p::ListEpisodesParams {
+        Ok(
+            match api
+                .client()
+                .list_episodes(p::ListEpisodesParams {
                     show_slug: slug,
                     cursor,
                     limit: Some(50),
-                }),
-                &[200],
-            )
-            .await?,
-        )?)
+                })
+                .await?
+            {
+                p::ListEpisodesResponse::Status200(value) => value,
+                response => return Err(api.response_error(response).await),
+            },
+        )
     }
     fn api(&self, cancel: CancellationToken) -> Result<Api> {
         Api::new(self.config.clone(), cancel)
@@ -103,15 +106,28 @@ impl Client {
         if api.credential.is_none() {
             return Err(crate::api::AuthenticationRequired.into());
         }
+        let client = api.client();
         let (teams, shows, account) = tokio::try_join!(
-            api.json(api.client().list_client_teams(), &[200]),
-            api.json(api.client().list_shows(), &[200]),
-            api.json(api.client().whoami(), &[200])
+            client.list_client_teams(),
+            client.list_shows(),
+            client.whoami()
         )?;
+        let teams = match teams {
+            p::ListClientTeamsResponse::Status200(teams) => teams,
+            response => return Err(api.response_error(response).await),
+        };
+        let shows = match shows {
+            p::ListShowsResponse::Status200(shows) => shows,
+            response => return Err(api.response_error(response).await),
+        };
+        let account = match account {
+            p::WhoamiResponse::Status200(account) => account,
+            response => return Err(api.response_error(response).await),
+        };
         Ok(Catalog {
-            teams: serde_json::from_value(teams)?,
-            import_team: Some(serde_json::from_value::<p::APIKeyWhoami>(account)?.team_id),
-            shows: serde_json::from_value(shows)?,
+            teams,
+            import_team: Some(account.team_id),
+            shows,
         })
     }
     pub async fn import_playlist(

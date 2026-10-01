@@ -39,28 +39,29 @@ pub async fn login_with(
     mut open_browser: impl FnMut(&str),
 ) -> Result<()> {
     let mut response = api
-        .send(
-            api.client()
-                .create_cli_authorization(p::CreateCLIAuthorizationParams {
-                    body: serde_json::from_value(json!({"client": client, "scopes": SCOPES}))?,
-                }),
-        )
+        .client()
+        .create_cli_authorization(p::CreateCLIAuthorizationParams {
+            body: serde_json::from_value(json!({"client": client, "scopes": SCOPES}))?,
+        })
         .await?;
-    if response.status() == reqwest::StatusCode::UNAUTHORIZED && api.credential.is_some() {
+    if matches!(response, p::CreateCLIAuthorizationResponse::Status401(()))
+        && api.credential.is_some()
+    {
         api.credential = None;
         response = api
-            .send(
-                api.client()
-                    .create_cli_authorization(p::CreateCLIAuthorizationParams {
-                        body: serde_json::from_value(json!({"client": client, "scopes": SCOPES}))?,
-                    }),
-            )
+            .client()
+            .create_cli_authorization(p::CreateCLIAuthorizationParams {
+                body: serde_json::from_value(json!({"client": client, "scopes": SCOPES}))?,
+            })
             .await?;
     }
-    let created = api.accept(response, &[201]).await?;
-    let credential = string(&created, "credential")?;
+    let created = match response {
+        p::CreateCLIAuthorizationResponse::Status201(created) => created,
+        response => return Err(api.response_error(response).await),
+    };
+    let credential = &created.credential;
     ensure!(credential_valid(credential), "invalid pending credential");
-    let mut verification = Url::parse(string(&created, "verification_url")?)?;
+    let mut verification = Url::parse(&created.verification_url)?;
     ensure!(
         matches!(verification.scheme(), "http" | "https")
             && verification.host_str().is_some()
@@ -81,27 +82,27 @@ pub async fn login_with(
     let mut events = Events::open(
         api,
         api.client()
-            .cli_authorization_events(p::CliAuthorizationEventsParams {
-                code: string(&created, "code")?.into(),
-            }),
+            .cli_authorization_events(p::CliAuthorizationEventsParams { code: created.code })
+            .await?,
     )
     .await?;
     let event = events.next(api).await?;
     match string(&event, "type")? {
         "cli.authorization.approved" => {
             api.credential = Some(credential.to_owned());
-            let identity = api.json(api.client().whoami(), &[200]).await?;
+            let identity = match api.client().whoami().await? {
+                p::WhoamiResponse::Status200(value) => value,
+                response => return Err(api.response_error(response).await),
+            };
             ensure!(
-                string(&identity, "team_id")? == string(&event, "team_id")?,
+                identity.team_id == string(&event, "team_id")?,
                 "approved credential team does not match approved team"
             );
-            let scopes = identity["scopes"]
-                .as_array()
-                .context("identity missing scopes")?;
-            for scope in SCOPES {
+            let scopes: Vec<p::ApiKeyScope> = serde_json::from_value(json!(SCOPES))?;
+            for scope in scopes {
                 ensure!(
-                    scopes.iter().any(|value| value.as_str() == Some(scope)),
-                    "approved credential missing scope {scope}"
+                    identity.scopes.contains(&scope),
+                    "approved credential missing scope {scope:?}"
                 );
             }
             write_private_json(
@@ -132,11 +133,15 @@ pub fn logout(config: &crate::config::Config) -> Result<()> {
 }
 
 pub async fn status(api: &Api) -> Result<()> {
-    let identity = api.json(api.client().whoami(), &[200]).await?;
-    let email = string(&identity, "email")?.trim();
+    let identity = match api.client().whoami().await? {
+        p::WhoamiResponse::Status200(value) => value,
+        response => return Err(api.response_error(response).await),
+    };
+    let email = identity.email.trim();
     ensure!(!email.is_empty(), "identity email is empty");
-    let name = identity["name"]
-        .as_str()
+    let name = identity
+        .name
+        .as_deref()
         .unwrap_or("")
         .split_whitespace()
         .collect::<Vec<_>>()

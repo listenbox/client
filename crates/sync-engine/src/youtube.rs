@@ -1,5 +1,5 @@
 use crate::{
-    api::{Api, PaymentRequired, string},
+    api::{Api, PaymentRequired},
     download::download,
     innertube::{Playback, PlaylistSnapshot, Video, YouTube},
     publicapi as p,
@@ -78,14 +78,18 @@ pub async fn import(
         )
     });
     let slug = crate::slug(&slug).map_err(anyhow::Error::msg)?;
-    let shows: Vec<p::Show> =
-        serde_json::from_value(api.json(api.client().list_shows(), &[200]).await?)?;
+    let shows: Vec<p::Show> = match api.client().list_shows().await? {
+        p::ListShowsResponse::Status200(value) => value,
+        response => return Err(api.response_error(response).await),
+    };
     ensure!(
         !shows.iter().any(|show| show.slug == slug),
         "Podcast {slug:?} already exists. Use sync to resume an imported podcast, or choose a new slug."
     );
-    let capacity: p::ImportCapacity =
-        serde_json::from_value(api.json(api.client().get_import_capacity(), &[200]).await?)?;
+    let capacity: p::ImportCapacity = match api.client().get_import_capacity().await? {
+        p::GetImportCapacityResponse::Status200(value) => value,
+        response => return Err(api.response_error(response).await),
+    };
     if !capacity.has_active_subscription {
         return Err(PaymentRequired(
             "A paid podcast plan is required for YouTube imports. Choose a plan, then try again."
@@ -158,13 +162,16 @@ pub async fn import(
                 capacity.video_remaining_seconds as f64 / 3600.0,
             )).into());
     }
-    let show: p::Show = serde_json::from_value(api.json(api.client().create_show(p::CreateShowParams {
+    let show = match api.client().create_show(p::CreateShowParams {
         body: p::CreateShow {
             id: format!("shw_{}", &uuid::Uuid::new_v4().simple().to_string()[..16]),
             title, slug: slug.clone(), source_kind: kind.clone(), language: "en".into(),
             image_asset_id: None, youtube_source_url: Some(canonical.clone()),
         },
-    }), &[201]).await.with_context(|| format!("Create podcast {slug:?}. If creation completed but its reply was lost, reload your podcasts and resume with sync."))?)?;
+    }).await.with_context(|| format!("Create podcast {slug:?}. If creation completed but its reply was lost, reload your podcasts and resume with sync."))? {
+        p::CreateShowResponse::Status201(show) => show,
+        response => return Err(api.response_error(response).await).with_context(|| format!("Create podcast {slug:?}. If creation completed but its reply was lost, reload your podcasts and resume with sync.")),
+    };
     created(&show);
     let report = async {
         let snapshot = match listing {
@@ -323,17 +330,15 @@ pub(crate) async fn import_video(
         transfer.phase(crate::downloads::Phase::Uploading);
     }
     let response = api
-        .send(
-            api.client()
-                .create_episode_package(p::CreateEpisodePackageParams {
-                    body: manifest.clone(),
-                }),
-        )
+        .client()
+        .create_episode_package(p::CreateEpisodePackageParams {
+            body: manifest.clone(),
+        })
         .await?;
-    if response.status() != reqwest::StatusCode::CREATED {
-        return Err(api.response_error(response).await);
-    }
-    let session: p::EpisodePackage = api.decode(response).await?;
+    let session = match response {
+        p::CreateEpisodePackageResponse::Status201(session) => session,
+        response => return Err(api.response_error(response).await),
+    };
     if session.status == p::EpisodePackageStatus::Completed {
         journal.forget(&api.config.api_origin, slug, &source_url)?;
         return Ok(ImportOutcome::Published);
@@ -342,6 +347,10 @@ pub(crate) async fn import_video(
     let result: Result<()> = async {
         ensure!(session.part_size >= 5 << 20, "invalid package part size");
         for (ordinal, object) in objects.iter().enumerate() {
+            let initial = session
+                .uploads
+                .iter()
+                .find(|upload| upload.object_index == ordinal as i64);
             let mut offset = 0;
             let mut number = 1;
             while offset < object.byte_length {
@@ -351,28 +360,32 @@ pub(crate) async fn import_video(
                     number += 1;
                     continue;
                 }
-                let signed = api
-                    .json(
-                        api.client().presign_episode_package_parts(
-                            p::PresignEpisodePackagePartsParams {
-                                upload_session_id: session.upload_session_id.clone(),
-                                object_index: ordinal as i64,
-                                body: p::PresignEpisodeUploadSessionParts {
-                                    part_numbers: vec![number],
-                                },
+                let parts = if number == 1
+                    && let Some(initial) = initial
+                {
+                    initial.parts.clone()
+                } else {
+                    let signed: p::PresignedEpisodeUploadParts = match api
+                        .client()
+                        .presign_episode_package_parts(p::PresignEpisodePackagePartsParams {
+                            upload_session_id: session.upload_session_id.clone(),
+                            object_index: ordinal as i64,
+                            body: p::PresignEpisodeUploadSessionParts {
+                                part_numbers: vec![number],
                             },
-                        ),
-                        &[200],
-                    )
-                    .await?;
-                let parts = signed["parts"]
-                    .as_array()
-                    .context("missing package signed parts")?;
+                        })
+                        .await?
+                    {
+                        p::PresignEpisodePackagePartsResponse::Status200(value) => value,
+                        response => return Err(api.response_error(response).await),
+                    };
+                    signed.parts
+                };
                 if parts.is_empty() {
                     break;
                 }
                 ensure!(
-                    parts.len() == 1 && parts[0]["part_number"] == number,
+                    parts.len() == 1 && parts[0].part_number == number,
                     "invalid signed package part"
                 );
                 let length = session.part_size.min(object.byte_length - offset);
@@ -382,7 +395,7 @@ pub(crate) async fn import_video(
                     offset as u64,
                     length as u64,
                     "PUT",
-                    string(&parts[0], "upload_url")?,
+                    &parts[0].upload_url,
                 )
                 .await?;
                 journal.save_part(&manifest.operation_id, ordinal, number)?;
@@ -390,17 +403,18 @@ pub(crate) async fn import_video(
                 number += 1;
             }
         }
-        let completed = api
-            .json(
-                api.client()
-                    .complete_episode_package(p::CompleteEpisodePackageParams {
-                        upload_session_id: session.upload_session_id.clone(),
-                    }),
-                &[200],
-            )
-            .await?;
+        let completed = match api
+            .client()
+            .complete_episode_package(p::CompleteEpisodePackageParams {
+                upload_session_id: session.upload_session_id.clone(),
+            })
+            .await?
+        {
+            p::CompleteEpisodePackageResponse::Status200(value) => value,
+            response => return Err(api.response_error(response).await),
+        };
         ensure!(
-            string(&completed, "status")? == "completed",
+            completed.status == p::EpisodePackageStatus::Completed,
             "prepared media did not complete"
         );
         Ok(())
