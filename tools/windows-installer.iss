@@ -52,6 +52,9 @@ Filename: "{app}\listenbox-desktop.exe"; Description: "Open Listenbox"; Flags: n
 Filename: "{app}\listenbox-desktop.exe"; Flags: nowait; Check: IsUpgrade
 
 [Code]
+function GetTickCount64: Int64;
+  external 'GetTickCount64@kernel32.dll stdcall';
+
 function IsUpgrade: Boolean;
 begin
   Result := WizardSilent;
@@ -59,10 +62,10 @@ end;
 
 function InitializeSetup: Boolean;
 var
-  Deadline: Cardinal;
+  Deadline: Int64;
 begin
-  Deadline := GetTickCount + 60000;
-  while CheckForMutexes('Local\ListenboxDesktop') and (GetTickCount < Deadline) do
+  Deadline := GetTickCount64 + 60000;
+  while CheckForMutexes('Local\ListenboxDesktop') and (GetTickCount64 < Deadline) do
     Sleep(100);
   Result := not CheckForMutexes('Local\ListenboxDesktop');
   if not Result then

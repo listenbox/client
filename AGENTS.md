@@ -28,6 +28,13 @@
 - Verify shared behavior through the parent repository's integrated API E2E
   targets; build the desktop with `moon run desktop:build`.
 
+## Releases
+
+- Manually bump `[workspace.package].version` in `Cargo.toml`, run `cargo update --workspace`,
+  commit/merge, then tag that client commit `vX.Y.Z` and push that specific tag.
+- Approve `desktop-release` jobs; Actions publishes all desktop installers and
+  update feeds together. Branch/PR builds never publish releases.
+
 ## YouTube.js fork and upstream fixes
 
 - `vendor/youtubejs` is our `listenbox/YouTube.js` fork, a nested Git
