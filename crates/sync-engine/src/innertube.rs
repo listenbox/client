@@ -14,7 +14,6 @@ use youtubei::{
 
 pub struct YouTube {
     client: Innertube,
-    parse_failed: std::rc::Rc<std::cell::Cell<bool>>,
     user_agent: String,
 }
 
@@ -66,17 +65,14 @@ impl YouTube {
         engine
             .set_interrupt_handler(move || cancel.is_cancelled())
             .await;
-        let parse_failed = std::rc::Rc::new(std::cell::Cell::new(false));
-        let failed = parse_failed.clone();
+        // UI diagnostics (including dynamically generated parsers) do not
+        // establish playlist loss. The listing's is_complete flag does.
         let callback = engine
             .value_with(|ctx| {
-                Ok(youtubei::rquickjs::Function::new(
-                    ctx,
-                    move |_: youtubei::rquickjs::Object<'_>| {
-                        failed.set(true);
-                    },
-                )?
-                .into_value())
+                Ok(
+                    youtubei::rquickjs::Function::new(ctx, |_: youtubei::rquickjs::Object<'_>| {})?
+                        .into_value(),
+                )
             })
             .await?;
         engine
@@ -130,11 +126,7 @@ impl YouTube {
         .await
         .context("initialize YouTube")?;
         let user_agent = client.session().await?.user_agent().await?;
-        Ok(Self {
-            client,
-            parse_failed,
-            user_agent,
-        })
+        Ok(Self { client, user_agent })
     }
 
     pub async fn snapshot(&self, api: &Api, id: &str) -> Result<PlaylistSnapshot> {
@@ -146,7 +138,6 @@ impl YouTube {
     /// admission completes the same scan before checking total storage.
     pub(crate) async fn playlist_head(&self, api: &Api, id: &str) -> Result<(String, Playlist)> {
         api.wait(async {
-            self.parse_failed.set(false);
             let actions = self.client.actions().await?;
             let response = actions
                 .browse(BrowseOptions {
@@ -158,7 +149,7 @@ impl YouTube {
             let page = Playlist::new(&actions, &response, false).await?;
             let data = page.data().await?;
             ensure!(
-                !self.parse_failed.get(),
+                data.is_complete,
                 "YouTube playlist could not be parsed completely; no changes were made"
             );
             for alert in data.alerts {
@@ -193,7 +184,7 @@ impl YouTube {
             loop {
                 let data = page.data().await?;
                 ensure!(
-                    !self.parse_failed.get(),
+                    data.is_complete,
                     "YouTube playlist could not be parsed completely; no changes were made"
                 );
                 for alert in data.alerts {

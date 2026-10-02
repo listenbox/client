@@ -80,6 +80,7 @@ pub struct PlaylistData {
     pub items: Vec<PlaylistItem>,
     pub alerts: Vec<PlaylistAlert>,
     pub has_continuation: bool,
+    pub is_complete: bool,
 }
 
 impl<'js> FromJs<'js> for PlaylistData {
@@ -96,6 +97,7 @@ impl<'js> FromJs<'js> for PlaylistData {
                 array(ctx, alerts)?
             },
             has_continuation: object.get("has_continuation")?,
+            is_complete: object.get("is_complete")?,
         })
     }
 }
