@@ -29,7 +29,6 @@ mod settings;
 
 pub struct Workspace {
     episodes: Vec<listenbox_sync_engine::publicapi::EpisodeListItem>,
-    episode_cursor: Option<String>,
     episode_loading: bool,
     episode_error: Option<String>,
     episode_request: u64,
@@ -161,8 +160,7 @@ enum Message {
     CookiesSaved(bool, anyhow::Result<()>),
     Episodes(
         u64,
-        bool,
-        anyhow::Result<listenbox_sync_engine::publicapi::EpisodePage>,
+        anyhow::Result<Vec<listenbox_sync_engine::publicapi::EpisodeListItem>>,
     ),
     SourceItems(
         u64,
@@ -214,7 +212,6 @@ impl Workspace {
         .detach();
         let mut view = Self {
             episodes: vec![],
-            episode_cursor: None,
             episode_loading: false,
             episode_error: None,
             episode_request: 0,
@@ -411,9 +408,7 @@ impl Workspace {
             Message::CookiesSaved(saved, result) => {
                 self.cookies_received(saved, result, window, cx)
             }
-            Message::Episodes(request, append, result) => {
-                self.episodes_received(request, append, result)
-            }
+            Message::Episodes(request, result) => self.episodes_received(request, result),
             Message::SourceItems(request, result) => {
                 if request == self.episode_request {
                     self.source_loading = false;
@@ -500,7 +495,7 @@ impl Workspace {
                             );
                             self.error = error;
                         } else {
-                            self.load_episodes(false, cx);
+                            self.load_episodes(cx);
                         }
                         self.start_auto_sync(cx);
                     }
@@ -572,7 +567,7 @@ impl Workspace {
             }
             Message::Report(slug, report) => {
                 if self.selected.as_ref() == Some(&slug) {
-                    self.load_episodes(false, cx);
+                    self.load_episodes(cx);
                 }
                 self.reports.insert(
                     slug,
@@ -592,7 +587,7 @@ impl Workspace {
             }
             Message::Finished(slug, result) => {
                 if result.is_err() && self.selected.as_ref() == Some(&slug) {
-                    self.load_episodes(false, cx);
+                    self.load_episodes(cx);
                 }
                 let stopped = self
                     .jobs
@@ -624,7 +619,7 @@ impl Workspace {
         self.settings_open = false;
         self.cookie_input = settings::cookie_input(_window, cx);
         self.import_open = false;
-        self.load_episodes(false, cx);
+        self.load_episodes(cx);
         self.error = None;
         cx.notify();
     }

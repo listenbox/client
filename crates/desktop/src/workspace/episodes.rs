@@ -2,7 +2,7 @@ use super::*;
 use gpui_kit::base::Selectable;
 use listenbox_sync_engine::{
     downloads::Download,
-    publicapi::{EpisodeListItem, EpisodePage, EpisodeStatus},
+    publicapi::{EpisodeListItem, EpisodeStatus},
 };
 
 pub(super) struct EpisodeRow {
@@ -32,7 +32,6 @@ pub(super) struct EpisodeList {
     pub dirty: bool,
     rows: Vec<EpisodeRow>,
     missing: usize,
-    published: usize,
     issues: bool,
     focus: Vec<Option<FocusHandle>>,
 }
@@ -51,7 +50,6 @@ impl EpisodeList {
             dirty: true,
             rows: vec![],
             missing: 0,
-            published: 0,
             issues: false,
             focus,
         }
@@ -83,24 +81,17 @@ pub(super) fn duration(seconds: u64) -> String {
 }
 
 impl Workspace {
-    pub(super) fn load_episodes(&mut self, append: bool, cx: &mut Context<Self>) {
-        if append && (self.episode_loading || self.source_loading || self.episode_cursor.is_none())
-        {
-            return;
-        }
+    pub(super) fn load_episodes(&mut self, cx: &mut Context<Self>) {
         self.episode_view.dirty = true;
         if let Some(cancel) = self.episode_cancel.take() {
             cancel.cancel();
         }
         self.episode_request += 1;
         self.episode_error = None;
-        if !append {
-            self.episodes.clear();
-            self.episode_cursor = None;
-            self.source_items.clear();
-            self.source_error = None;
-            self.source_loading = false;
-        }
+        self.episodes.clear();
+        self.source_items.clear();
+        self.source_error = None;
+        self.source_loading = false;
         let Some(slug) = self
             .selected
             .clone()
@@ -109,23 +100,18 @@ impl Workspace {
             self.episode_loading = false;
             return;
         };
-        let cursor = if append {
-            self.episode_cursor.clone()
-        } else {
-            None
-        };
         let request = self.episode_request;
-        if !append {
-            self.source_loading = true;
-            let (client, sender, slug) = (self.client.clone(), self.sender.clone(), slug.clone());
-            self.tasks.spawn_on(
-                async move {
-                    let _ =
-                        sender.send(Message::SourceItems(request, client.sync_items(slug).await));
-                },
-                self.runtime.handle(),
-            );
-        }
+        self.source_loading = true;
+        let (client, sender, slug_items) = (self.client.clone(), self.sender.clone(), slug.clone());
+        self.tasks.spawn_on(
+            async move {
+                let _ = sender.send(Message::SourceItems(
+                    request,
+                    client.sync_items(slug_items).await,
+                ));
+            },
+            self.runtime.handle(),
+        );
         let cancel = self.cancel.child_token();
         self.episode_cancel = Some(cancel.clone());
         self.episode_loading = true;
@@ -134,8 +120,7 @@ impl Workspace {
             async move {
                 let _ = sender.send(Message::Episodes(
                     request,
-                    append,
-                    client.episodes(slug, cursor, cancel).await,
+                    client.episodes(slug, cancel).await,
                 ));
             },
             self.runtime.handle(),
@@ -146,8 +131,7 @@ impl Workspace {
     pub(super) fn episodes_received(
         &mut self,
         request: u64,
-        append: bool,
-        result: anyhow::Result<EpisodePage>,
+        result: anyhow::Result<Vec<EpisodeListItem>>,
     ) {
         if request != self.episode_request {
             return;
@@ -155,24 +139,7 @@ impl Workspace {
         self.episode_loading = false;
         self.episode_cancel = None;
         match result {
-            Ok(page) => {
-                if !append {
-                    self.episodes.clear();
-                }
-                for episode in page.episodes {
-                    if !self.episodes.iter().any(|item| item.id == episode.id) {
-                        self.episodes.push(episode);
-                    }
-                }
-                if append && page.next_cursor.is_some() && page.next_cursor == self.episode_cursor {
-                    self.episode_error = Some(
-                        "Could not load the next page. Reload the podcast to try again.".into(),
-                    );
-                    self.episode_cursor = None;
-                } else {
-                    self.episode_cursor = page.next_cursor;
-                }
-            }
+            Ok(episodes) => self.episodes = episodes,
             Err(error) => self.episode_error = Some(format!("Could not load episodes. {error}")),
         }
     }
@@ -256,7 +223,7 @@ impl Workspace {
                 {
                     "Waiting for sync"
                 }
-                Phase::Complete => "Publishing…",
+                Phase::Complete => "Imported",
                 phase => phase.label(),
             },
         };
@@ -382,7 +349,7 @@ impl Workspace {
                 .splice_focusable(0..rows.len() + 2, focus.iter().cloned());
         } else {
             // Retain measurements and the reading position for unchanged rows,
-            // including when a new API page is inserted before the footer.
+            // including when the complete API episode list is refreshed.
             cached.state.splice_focusable(
                 prefix + 1..cached.rows.len() - suffix + 1,
                 focus[prefix + 1..rows.len() - suffix + 1].iter().cloned(),
@@ -398,11 +365,6 @@ impl Workspace {
         cached.focus = focus;
         cached.missing = missing;
         cached.issues = issues;
-        cached.published = self
-            .episodes
-            .iter()
-            .filter(|episode| episode.status == EpisodeStatus::Published)
-            .count();
         cached.dirty = false;
     }
 
@@ -416,7 +378,7 @@ impl Workspace {
             state,
             cx.processor(|view, ix: usize, window, cx| {
                 // Keep keyboard focus alive when an interactive row (including
-                // the header and pagination) scrolls outside the viewport.
+                // the header and recovery actions) scrolls outside the viewport.
                 let pane = div()
                     .px(px(tokens::SPACE))
                     .when_some(view.episode_view.focus[ix].as_ref(), |pane, focus| {
@@ -447,7 +409,6 @@ impl Workspace {
         let t = Tokens::current(cx);
         let missing = self.episode_view.missing;
         let showing_issues = self.episode_view.issues;
-        let published = self.episode_view.published;
         let pane = div()
             .mt(px(tokens::SPACE))
             .border_t_1()
@@ -455,20 +416,7 @@ impl Workspace {
             .pt(px(tokens::SPACE))
             .flex()
             .flex_col()
-            .gap_2()
-            .child(
-                div()
-                    .id("episode-summary")
-                    .text_color(t.muted)
-                    .child(format!(
-                        "{} · {missing} not imported",
-                        if self.episode_cursor.is_some() {
-                            format!("{} episodes loaded", self.episodes.len())
-                        } else {
-                            format!("{published} in RSS")
-                        }
-                    )),
-            );
+            .gap_2();
         pane.child(
             div()
                 .flex()
@@ -520,7 +468,7 @@ impl Workspace {
                     Button::new("retry-episodes")
                         .ghost()
                         .label("Reload episodes")
-                        .on_click(cx.listener(|view, _, _, cx| view.load_episodes(false, cx))),
+                        .on_click(cx.listener(|view, _, _, cx| view.load_episodes(cx))),
                 );
         } else if self.episode_view.rows.is_empty() && self.source_error.is_none() {
             pane = pane.child(div().py_3().text_color(t.muted).child(
@@ -538,17 +486,8 @@ impl Workspace {
                     Button::new("retry-imports")
                         .ghost()
                         .label("Reload imports")
-                        .on_click(cx.listener(|view, _, _, cx| view.load_episodes(false, cx))),
+                        .on_click(cx.listener(|view, _, _, cx| view.load_episodes(cx))),
                 );
-        }
-        if self.episode_cursor.is_some() {
-            pane = pane.child(
-                Button::new("more-episodes")
-                    .ghost()
-                    .label("Load more episodes")
-                    .disabled(self.episode_loading || self.source_loading)
-                    .on_click(cx.listener(|view, _, _, cx| view.load_episodes(true, cx))),
-            );
         }
         pane.into_any_element()
     }

@@ -49,107 +49,71 @@ async fn live_episode_scrolling(cx: &mut TestAppContext) {
         view.loaded && !view.episode_loading && !view.source_loading
     })
     .await;
-    let first_page = cx.update(|cx| {
+    let all_episodes = cx.update(|cx| {
         let view = workspace.read(cx);
-        assert_eq!(view.episodes.len(), 50);
-        assert!(view.episode_cursor.is_some());
+        assert_eq!(
+            view.episodes.len(),
+            520,
+            "the library stopped at a page boundary"
+        );
+        for (index, episode) in view.episodes.iter().enumerate() {
+            assert_eq!(
+                episode.title,
+                format!(
+                    "{}{number}",
+                    "Wrapped episode title ".repeat(8),
+                    number = index + 1
+                )
+            );
+        }
         assert!(view.jobs.is_empty(), "scrolling fixture started a sync");
         view.episodes
             .iter()
             .map(|episode| episode.id.clone())
             .collect::<Vec<_>>()
     });
-    cx.update_window(handle.into(), |_, window, cx| {
-        let start = std::time::Instant::now();
-        for _ in 0..8 {
-            window.render_frame(cx);
-        }
-        eprintln!("episode scroll: eight initial frames {:?}", start.elapsed());
-        let rendered = first_page
-            .iter()
-            .filter(|id| {
-                window
-                    .try_find(SharedString::from(format!("episode-row-{id}")))
-                    .is_some()
-            })
-            .count();
-        eprintln!(
-            "episode scroll: {rendered} mounted rows of {}",
-            first_page.len()
-        );
-        assert!(rendered > 0, "no episode rows reached layout");
-        assert!(
-            rendered < 20,
-            "all {rendered} episode rows were laid out outside the viewport"
-        );
-        // Drive actual wheel input through the variable-height content, rather
-        // than setting the list's private offset or measuring every row first.
-        for _ in 0..12 {
-            window.scroll(
-                "workspace-content",
-                ScrollDelta::Pixels(point(px(0.), px(-1200.))),
-                cx,
-            );
-        }
-        window.render_frame(cx);
-        assert!(
-            window.find("more-episodes").visible(),
-            "pagination is unreachable"
-        );
-        let last = SharedString::from(format!("episode-row-{}", first_page.last().unwrap()));
-        assert!(
-            window.find(last).visible(),
-            "scrolling skipped the last loaded episode"
-        );
-        for _ in 0..16 {
-            window.focus_next(cx);
-            window.render_frame(cx);
-            if window.find("more-episodes").focused() == Some(true) {
-                break;
-            }
-        }
-        assert_eq!(
-            window.find("more-episodes").focused(),
-            Some(true),
-            "pagination is unreachable by keyboard"
-        );
-    })
-    .unwrap();
-    cx.update_window(handle.into(), |_, window, cx| {
-        let keystroke = Keystroke::parse("enter").unwrap();
-        window.dispatch_event(
-            KeyDownEvent {
-                keystroke: keystroke.clone(),
-                is_held: false,
-                prefer_character_input: false,
-            }
-            .to_platform_input(),
-            cx,
-        );
-        window.dispatch_event(KeyUpEvent { keystroke }.to_platform_input(), cx);
-        assert!(
-            workspace.read(cx).episode_loading,
-            "keyboard pagination was not admitted"
-        );
-    })
-    .unwrap();
-    wait_for(cx, &workspace, |view| !view.episode_loading).await;
     let narrow_height = cx
         .update_window(handle.into(), |_, window, cx| {
-            let view = workspace.read(cx);
-            assert_eq!(view.episodes.len(), 100, "pagination did not append");
-            assert_eq!(
-                view.episodes[..50]
-                    .iter()
-                    .map(|episode| &episode.id)
-                    .collect::<Vec<_>>(),
-                first_page.iter().collect::<Vec<_>>()
+            let start = std::time::Instant::now();
+            for _ in 0..8 {
+                window.render_frame(cx);
+            }
+            eprintln!("episode scroll: eight initial frames {:?}", start.elapsed());
+            let rendered = all_episodes
+                .iter()
+                .filter(|id| {
+                    window
+                        .try_find(SharedString::from(format!("episode-row-{id}")))
+                        .is_some()
+                })
+                .count();
+            eprintln!(
+                "episode scroll: {rendered} mounted rows of {}",
+                all_episodes.len()
             );
+            assert!(rendered > 0, "no episode rows reached layout");
+            assert!(
+                rendered < 20,
+                "all {rendered} episode rows were laid out outside the viewport"
+            );
+            // Drive actual wheel input through the variable-height content, rather
+            // than setting the list's private offset or measuring every row first.
+            for _ in 0..13 {
+                window.scroll(
+                    "workspace-content",
+                    ScrollDelta::Pixels(point(px(0.), px(-4000.))),
+                    cx,
+                );
+            }
             window.render_frame(cx);
-            let last = SharedString::from(format!("episode-row-{}", first_page.last().unwrap()));
+            assert!(
+                window.try_find("more-episodes").is_none(),
+                "a complete library still asks for pagination"
+            );
+            let last = SharedString::from(format!("episode-row-{}", all_episodes.last().unwrap()));
             assert!(
                 window.find(last).visible(),
-                "appending reset the reading position"
+                "scrolling skipped the last loaded episode"
             );
             window.scroll(
                 "workspace-content",
@@ -160,11 +124,12 @@ async fn live_episode_scrolling(cx: &mut TestAppContext) {
             assert!(window.find("filter-episodes").visible());
             assert!(
                 window
-                    .find(SharedString::from(format!("episode-row-{}", first_page[0])))
+                    .find(SharedString::from(format!(
+                        "episode-row-{}",
+                        all_episodes[0]
+                    )))
                     .visible()
             );
-            // Establish focus on an enabled control: pagination is temporarily
-            // disabled while its request is in flight and relinquishes focus.
             for _ in 0..16 {
                 window.focus_next(cx);
                 window.render_frame(cx);
@@ -176,7 +141,7 @@ async fn live_episode_scrolling(cx: &mut TestAppContext) {
             for _ in 0..12 {
                 window.scroll(
                     "workspace-content",
-                    ScrollDelta::Pixels(point(px(0.), px(-1200.))),
+                    ScrollDelta::Pixels(point(px(0.), px(-4000.))),
                     cx,
                 );
             }
@@ -195,7 +160,10 @@ async fn live_episode_scrolling(cx: &mut TestAppContext) {
                 cx,
             );
             window
-                .find(SharedString::from(format!("episode-row-{}", first_page[0])))
+                .find(SharedString::from(format!(
+                    "episode-row-{}",
+                    all_episodes[0]
+                )))
                 .bounds()
                 .size
                 .height
@@ -204,7 +172,10 @@ async fn live_episode_scrolling(cx: &mut TestAppContext) {
     cx.simulate_window_resize(handle.into(), size(px(1080.), px(760.)));
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
-        let first = window.find(SharedString::from(format!("episode-row-{}", first_page[0])));
+        let first = window.find(SharedString::from(format!(
+            "episode-row-{}",
+            all_episodes[0]
+        )));
         assert!(first.visible(), "resize hid the first episode");
         assert!(
             first.bounds().size.height < narrow_height,
@@ -459,10 +430,28 @@ async fn live_not_imported(cx: &mut TestAppContext) {
         })
         .await;
         cx.update_window(handle.into(), |_, window, cx| {
+            let progress = workspace.read(cx).client.downloads().snapshot();
+            let source: Vec<_> = progress
+                .items
+                .iter()
+                .filter(|item| item.source_id == slug)
+                .collect();
+            assert_eq!(
+                source.len(),
+                2,
+                "progress omitted the previously imported episode"
+            );
+            assert!(source.iter().all(|item| item.phase == Phase::Complete));
+            for key in ["video", "skipped"] {
+                assert!(source.iter().any(|item| item.source_url
+                    == format!(
+                        "https://www.youtube.com/watch?v={}",
+                        fixture[key].as_str().unwrap()
+                    )));
+            }
             let rows = workspace.read(cx).episode_rows();
-            assert_eq!(rows.len(), 1);
-            assert!(rows[0].episode.is_some());
-            assert!(!rows[0].issue());
+            assert_eq!(rows.len(), 2);
+            assert!(rows.iter().all(|row| row.episode.is_some() && !row.issue()));
             window.render_frame(cx);
             assert!(
                 window.try_find("filter-not-imported").is_none(),

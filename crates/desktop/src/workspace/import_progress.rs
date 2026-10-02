@@ -46,8 +46,8 @@ impl ImportProgress {
 
 impl Workspace {
     pub(super) fn import_progress(&self, slug: &str) -> ImportProgress {
-        // The admitted queue covers this entire pass, independently of the
-        // selected podcast and the paginated API episode list.
+        // The engine publishes every playlist entry, including episodes already
+        // imported before this sync, independently of the selected podcast.
         let mut progress = ImportProgress::default();
         for item in self
             .progress

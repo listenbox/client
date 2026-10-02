@@ -1,7 +1,16 @@
+# Desktop development
+
+- The user owns running the desktop app and its hot-reload watcher. Never
+  launch, stop, restart, or signal either process. Edit the code and leave
+  development app and hot-reload operation to the user.
+- If a change cannot safely hotpatch (for example, a Rust struct layout change),
+  tell the user that a manual restart is needed; never perform it yourself.
+
 # Desktop profiling
 
-- Use `moon run desktop:profiled` in one terminal and `moon run desktop:profile`
-  in another. These macOS tasks require Xcode Instruments, `jq`, and `xmllint`.
+- The user runs `moon run desktop:profiled` in one terminal and
+  `moon run desktop:profile` in another. These macOS tasks require Xcode
+  Instruments, `jq`, and `xmllint`.
   `profiled` uses Moon's local server preset; `profile` is persistent so Moon
   schedules it with other persistent tasks, and completes after one capture.
   Ctrl+C stops the native recording and retains/exports the shortened trace;
@@ -9,7 +18,8 @@
   Runtime tasks (`profiled`, `profile`, and `dev`) use `inputs: []`; historical
   recordings are never Moon task inputs or outputs. Build dependencies track
   source files and the executable/dSYM separately.
-- Stop `desktop:dev` before launching the profiled app against the same data.
+- The user must stop `desktop:dev` before launching the profiled app against
+  the same data.
   `profiled` uses `config/dev.yaml` and `~/.cache/listenbox/dev/`; it preserves
   an explicit `LISTENBOX_PROFILE_DIR` override. It uses the optimized Cargo
   `profiling` profile, dSYM symbols, GPUI instrumentation, and a frame-time

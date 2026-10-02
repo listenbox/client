@@ -1,5 +1,6 @@
 use parking_lot::RwLock;
 use std::{
+    collections::HashSet,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -274,29 +275,40 @@ impl DownloadManager {
         }
     }
 
-    /// Replace the previous sync's history for this source, retaining other podcasts.
-    pub fn enqueue(
+    /// Publish the complete source inventory, retaining other podcasts. Episodes
+    /// already present on the server are complete; only missing episodes transfer.
+    pub(crate) fn enqueue(
         &self,
         source_id: &str,
         source_title: &str,
-        episodes: &[(String, String)],
+        episodes: &[crate::innertube::Video],
+        published: &HashSet<&str>,
     ) -> Vec<Transfer> {
-        let mut state = self.state.write();
-        let state = &mut state.snapshot;
-        state.items.retain(|item| item.source_id != source_id);
-        episodes
-            .iter()
-            .map(|(video_id, title)| {
-                let id = format!("{source_id}/{video_id}");
-                state
-                    .items
-                    .push(Download::queued(source_id, source_title, video_id, title));
-                Transfer {
-                    manager: self.clone(),
-                    id,
+        let transfers = {
+            let mut state = self.state.write();
+            state
+                .snapshot
+                .items
+                .retain(|item| item.source_id != source_id);
+            let mut transfers = Vec::new();
+            for (position, video) in episodes.iter().enumerate() {
+                let mut item = Download::queued(source_id, source_title, &video.id, &video.title);
+                item.position = Some(position as i64);
+                item.duration_seconds = video.duration_seconds;
+                if published.contains(item.source_url.as_str()) {
+                    item.phase = Phase::Complete;
+                } else {
+                    transfers.push(Transfer {
+                        manager: self.clone(),
+                        id: item.id.clone(),
+                    });
                 }
-            })
-            .collect()
+                state.snapshot.items.push(item);
+            }
+            transfers
+        };
+        self.changed.send_replace(());
+        transfers
     }
 }
 
@@ -317,10 +329,6 @@ impl Transfer {
             .find(|item| item.id == self.id)
             .expect("Transfer belongs to its manager")
             .clone()
-    }
-
-    pub(crate) fn position(&self, position: i64) {
-        self.update(|item| item.position = Some(position));
     }
 
     pub(crate) fn queued(&self) {
@@ -531,8 +539,13 @@ mod tests {
             source,
             source,
             &(0..count)
-                .map(|index| (index.to_string(), format!("Episode {index}")))
+                .map(|index| crate::innertube::Video {
+                    id: index.to_string(),
+                    title: format!("Episode {index}"),
+                    duration_seconds: None,
+                })
                 .collect::<Vec<_>>(),
+            &HashSet::new(),
         )
     }
 
