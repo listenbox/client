@@ -33,6 +33,7 @@ fileGroups:
     - vendor/youtubejs/tsconfig.json
     - vendor/aube-workspace.yaml
     - vendor/aube-lock.yaml
+    - vendor/package.json
     - vendor/moon.yml
 taskOptions:
   cache: true
