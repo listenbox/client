@@ -6,6 +6,9 @@
   schedules it with other persistent tasks, and completes after one capture.
   Ctrl+C stops the native recording and retains/exports the shortened trace;
   Moon reports the run as interrupted. Cmd+C copies terminal text.
+  Runtime tasks (`profiled`, `profile`, and `dev`) use `inputs: []`; historical
+  recordings are never Moon task inputs or outputs. Build dependencies track
+  source files and the executable/dSYM separately.
 - Stop `desktop:dev` before launching the profiled app against the same data.
   `profiled` uses `config/dev.yaml` and `~/.cache/listenbox/dev/`; it preserves
   an explicit `LISTENBOX_PROFILE_DIR` override. It uses the optimized Cargo

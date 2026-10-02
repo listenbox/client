@@ -31,6 +31,7 @@ tasks:
     description: Run the optimized desktop against local services with a frame-time overlay.
     deps: [~:build-profiled]
     preset: server
+    inputs: []
     command: bash tools/profile.sh launch
     options:
       cache: false
@@ -39,6 +40,7 @@ tasks:
       os: macos
   profile:
     description: Capture the profiled desktop; arguments are label, seconds, and cpu or metal.
+    inputs: []
     command: bash tools/profile.sh capture
     options:
       cache: false
@@ -56,6 +58,7 @@ tasks:
     description: Hotpatch the running desktop UI with Subsecond against local Listenbox services.
     deps: [client:prerequisites, ~:dev-tools]
     preset: server
+    inputs: []
     env:
       RUST_BACKTRACE: '1'
     script: |-
