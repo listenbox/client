@@ -5,6 +5,7 @@ use gpui_kit::component::{
     button::{Button, ButtonVariants},
     input::{Input, InputState, TextareaState},
     progress::Progress,
+    scroll::{ScrollableElement, Scrollbar, ScrollbarMode},
     spinner::Spinner,
 };
 use gpui_kit::prelude::FluentBuilder;
@@ -855,7 +856,7 @@ impl Workspace {
                 .flex_col()
                 .gap_1()
                 .max_h(px(180.))
-                .overflow_y_scroll()
+                .overflow_y_scrollbar()
                 .child(
                     Button::new("all-teams")
                         .ghost()
@@ -935,7 +936,7 @@ impl Workspace {
             .px(px(tokens::NAV_ROW_INSET))
             .flex_1()
             .min_h_0()
-            .overflow_y_scroll();
+            .overflow_y_scrollbar();
         let mut count = 0;
         for show in self
             .catalog
@@ -1218,9 +1219,22 @@ impl Workspace {
                 .test_support()
                 .into_any_element()
         } else {
-            pane.overflow_y_scroll()
-                .p(px(tokens::SPACE))
-                .child(self.content_header(window, cx))
+            let scroll = window
+                .use_keyed_state("workspace-scroll", cx, |_, _| ScrollHandle::default())
+                .read(cx)
+                .clone();
+            pane.relative()
+                .overflow_hidden()
+                .child(
+                    div()
+                        .id("workspace-scroll-area")
+                        .size_full()
+                        .overflow_y_scroll()
+                        .track_scroll(&scroll)
+                        .p(px(tokens::SPACE))
+                        .child(self.content_header(window, cx)),
+                )
+                .child(Scrollbar::vertical(&scroll).mode(ScrollbarMode::Always))
                 .test_support()
                 .into_any_element()
         }

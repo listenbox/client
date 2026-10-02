@@ -168,6 +168,11 @@ working pane. The sidebar list and main content own separate scroll areas.
 At the 840×600 minimum window, important errors precede the form; taller content
 remains reachable by scrolling.
 
+The main pane has a visible vertical scrollbar whenever its content overflows,
+including the virtualized episode list. Its thumb controls the same scroll
+state as wheel input. The podcast list and team choices use GPUI Kit's native
+scrollbar affordance and system visibility behavior.
+
 ## Type and color
 
 Use the operating system font. Page titles are 30px bold, the team heading is

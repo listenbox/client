@@ -1,5 +1,5 @@
 use super::*;
-use gpui_kit::base::Selectable;
+use gpui_kit::base::{ScrollbarHandle, Selectable};
 use listenbox_sync_engine::{
     downloads::Download,
     publicapi::{EpisodeListItem, EpisodeStatus},
@@ -34,6 +34,45 @@ pub(super) struct EpisodeList {
     missing: usize,
     issues: bool,
     focus: Vec<Option<FocusHandle>>,
+}
+
+#[derive(Clone)]
+struct EpisodeScrollbar(ListState);
+
+impl ScrollbarHandle for EpisodeScrollbar {
+    fn viewport_bounds(&self) -> Bounds<Pixels> {
+        self.0.viewport_bounds()
+    }
+
+    fn offset(&self) -> Point<Pixels> {
+        self.0.offset()
+    }
+
+    fn content_size(&self) -> Size<Pixels> {
+        self.0.content_size()
+    }
+
+    fn set_offset(&self, offset: Point<Pixels>) {
+        let max = self.0.max_offset_for_scrollbar().y;
+        if max > px(0.) && offset.y <= -max {
+            // The drag freezes an estimated height, while wrapped rows keep
+            // being measured. The thumb's end means the actual last item.
+            self.0.scroll_to(ListOffset {
+                item_ix: self.0.item_count(),
+                offset_in_item: px(0.),
+            });
+        } else {
+            self.0.set_offset_from_scrollbar(offset);
+        }
+    }
+
+    fn start_drag(&self) {
+        self.0.scrollbar_drag_started();
+    }
+
+    fn end_drag(&self) {
+        self.0.scrollbar_drag_ended();
+    }
 }
 
 impl EpisodeList {
@@ -374,8 +413,8 @@ impl Workspace {
         // Header/footer controls can change without an episode-data update.
         state.remeasure_items(0..1);
         state.remeasure_items(state.item_count() - 1..state.item_count());
-        list(
-            state,
+        let content = list(
+            state.clone(),
             cx.processor(|view, ix: usize, window, cx| {
                 // Keep keyboard focus alive when an interactive row (including
                 // the header and recovery actions) scrolls outside the viewport.
@@ -401,8 +440,13 @@ impl Workspace {
                 }
             }),
         )
-        .size_full()
-        .into_any_element()
+        .size_full();
+        div()
+            .relative()
+            .size_full()
+            .child(content)
+            .child(Scrollbar::vertical(&EpisodeScrollbar(state)).mode(ScrollbarMode::Always))
+            .into_any_element()
     }
 
     fn episode_heading(&self, cx: &mut Context<Self>) -> AnyElement {

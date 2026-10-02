@@ -197,6 +197,33 @@ async fn live_episode_scrolling(cx: &mut TestAppContext) {
                     )))
                     .visible()
             );
+            // Drag the visible scrollbar through the real list, without
+            // changing its private scroll offset or mounting off-screen rows.
+            let bounds = window.find("workspace-content").bounds();
+            let top = point(bounds.right() - px(8.), bounds.top() + px(12.));
+            let bottom = point(bounds.right() - px(8.), bounds.bottom() - px(12.));
+            window.drag(top, bottom, cx);
+            window.render_frame(cx);
+            assert!(
+                window
+                    .try_find(SharedString::from(format!(
+                        "episode-row-{}",
+                        all_episodes.last().unwrap()
+                    )))
+                    .is_some_and(|row| row.visible()),
+                "dragging the scrollbar did not reach the last episode"
+            );
+            window.drag(bottom, top, cx);
+            window.render_frame(cx);
+            assert!(
+                window
+                    .find(SharedString::from(format!(
+                        "episode-row-{}",
+                        all_episodes[0]
+                    )))
+                    .visible(),
+                "dragging the scrollbar back did not reach the first episode"
+            );
             for _ in 0..16 {
                 window.focus_next(cx);
                 window.render_frame(cx);
