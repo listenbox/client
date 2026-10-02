@@ -140,9 +140,28 @@ remains in use.
 
 ### Desktop releases
 
-Every push to `master` builds and publishes one prerelease on [GitHub Releases](https://github.com/listenbox/client/releases) containing an Apple Silicon DMG and Windows x64 and ARM64 builds. Its version is the desktop package version resolved by Cargo plus the first 12 characters of the commit SHA, such as `0.1.0+abcdef123456`, with release tag `desktop-v0.1.0+abcdef123456`. Choose the DMG for Apple Silicon Macs, `listenbox-desktop-windows-x64.zip` for Intel/AMD PCs or `listenbox-desktop-windows-arm64.zip` for native Windows ARM64, including Windows 11 ARM in VMware Fusion on Apple Silicon. Both Windows archives include the executable and license notices; matching `.exe` assets are also available to run directly. Windows 11 ARM can also run the x64 version through emulation. The Windows executables are unsigned; signing is not configured. Each Windows build checks its architecture, runtime DLL dependencies and `--help` startup. Interactive Windows testing remains necessary.
+Stable desktop releases use the workspace `X.Y.Z` version and matching
+`vX.Y.Z` tag. Each complete release contains a Developer ID signed,
+notarized Apple Silicon DMG and Windows x64/ARM64 per-user Setup installers.
+Sparkle on macOS and WinSparkle on Windows provide native update prompts,
+manual checks and persisted automatic-check preferences. Both verify Ed25519
+signatures for the final download. The Check for Updates command is also
+available from the tray/menu bar while the workspace is hidden.
 
-Pull requests build and package the same desktop applications on macOS ARM64, Windows x64, and Windows ARM64. Every runner executes release-linked media tests before packaging, including after native cache hits; only pushes to `master` publish releases. Linux retains the regular Moon checks. On Windows, FFmpeg is cached separately and saved before the Rust build, so subsequent attempts can reuse it even after a Rust compilation failure. Release runs also upload build logs, FFmpeg configuration diagnostics, and Moon reports for troubleshooting without a local Windows machine.
+Windows installers currently have no Authenticode publisher certificate and
+may show a SmartScreen warning. Their in-app update authenticity is protected
+by WinSparkle's embedded public key. SignPath approval is being pursued
+separately and is not a release prerequisite.
+
+Pushes to `master` and pull requests build validation artifacts without
+production signing secrets. Tagged builds use the protected `desktop-release`
+environment and publish only after all three native builds complete. The
+publisher verifies immutable assets and anonymous downloads before selecting
+the new stable release as Latest. See [native updates](docs/native-updates.md)
+for the release contract, signing setup, recovery and remaining native upgrade
+acceptance checks. Every Windows runner executes release-linked media tests
+and architecture/dependency/startup checks, including after cache hits.
+Release jobs upload build logs and FFmpeg/Moon diagnostics.
 
 The same builds can run on native Windows machines of the matching architecture with Rust, Moon, Visual Studio's C++ tools for that architecture and Windows SDK, host-native [LLVM 22.1.8](https://github.com/llvm/llvm-project/releases/tag/llvmorg-22.1.8), cargo-nextest, and MSYS2 (`make`, `diffutils`, `tar`, `xz`, `openssl`). CI installs checksum-verified LLVM 22.1.8 for each architecture: LLVM 20/21 have a [libclang unload crash](https://github.com/llvm/llvm-project/issues/154361) exposed when generating FFmpeg bindings from a clean target directory. Set `MSYS2_LOCATION` to the MSYS2 installation directory and, if LLVM is not installed at `C:\Program Files\LLVM`, set `LIBCLANG_PATH` to the directory containing `libclang.dll`:
 
@@ -155,7 +174,7 @@ moon run desktop:build-release-windows-arm64
 
 Outputs are in `crates/desktop/dist/`. FFmpeg and the MSVC runtime are linked statically. Each Windows target has its own FFmpeg cache, separate from the native macOS/Linux build. GPUI compiles its release shaders using the Windows SDK, so these tasks must run on Windows. The release profile is `%LOCALAPPDATA%\Listenbox` on Windows; debug builds use `%USERPROFILE%\.cache\listenbox\dev`. `LISTENBOX_PROFILE_DIR` overrides it on all platforms.
 
-Release builds open without a console window and keep a system tray icon while running. Closing the window with X hides it and keeps synchronization running. Click the tray icon to reopen the window, or right-click it for Open Listenbox and Quit Listenbox. The macOS menu-bar icon offers the same two actions. Quit waits for active work to shut down cleanly. Windows may place the icon in the tray's hidden-icons overflow.
+Release builds open without a console window and keep a system tray icon while running. Closing the window with X hides it and keeps synchronization running. Click the tray icon to reopen the window, or right-click it for Open Listenbox, Check for Updates, and Quit Listenbox. The macOS menu-bar icon offers the same actions in updater-enabled releases. Quit waits for active work to shut down cleanly. Windows may place the icon in the tray's hidden-icons overflow.
 
 Desktop icon artwork lives in `crates/desktop/assets/icon.png`. macOS packages it directly; the desktop Cargo build generates a multi-resolution Windows ICO from the same image and embeds it as resource 1 for Explorer, the window, and the taskbar. `assets/tray.svg` adapts the shared web favicon's L-and-dot geometry without its tile background. The build renders a 36px macOS template (18pt at Retina scale) and a 32px Windows mark with a contrasting outline for light and dark taskbars. Generated ICO, PNG previews, and embedded RGBA pixels live in Cargo's build output directory; edit the source artwork to regenerate them.
 
@@ -191,7 +210,7 @@ The desktop task runs independently of the parent `root:dev` Moon task and never
 
 ## Install
 
-Open the Apple Silicon DMG from the [desktop release](https://github.com/listenbox/client/releases) and drag Listenbox to Applications. Current bundles are ad-hoc signed; Developer ID signing and Apple notarization require distribution credentials. Local builds can set `LISTENBOX_SIGNING_IDENTITY` for a configured Developer ID certificate.
+Open the Apple Silicon DMG from the [desktop release](https://github.com/listenbox/client/releases) and drag Listenbox to Applications. On Windows, run the matching x64 or ARM64 Setup EXE. The first updater-enabled version requires manual installation; later releases use the native Check for Updates command. Profiles and credentials are stored outside the installation directory and survive updates and uninstallation. Local development bundles are ad-hoc signed; production macOS packaging requires the configured Developer ID and notarization credentials.
 
 To build and reinstall the release locally, run this from either the parent monorepo or the client checkout:
 

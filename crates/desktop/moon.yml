@@ -12,6 +12,7 @@ fileGroups:
     - assets/**/*
     - build.rs
     - src/**/*.rs
+    - src/**/*.m
     - tests/**/*
     - Cargo.toml
 tasks:
@@ -50,23 +51,31 @@ tasks:
     outputs: [dist/listenbox-desktop]
   build-release:
     description: Build the production desktop executable for the host architecture.
-    deps: [client:prerequisites]
-    inputs: ['@group(sources)', 'project://client?group=sources', 'project://client?group=notices']
+    deps: [client:prerequisites, client:updaters]
+    inputs: ['@group(sources)', 'project://client?group=sources', 'project://client?group=notices', '$LISTENBOX_PRODUCTION_RELEASE', '$LISTENBOX_UPDATE_PUBLIC_KEY', '$LISTENBOX_SOURCE_COMMIT']
     script: |-
       set -euo pipefail
       cd ../..
-      cargo build --locked --release -p listenbox-desktop
+      if [[ "${LISTENBOX_PRODUCTION_RELEASE:-0}" == 1 ]]; then
+        cargo build --locked --release -p listenbox-desktop --features native-updater
+      else
+        cargo build --locked --release -p listenbox-desktop
+      fi
       mkdir -p crates/desktop/dist/release
       cp target/release/listenbox-desktop crates/desktop/dist/release/listenbox-desktop
       cp .cache/ffmpeg/NOTICE.txt crates/desktop/dist/release/FFmpeg-NOTICE.txt
-      crates/desktop/dist/release/listenbox-desktop --help
+      if [[ "${LISTENBOX_PRODUCTION_RELEASE:-0}" == 1 && "$OSTYPE" == darwin* ]]; then
+        DYLD_FRAMEWORK_PATH="$PWD/.cache/updaters" crates/desktop/dist/release/listenbox-desktop --help
+      else
+        crates/desktop/dist/release/listenbox-desktop --help
+      fi
     outputs: [dist/release/listenbox-desktop, dist/release/FFmpeg-NOTICE.txt]
     options:
       os: [linux, macos]
       runInCI: false
   dmg:
     description: Package the production Apple Silicon desktop executable as a macOS DMG.
-    deps: [~:build-release]
+    deps: [client:updaters, ~:build-release]
     inputs: [project://client?group=notices, project://client?group=sources]
     script: |-
       set -euo pipefail
@@ -95,20 +104,20 @@ tasks:
       runInCI: false
   build-release-windows-x64:
     description: Build and package a Windows x64 release, also runnable through Windows 11 ARM emulation.
-    deps: [client:codegen, youtubejs:bundle, client:native-ffmpeg-windows-x64]
+    deps: [client:codegen, youtubejs:bundle, client:updaters, client:native-ffmpeg-windows-x64]
     command: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ../../tools/build-windows.ps1 -Architecture x64 -Stage Release
     inputs: ['@group(sources)', 'project://client?group=sources', 'project://client?group=notices']
-    outputs: [dist/windows-x64/**/*, dist/listenbox-desktop-windows-x64.exe, dist/listenbox-desktop-windows-x64.zip]
+    outputs: [dist/windows-x64/**/*]
     options:
       os: windows
       runInCI: false
       cache: false
   build-release-windows-arm64:
     description: Build and package a native Windows ARM64 release on Windows ARM64.
-    deps: [client:codegen, youtubejs:bundle, client:native-ffmpeg-windows-arm64]
+    deps: [client:codegen, youtubejs:bundle, client:updaters, client:native-ffmpeg-windows-arm64]
     command: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ../../tools/build-windows.ps1 -Architecture arm64 -Stage Release
     inputs: ['@group(sources)', 'project://client?group=sources', 'project://client?group=notices']
-    outputs: [dist/windows-arm64/**/*, dist/listenbox-desktop-windows-arm64.exe, dist/listenbox-desktop-windows-arm64.zip]
+    outputs: [dist/windows-arm64/**/*]
     options:
       os: windows
       runInCI: false
