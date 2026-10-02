@@ -206,7 +206,7 @@ Changes to fields or field types of live structs, startup code, and running asyn
 crates/cli/dist/listenbox --config config/dev.yaml shows list
 ```
 
-The desktop task runs independently of the parent `scripts/dev.ts` and never starts or stops the backend services. For a standalone client checkout, start those services separately on the configured addresses.
+The desktop task runs independently of the parent `root:dev` Moon task and never starts or stops the backend services. For a standalone client checkout, start those services separately on the configured addresses.
 
 ## Install
 
