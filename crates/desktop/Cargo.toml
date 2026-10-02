@@ -7,6 +7,7 @@ license.workspace = true
 [features]
 hot-reload = ["dep:dioxus-devtools"]
 native-updater = []
+profiling = ["gpui-kit/profiler", "dep:serde_json", "tokio/fs", "tokio/io-util"]
 
 [build-dependencies]
 cc = "1"
@@ -20,6 +21,7 @@ listenbox-sync-engine = { path = "../sync-engine" }
 gpui-kit = "=0.6.6"
 anyhow = "1"
 parking_lot = "0.12"
+serde_json = { version = "1", optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "signal", "sync", "time"] }
 tokio-util = "0.7"
 

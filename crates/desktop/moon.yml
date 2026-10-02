@@ -14,8 +14,39 @@ fileGroups:
     - src/**/*.rs
     - src/**/*.m
     - tests/**/*
+    - tools/**/*
     - Cargo.toml
 tasks:
+  build-profiled:
+    description: Build the optimized desktop with GPUI instrumentation and dSYM symbols.
+    deps: [client:prerequisites]
+    inputs: ['@group(sources)', 'project://client?group=sources']
+    command: bash tools/profile.sh build
+    outputs: [dist/profiled/listenbox-desktop, dist/profiled/listenbox-desktop.dSYM/**/*]
+    options:
+      os: macos
+      internal: true
+      runInCI: false
+  profiled:
+    description: Run the optimized desktop against local services with a frame-time overlay.
+    deps: [~:build-profiled]
+    preset: server
+    inputs: []
+    command: bash tools/profile.sh launch
+    options:
+      cache: false
+      interactive: true
+      runInCI: false
+      os: macos
+  profile:
+    description: Capture the profiled desktop; arguments are label, seconds, and cpu or metal.
+    inputs: []
+    command: bash tools/profile.sh capture
+    options:
+      cache: false
+      persistent: true
+      runInCI: false
+      os: macos
   dev-tools:
     description: Install the pinned Subsecond build and watch driver.
     command: cargo install --locked --root dist/dev-tools dioxus-cli --version 0.7.10
@@ -27,6 +58,7 @@ tasks:
     description: Hotpatch the running desktop UI with Subsecond against local Listenbox services.
     deps: [client:prerequisites, ~:dev-tools]
     preset: server
+    inputs: []
     env:
       RUST_BACKTRACE: '1'
     script: |-

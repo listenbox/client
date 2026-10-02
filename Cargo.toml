@@ -19,3 +19,9 @@ debug = 0
 [profile.release]
 strip = true
 lto = "thin"
+
+[profile.profiling]
+inherits = "release"
+debug = 1
+strip = false
+split-debuginfo = "packed"
