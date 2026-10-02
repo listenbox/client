@@ -36,6 +36,7 @@ pub struct Workspace {
     source_loading: bool,
     source_error: Option<String>,
     show_issues: bool,
+    episode_view: episodes::EpisodeList,
     client: Client,
     runtime: Arc<tokio::runtime::Runtime>,
     cancel: CancellationToken,
@@ -199,6 +200,7 @@ impl Workspace {
                 if view
                     .update(cx, |view, cx| {
                         view.progress = snapshot;
+                        view.episode_view.dirty = true;
                         cx.notify();
                     })
                     .is_err()
@@ -219,6 +221,7 @@ impl Workspace {
             source_loading: false,
             source_error: None,
             show_issues: false,
+            episode_view: episodes::EpisodeList::new(cx),
             client,
             runtime,
             lifetime: cancel.clone(),
@@ -394,6 +397,7 @@ impl Workspace {
         if self.stopping.is_some() && !matches!(message, Message::Drained(..)) {
             return;
         }
+        self.episode_view.dirty = true;
         match message {
             Message::CookieStatus(result) => {
                 self.cookie_busy = false;
@@ -630,6 +634,7 @@ impl Workspace {
 
     fn select(&mut self, slug: Option<String>, _window: &mut Window, cx: &mut Context<Self>) {
         self.selected = slug;
+        self.episode_view.reset();
         self.show_issues = false;
         self.settings_open = false;
         self.cookie_input = settings::cookie_input(_window, cx);
@@ -1169,6 +1174,68 @@ impl Render for Workspace {
 }
 
 impl Workspace {
+    fn content_header(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let t = Tokens::current(cx);
+        div()
+            .flex()
+            .flex_col()
+            .when_some(
+                self.error.clone().filter(|_| !self.settings_open),
+                |pane, error| {
+                    pane.child(
+                        div()
+                            .mb_4()
+                            .flex()
+                            .flex_col()
+                            .items_start()
+                            .gap_2()
+                            .child(div().text_color(t.danger).child(error.message))
+                            .when(error.youtube_sign_in, |notice| {
+                                notice.child(
+                                    Button::new("youtube-sign-in-settings")
+                                        .primary()
+                                        .label("Open YouTube settings")
+                                        .on_click(cx.listener(|view, _, window, cx| {
+                                            view.open_settings(window, cx)
+                                        })),
+                                )
+                            })
+                            .when_some(error.upgrade_url, |notice, url| {
+                                notice.child(
+                                    Button::new("upgrade-plan")
+                                        .ghost()
+                                        .icon(assets::IconName::ExternalLink)
+                                        .label("Upgrade plan")
+                                        .on_click(move |_, _, cx| cx.open_url(&url)),
+                                )
+                            }),
+                    )
+                },
+            )
+            .child(if self.settings_open {
+                self.settings(cx)
+            } else {
+                self.detail(window, cx)
+            })
+            .into_any_element()
+    }
+
+    fn content(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let pane = div().id("workspace-content").flex_1().min_h_0();
+        if self.loaded && !self.settings_open && !self.import_open && self.show().is_some() {
+            pane.overflow_hidden()
+                .child(self.episode_content(cx))
+                .test_support()
+                .into_any_element()
+        } else {
+            pane.overflow_y_scroll()
+                .p(px(tokens::SPACE))
+                .child(self.content_header(window, cx))
+                .test_support()
+                .into_any_element()
+        }
+    }
+
     // Keep the hotpatch boundary's return type independent of the element tree.
     fn render_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let t = Tokens::current(cx);
@@ -1293,59 +1360,7 @@ impl Workspace {
                                     ),
                             ),
                     )
-                    .child(
-                        div()
-                            .id("workspace-content")
-                            .flex_1()
-                            .min_h_0()
-                            .overflow_y_scroll()
-                            .p(px(tokens::SPACE))
-                            .when_some(
-                                self.error.clone().filter(|_| !self.settings_open),
-                                |pane, error| {
-                                    pane.child(
-                                        div()
-                                            .mb_4()
-                                            .flex()
-                                            .flex_col()
-                                            .items_start()
-                                            .gap_2()
-                                            .child(div().text_color(t.danger).child(error.message))
-                                            .when(error.youtube_sign_in, |notice| {
-                                                notice.child(
-                                                    Button::new("youtube-sign-in-settings")
-                                                        .primary()
-                                                        .label("Open YouTube settings")
-                                                        .on_click(cx.listener(
-                                                            |view, _, window, cx| {
-                                                                view.open_settings(window, cx)
-                                                            },
-                                                        )),
-                                                )
-                                            })
-                                            .when_some(error.upgrade_url, |notice, url| {
-                                                notice.child(
-                                                    Button::new("upgrade-plan")
-                                                        .ghost()
-                                                        .icon(assets::IconName::ExternalLink)
-                                                        .label("Upgrade plan")
-                                                        .on_click(move |_, _, cx| {
-                                                            cx.open_url(&url)
-                                                        }),
-                                                )
-                                            }),
-                                    )
-                                },
-                            )
-                            .child(if self.settings_open {
-                                self.settings(cx)
-                            } else {
-                                self.detail(window, cx)
-                            })
-                            .when(self.loaded && !self.settings_open, |pane| {
-                                pane.child(self.episode_list(cx))
-                            }),
-                    ),
+                    .child(self.content(window, cx)),
             )
             .when_some(quit_notice, |workspace, (instruction, opacity)| {
                 workspace.child(

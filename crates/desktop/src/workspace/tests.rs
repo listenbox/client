@@ -78,6 +78,216 @@ async fn live_server_direction(cx: &mut TestAppContext) {
 // checks do not silently substitute a fake API; the parent explicitly invokes it.
 #[gpui_kit::test]
 #[ignore = "requires the parent workspace's ephemeral Listenbox services"]
+async fn live_episode_scrolling(cx: &mut TestAppContext) {
+    let config = Config::load(None).unwrap();
+    let slug = std::fs::read_to_string(config.directory.join("test-scroll-slug")).unwrap();
+    let runtime = Arc::new(tokio::runtime::Runtime::new().unwrap());
+    let client = Client::desktop(config).unwrap();
+    let catalog = runtime
+        .block_on(client.catalog(CancellationToken::new()))
+        .unwrap();
+    let cancel = CancellationToken::new();
+    cx.update(gpui_kit::init);
+    cx.executor().allow_parking();
+    let mut workspace = None;
+    let handle = cx.open_window(size(px(840.), px(600.)), |window, cx| {
+        tokens::apply(window, cx);
+        let view = cx.new(|cx| {
+            let mut view = Workspace::new(
+                client,
+                runtime,
+                cancel.clone(),
+                TaskTracker::new(),
+                window,
+                cx,
+            );
+            for show in &catalog.shows {
+                view.reports
+                    .insert(show.slug.clone(), "Previous sync saved".into());
+            }
+            view.selected = Some(slug);
+            view
+        });
+        workspace = Some(view.clone());
+        Root::new(view, window, cx)
+    });
+    let workspace = workspace.unwrap();
+    wait_for(cx, &workspace, |view| {
+        view.loaded && !view.episode_loading && !view.source_loading
+    })
+    .await;
+    let first_page = cx.update(|cx| {
+        let view = workspace.read(cx);
+        assert_eq!(view.episodes.len(), 50);
+        assert!(view.episode_cursor.is_some());
+        assert!(view.jobs.is_empty(), "scrolling fixture started a sync");
+        view.episodes
+            .iter()
+            .map(|episode| episode.id.clone())
+            .collect::<Vec<_>>()
+    });
+    cx.update_window(handle.into(), |_, window, cx| {
+        let start = std::time::Instant::now();
+        for _ in 0..8 {
+            window.render_frame(cx);
+        }
+        eprintln!("episode scroll: eight initial frames {:?}", start.elapsed());
+        let rendered = first_page
+            .iter()
+            .filter(|id| {
+                window
+                    .try_find(SharedString::from(format!("episode-row-{id}")))
+                    .is_some()
+            })
+            .count();
+        eprintln!(
+            "episode scroll: {rendered} mounted rows of {}",
+            first_page.len()
+        );
+        assert!(rendered > 0, "no episode rows reached layout");
+        assert!(
+            rendered < 20,
+            "all {rendered} episode rows were laid out outside the viewport"
+        );
+        // Drive actual wheel input through the variable-height content, rather
+        // than setting the list's private offset or measuring every row first.
+        for _ in 0..12 {
+            window.scroll(
+                "workspace-content",
+                ScrollDelta::Pixels(point(px(0.), px(-1200.))),
+                cx,
+            );
+        }
+        window.render_frame(cx);
+        assert!(
+            window.find("more-episodes").visible(),
+            "pagination is unreachable"
+        );
+        let last = SharedString::from(format!("episode-row-{}", first_page.last().unwrap()));
+        assert!(
+            window.find(last).visible(),
+            "scrolling skipped the last loaded episode"
+        );
+        for _ in 0..16 {
+            window.focus_next(cx);
+            window.render_frame(cx);
+            if window.find("more-episodes").focused() == Some(true) {
+                break;
+            }
+        }
+        assert_eq!(
+            window.find("more-episodes").focused(),
+            Some(true),
+            "pagination is unreachable by keyboard"
+        );
+    })
+    .unwrap();
+    cx.update_window(handle.into(), |_, window, cx| {
+        let keystroke = Keystroke::parse("enter").unwrap();
+        window.dispatch_event(
+            KeyDownEvent {
+                keystroke: keystroke.clone(),
+                is_held: false,
+                prefer_character_input: false,
+            }
+            .to_platform_input(),
+            cx,
+        );
+        window.dispatch_event(KeyUpEvent { keystroke }.to_platform_input(), cx);
+        assert!(
+            workspace.read(cx).episode_loading,
+            "keyboard pagination was not admitted"
+        );
+    })
+    .unwrap();
+    wait_for(cx, &workspace, |view| !view.episode_loading).await;
+    let narrow_height = cx
+        .update_window(handle.into(), |_, window, cx| {
+            let view = workspace.read(cx);
+            assert_eq!(view.episodes.len(), 100, "pagination did not append");
+            assert_eq!(
+                view.episodes[..50]
+                    .iter()
+                    .map(|episode| &episode.id)
+                    .collect::<Vec<_>>(),
+                first_page.iter().collect::<Vec<_>>()
+            );
+            window.render_frame(cx);
+            let last = SharedString::from(format!("episode-row-{}", first_page.last().unwrap()));
+            assert!(
+                window.find(last).visible(),
+                "appending reset the reading position"
+            );
+            window.scroll(
+                "workspace-content",
+                ScrollDelta::Pixels(point(px(0.), px(100_000.))),
+                cx,
+            );
+            window.render_frame(cx);
+            assert!(window.find("filter-episodes").visible());
+            assert!(
+                window
+                    .find(SharedString::from(format!("episode-row-{}", first_page[0])))
+                    .visible()
+            );
+            // Establish focus on an enabled control: pagination is temporarily
+            // disabled while its request is in flight and relinquishes focus.
+            for _ in 0..16 {
+                window.focus_next(cx);
+                window.render_frame(cx);
+                if window.find("filter-episodes").focused() == Some(true) {
+                    break;
+                }
+            }
+            assert_eq!(window.find("filter-episodes").focused(), Some(true));
+            for _ in 0..12 {
+                window.scroll(
+                    "workspace-content",
+                    ScrollDelta::Pixels(point(px(0.), px(-1200.))),
+                    cx,
+                );
+            }
+            assert_eq!(
+                window.find("filter-episodes").focused(),
+                Some(true),
+                "scrolling dropped filter keyboard focus"
+            );
+            assert!(
+                !window.find("filter-episodes").visible(),
+                "focused header was never scrolled out of view"
+            );
+            window.scroll(
+                "workspace-content",
+                ScrollDelta::Pixels(point(px(0.), px(100_000.))),
+                cx,
+            );
+            window
+                .find(SharedString::from(format!("episode-row-{}", first_page[0])))
+                .bounds()
+                .size
+                .height
+        })
+        .unwrap();
+    cx.simulate_window_resize(handle.into(), size(px(1080.), px(760.)));
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let first = window.find(SharedString::from(format!("episode-row-{}", first_page[0])));
+        assert!(first.visible(), "resize hid the first episode");
+        assert!(
+            first.bounds().size.height < narrow_height,
+            "wrapped row did not remeasure after widening the window"
+        );
+        assert!(
+            first.bounds().right() <= window.find("workspace-content").bounds().right(),
+            "wrapped title overflowed after resize"
+        );
+    })
+    .unwrap();
+    cancel.cancel();
+}
+
+#[gpui_kit::test]
+#[ignore = "requires the parent workspace's ephemeral Listenbox services"]
 async fn live_not_imported(cx: &mut TestAppContext) {
     let config = Config::load(None).unwrap();
     let fixture: serde_json::Value = serde_json::from_slice(
