@@ -307,10 +307,16 @@ impl<'js> FromJs<'js> for Microformat {
     }
 }
 
+model!(AudioTrack {
+    audio_is_default: bool,
+    display_name: String,
+    id: String
+});
+
 model!(FormatInfo {
     itag: u32, url: Option<String>, cipher: Option<String>, signature_cipher: Option<String>,
     content_length: Option<f64>, mime_type: String, bitrate: f64,
-    has_audio: bool, has_video: bool, height: Option<f64>, is_type_otf: bool, drm_families: Option<Vec<String>>,
+    audio_track: Option<AudioTrack>, has_audio: bool, has_video: bool, height: Option<f64>, is_type_otf: bool, drm_families: Option<Vec<String>>,
 });
 
 /// ObservedArray is a Proxy: QuickJS's native Array conversion rejects it.
