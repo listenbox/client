@@ -85,6 +85,7 @@ echo "Capture: $capture"
 echo "Reproduce $label in the desktop when xctrace says Starting recording ($seconds seconds)."
 xcrun xctrace record --template "$template" --attach "$pid" --time-limit "${seconds}s" \
   --output "$capture/recording.trace" --no-prompt
+trap 'printf "\nTrace written: %s\n" "$capture/recording.trace"' EXIT
 xcrun xctrace symbolicate --input "$capture/recording.trace" --dsym "$session/listenbox-desktop.dSYM"
 xcrun xctrace export --input "$capture/recording.trace" --toc --output "$capture/toc.xml"
 

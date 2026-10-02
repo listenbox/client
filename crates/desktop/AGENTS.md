@@ -25,6 +25,8 @@
   - `moon run desktop:profile -- resize 10 metal` — Metal System Trace.
   Start the interaction when xctrace prints `Starting recording`; keep the
   app foreground. Arguments are a short label, 1–99 seconds, and `cpu` or `metal`.
+  After recording succeeds, the task ends with `Trace written: <absolute path>`;
+  it also prints that path if a later export or capture validation fails.
 - All output is ignored by Git under `crates/desktop/dist/profiles/`:
   - `sessions/<timestamp>.<unique>/gpui.jsonl` holds the live recording; the
     same session retains its dSYM so later builds cannot change its symbols.
