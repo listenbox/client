@@ -1,5 +1,8 @@
 # Rust client
 
+- Repository and submodule fetch/push remotes and `.gitmodules` URLs use SSH.
+  GitHub Actions checkout may use HTTPS.
+
 - Run `shellcheck` on every shell script you create or change. `moon run client:lint`
   checks the client's shell scripts with the installed ShellCheck binary.
 
@@ -24,6 +27,13 @@
   with `aube node scripts/spaniel.ts <trace-id>`.
 - Verify shared behavior through the parent repository's integrated API E2E
   targets; build the desktop with `moon run desktop:build`.
+
+## Releases
+
+- Manually bump `[workspace.package].version` in `Cargo.toml`, run `cargo update --workspace`,
+  commit/merge, then tag that client commit `vX.Y.Z` and push that specific tag.
+- Approve `desktop-release` jobs; Actions publishes all desktop installers and
+  update feeds together. Branch/PR builds never publish releases.
 
 ## YouTube.js fork and upstream fixes
 

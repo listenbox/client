@@ -141,6 +141,7 @@ impl ErrorNotice {
 pub enum Shutdown {
     Quit,
     Logout,
+    Update,
 }
 
 enum Message {
@@ -263,7 +264,10 @@ impl Workspace {
     }
 
     pub fn shutdown(&mut self, mode: Shutdown, cx: &mut Context<Self>) {
-        if self.stopping.is_some() {
+        if let Some(stopping) = &mut self.stopping {
+            if mode == Shutdown::Update {
+                *stopping = mode;
+            }
             return;
         }
         self.stopping = Some(mode);
@@ -417,8 +421,13 @@ impl Workspace {
                 }
             }
             Message::Drained(mode, result) => {
+                let mode = self.stopping.unwrap_or(mode);
+                if mode == Shutdown::Update {
+                    crate::updater::drained(cx);
+                    return;
+                }
                 if mode == Shutdown::Quit {
-                    cx.quit();
+                    crate::updater::quit(cx);
                     return;
                 }
                 self.cancel = self.lifetime.child_token();

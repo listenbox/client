@@ -9,6 +9,7 @@ mod hot_reload;
 mod platform;
 mod quit;
 mod tokens;
+mod updater;
 mod workspace;
 
 use gpui_kit::component::Root;
@@ -30,10 +31,20 @@ fn main() -> anyhow::Result<()> {
             println!("Listenbox desktop\nUsage: listenbox-desktop [--config PATH]");
             return Ok(());
         }
+        Some(flag) if flag == "--version" => {
+            println!(
+                "Listenbox {} ({})",
+                env!("CARGO_PKG_VERSION"),
+                env!("LISTENBOX_SOURCE_COMMIT")
+            );
+            return Ok(());
+        }
         Some(_) => anyhow::bail!("Usage: listenbox-desktop [--config PATH]"),
         None => None,
     };
     anyhow::ensure!(args.next().is_none(), "Unexpected desktop argument");
+    #[cfg(target_os = "windows")]
+    let _installation_lock = platform::InstallationLock::new()?;
     let config = Config::load(explicit.as_deref())?;
     if cfg!(debug_assertions) {
         eprintln!("Listenbox desktop profile: {}", config.directory.display());
@@ -107,6 +118,7 @@ fn main() -> anyhow::Result<()> {
     drain.close();
     // Also cover OS termination paths: GPUI bounds its own quit observers.
     runtime.block_on(drain.wait());
+    updater::cleanup();
     Ok(())
 }
 

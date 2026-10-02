@@ -8,11 +8,12 @@ fileGroups:
     - youtubejs/tsconfig.json
     - aube-workspace.yaml
     - aube-lock.yaml
+    - package.json
     - moon.yml
 tasks:
   install:
-    command: aube -C youtubejs install --frozen-lockfile --ignore-scripts
-    inputs: [youtubejs/package.json, aube-workspace.yaml, aube-lock.yaml]
+    command: aube install --frozen-lockfile --ignore-scripts
+    inputs: [package.json, youtubejs/package.json, aube-workspace.yaml, aube-lock.yaml]
     options:
       cache: false
       internal: true
@@ -25,5 +26,5 @@ tasks:
       cache: false
   test:
     deps: [~:bundle]
-    command: aube -C youtubejs exec --no-install vitest run --root .. --globals --testTimeout 30000 tests/youtubejs.test.js
+    command: aube exec --no-install vitest run --globals --testTimeout 30000 tests/youtubejs.test.js
     inputs: ['@group(sources)', tests/youtubejs.test.js]

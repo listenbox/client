@@ -7,6 +7,66 @@ use resvg::{tiny_skia, usvg};
 use std::{env, error::Error, fs, path::Path};
 
 fn main() -> Result<(), Box<dyn Error>> {
+    println!("cargo:rustc-check-cfg=cfg(listenbox_updater)");
+    println!("cargo:rerun-if-env-changed=LISTENBOX_UPDATE_PUBLIC_KEY");
+    println!("cargo:rerun-if-changed=src/updater/macos.m");
+    println!("cargo:rerun-if-env-changed=LISTENBOX_SOURCE_COMMIT");
+    let commit = env::var("LISTENBOX_SOURCE_COMMIT").unwrap_or_else(|_| {
+        std::process::Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .and_then(|output| String::from_utf8(output.stdout).ok())
+            .unwrap_or_else(|| "development".into())
+            .trim()
+            .to_owned()
+    });
+    println!("cargo:rustc-env=LISTENBOX_SOURCE_COMMIT={commit}");
+    if env::var_os("CARGO_FEATURE_NATIVE_UPDATER").is_some()
+        && env::var("PROFILE")? == "release"
+        && matches!(
+            env::var("CARGO_CFG_TARGET_OS")?.as_str(),
+            "macos" | "windows"
+        )
+    {
+        let key = env::var("LISTENBOX_UPDATE_PUBLIC_KEY")?;
+        if key.len() != 44
+            || !key.ends_with('=')
+            || !key[..43]
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"+/".contains(&b))
+        {
+            return Err("A base64-encoded 32-byte Ed25519 public key is required".into());
+        }
+        println!("cargo:rustc-cfg=listenbox_updater");
+        let root = Path::new(&env::var("CARGO_MANIFEST_DIR")?).join("../../.cache/updaters");
+        let platform = if env::var("CARGO_CFG_TARGET_OS")? == "macos" {
+            cc::Build::new()
+                .file("src/updater/macos.m")
+                .flag("-fobjc-arc")
+                .flag("-fblocks")
+                .flag(format!("-F{}", root.display()))
+                .compile("listenbox-updater");
+            println!("cargo:rustc-link-search=framework={}", root.display());
+            println!("cargo:rustc-link-lib=framework=Sparkle");
+            println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path/../Frameworks");
+            "macos-arm64"
+        } else {
+            let arm = env::var("CARGO_CFG_TARGET_ARCH")? == "aarch64";
+            let architecture = if arm { "ARM64" } else { "x64" };
+            println!(
+                "cargo:rustc-link-search=native={}",
+                root.join("WinSparkle-0.9.4")
+                    .join(architecture)
+                    .join("Release")
+                    .display()
+            );
+            if arm { "windows-arm64" } else { "windows-x64" }
+        };
+        println!("cargo:rustc-env=LISTENBOX_UPDATE_PLATFORM={platform}");
+        println!("cargo:rustc-env=LISTENBOX_UPDATE_PUBLIC_KEY={key}");
+    }
     println!("cargo:rerun-if-changed=assets/icon.png");
     println!("cargo:rerun-if-changed=assets/tray.svg");
     if cfg!(feature = "hot-reload") && env::var("CARGO_CFG_TARGET_OS")? == "macos" {
@@ -31,7 +91,37 @@ fn main() -> Result<(), Box<dyn Error>> {
         // GPUI loads resource 1 for its window/taskbar icon. Explorer uses the
         // same resource from the executable, including standalone downloads.
         let resource = out.join("icon.rc");
-        fs::write(&resource, "1 ICON \"icon.ico\"\n")?;
+        let version = env::var("CARGO_PKG_VERSION")?;
+        let numeric = format!("{},0", version.replace('.', ","));
+        fs::write(
+            &resource,
+            format!(
+                r#"1 ICON "icon.ico"
+1 VERSIONINFO
+FILEVERSION {numeric}
+PRODUCTVERSION {numeric}
+FILEOS 0x40004L
+FILETYPE 1
+BEGIN
+ BLOCK "StringFileInfo"
+ BEGIN
+  BLOCK "040904B0"
+  BEGIN
+   VALUE "CompanyName", "Listenbox"
+   VALUE "ProductName", "Listenbox"
+   VALUE "ProductVersion", "{version}"
+   VALUE "FileVersion", "{version}.0"
+   VALUE "Comments", "Source commit: {commit}"
+  END
+ END
+ BLOCK "VarFileInfo"
+ BEGIN
+  VALUE "Translation", 0x409, 1200
+ END
+END
+"#
+            ),
+        )?;
         embed_resource::compile_for(
             &resource,
             ["listenbox-desktop"],

@@ -6,8 +6,10 @@ license.workspace = true
 
 [features]
 hot-reload = ["dep:dioxus-devtools"]
+native-updater = []
 
 [build-dependencies]
+cc = "1"
 embed-resource = "3"
 image = { version = "0.25", default-features = false, features = ["ico", "png"] }
 resvg = { version = "0.46", default-features = false }
@@ -26,7 +28,7 @@ tray-icon = { version = "=0.25.1", default-features = false }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 raw-window-handle = "0.6"
-windows-sys = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging", "Win32_System_Threading", "Win32_Security"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

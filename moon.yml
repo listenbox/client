@@ -15,6 +15,9 @@ fileGroups:
     - crates/**/tests/**/*
     - tools/**/*.rs
     - tools/**/*.ps1
+    - tools/**/*.mjs
+    - tools/**/*.iss
+    - crates/desktop/src/**/*.m
     - crates/desktop/assets/**/*
     - Cargo.toml
     - Cargo.lock
@@ -30,10 +33,31 @@ fileGroups:
     - vendor/youtubejs/tsconfig.json
     - vendor/aube-workspace.yaml
     - vendor/aube-lock.yaml
+    - vendor/package.json
     - vendor/moon.yml
 taskOptions:
   cache: true
 tasks:
+  updaters:
+    description: Download and verify pinned native updater frameworks and licenses.
+    command: node tools/updaters.mjs
+    inputs: [tools/updaters.mjs]
+    outputs: [.cache/updaters/**/*]
+    options:
+      os: [macos, windows]
+      runInCI: false
+  release-validate:
+    command: node tools/release.mjs validate
+    inputs: [tools/release.mjs, Cargo.toml]
+    options:
+      cache: false
+  release-publish:
+    description: Verify and atomically promote the complete signed stable release.
+    command: node tools/release.mjs publish artifacts
+    inputs: []
+    options:
+      cache: false
+      runInCI: false
   native-ffmpeg:
     inputs: [tools/native-ffmpeg.rs, rust-toolchain.toml]
     script: |-

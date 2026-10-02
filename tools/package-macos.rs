@@ -39,6 +39,23 @@ fn main() -> Result<(), Box<dyn Error>> {
     {
         return Err("invalid version".into());
     }
+    let production = env::var("LISTENBOX_PRODUCTION_RELEASE").as_deref() == Ok("1");
+    let updater_key = if production {
+        env::var("LISTENBOX_UPDATE_PUBLIC_KEY")?
+    } else {
+        String::new()
+    };
+    let updater_metadata = if production {
+        format!(
+            r#"<key>SUFeedURL</key><string>https://github.com/listenbox/client/releases/latest/download/appcast-macos-arm64.xml</string>
+<key>SUPublicEDKey</key><string>{updater_key}</string>
+<key>SUEnableAutomaticChecks</key><true/>
+<key>SUAutomaticallyUpdate</key><false/>
+<key>SUUpdateCheckInterval</key><integer>86400</integer>"#
+        )
+    } else {
+        String::new()
+    };
     let dist = Path::new("crates/desktop/dist/macos");
     let binary = Path::new("crates/desktop/dist/release/listenbox-desktop");
     require_arm64(binary)?;
@@ -50,6 +67,28 @@ fn main() -> Result<(), Box<dyn Error>> {
     fs::create_dir_all(contents.join("MacOS"))?;
     fs::create_dir_all(contents.join("Resources"))?;
     fs::copy(binary, contents.join("MacOS/listenbox-desktop"))?;
+    if production {
+        fs::create_dir_all(contents.join("Frameworks"))?;
+        run(Command::new("ditto")
+            .arg(".cache/updaters/Sparkle.framework")
+            .arg(contents.join("Frameworks/Sparkle.framework")))?;
+        fs::copy(
+            ".cache/updaters/LICENSE",
+            contents.join("Resources/Sparkle-LICENSE.txt"),
+        )?;
+    }
+    let mut provenance = Command::new(contents.join("MacOS/listenbox-desktop"));
+    provenance.arg("--version");
+    let output = provenance.output()?;
+    let expected = format!(
+        "Listenbox {version} ({})",
+        env::var("LISTENBOX_SOURCE_COMMIT").unwrap_or_default()
+    );
+    if production
+        && (!output.status.success() || String::from_utf8(output.stdout)?.trim() != expected)
+    {
+        return Err("Packaged executable disagrees with release version/source commit".into());
+    }
     fs::copy(
         "crates/desktop/assets/icon.png",
         contents.join("Resources/icon.png"),
@@ -81,7 +120,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 <key>LSMinimumSystemVersion</key><string>13.0</string>
 <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
 <key>NSHighResolutionCapable</key><true/>
-</dict></plist>"#
+{updater_metadata}
+<key>ListenboxSourceCommit</key><string>{}</string>
+</dict></plist>"#,
+            env::var("LISTENBOX_SOURCE_COMMIT").unwrap_or_default()
         ),
     )?;
     run(Command::new("plutil")
@@ -90,7 +132,35 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Ad-hoc signing makes local arm64 bundles executable. Distribution signing
     // is explicit: a Developer ID identity may be supplied by the release job.
     let identity = env::var("LISTENBOX_SIGNING_IDENTITY").unwrap_or_else(|_| "-".into());
+    if production && !identity.starts_with("Developer ID Application: ") {
+        return Err("Production packaging requires a Developer ID Application identity".into());
+    }
     let app = staging.join("Listenbox.app");
+    if production {
+        let framework = contents.join("Frameworks/Sparkle.framework");
+        for nested in [
+            "Versions/B/XPCServices/Installer.xpc",
+            "Versions/B/XPCServices/Downloader.xpc",
+            "Versions/B/Autoupdate",
+            "Versions/B/Updater.app",
+            "",
+        ] {
+            let target = framework.join(nested);
+            let mut command = Command::new("codesign");
+            command.args([
+                "--force",
+                "--sign",
+                &identity,
+                "--options",
+                "runtime",
+                "--timestamp",
+            ]);
+            if nested.contains("Downloader.xpc") {
+                command.arg("--preserve-metadata=entitlements");
+            }
+            run(command.arg(target))?;
+        }
+    }
     let mut signing = Command::new("codesign");
     signing.args(["--force", "--sign", &identity]);
     if identity != "-" {
@@ -98,8 +168,24 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     run(signing.arg(&app))?;
     run(Command::new("codesign")
-        .args(["--verify", "--strict"])
+        .args(["--verify", "--deep", "--strict"])
         .arg(&app))?;
+    if production {
+        let zip = dist.join("notarization.zip");
+        run(Command::new("ditto")
+            .args(["-c", "-k", "--keepParent"])
+            .arg(&app)
+            .arg(&zip))?;
+        notarize(&zip)?;
+        fs::remove_file(zip)?;
+        run(Command::new("xcrun").args(["stapler", "staple"]).arg(&app))?;
+        run(Command::new("xcrun")
+            .args(["stapler", "validate"])
+            .arg(&app))?;
+        run(Command::new("spctl")
+            .args(["--assess", "--type", "execute", "--verbose=2"])
+            .arg(&app))?;
+    }
     #[cfg(unix)]
     std::os::unix::fs::symlink("/Applications", staging.join("Applications"))?;
     let dmg = dist.join(format!("Listenbox-{version}-macos-arm64.dmg"));
@@ -109,6 +195,56 @@ fn main() -> Result<(), Box<dyn Error>> {
         .args(["-ov", "-format", "UDZO"])
         .arg(&dmg))?;
     run(Command::new("hdiutil").arg("verify").arg(&dmg))?;
+    if production {
+        run(Command::new("codesign")
+            .args(["--force", "--sign", &identity, "--timestamp"])
+            .arg(&dmg))?;
+        notarize(&dmg)?;
+        run(Command::new("xcrun").args(["stapler", "staple"]).arg(&dmg))?;
+        run(Command::new("xcrun")
+            .args(["stapler", "validate"])
+            .arg(&dmg))?;
+        run(Command::new("codesign")
+            .args(["--verify", "--strict"])
+            .arg(&dmg))?;
+    }
     println!("{}", dmg.display());
+    Ok(())
+}
+
+fn notarize(path: &Path) -> Result<(), Box<dyn Error>> {
+    let output = Command::new("xcrun")
+        .args(["notarytool", "submit"])
+        .arg(path)
+        .arg("--key")
+        .arg(env::var("LISTENBOX_NOTARY_KEY")?)
+        .arg("--key-id")
+        .arg(env::var("MACOS_NOTARY_KEY_ID")?)
+        .arg("--issuer")
+        .arg(env::var("MACOS_NOTARY_ISSUER_ID")?)
+        .args(["--wait", "--output-format", "json"])
+        .output()?;
+    let receipt = path.with_extension("notary.json");
+    fs::write(&receipt, &output.stdout)?;
+    if !output.status.success() {
+        eprint!("{}", String::from_utf8_lossy(&output.stderr));
+        return Err(format!(
+            "Notarization submission failed; receipt: {}",
+            receipt.display()
+        )
+        .into());
+    }
+    let status = Command::new("plutil")
+        .args(["-extract", "status", "raw", "-o", "-"])
+        .arg(&receipt)
+        .output()?;
+    if !status.status.success() || String::from_utf8(status.stdout)?.trim() != "Accepted" {
+        return Err(format!(
+            "Apple did not accept notarization; receipt: {}",
+            receipt.display()
+        )
+        .into());
+    }
+    println!("Notarization accepted: {}", path.display());
     Ok(())
 }

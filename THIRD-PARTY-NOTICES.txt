@@ -318,3 +318,12 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 Adaptive download manager: adapted from meoyawn/mazit (MIT).
+
+Native desktop updater dependencies:
+
+Sparkle 2.10.0 (https://github.com/sparkle-project/Sparkle), MIT license.
+The packaged macOS app contains Sparkle-LICENSE.txt and the framework's notices.
+WinSparkle 0.9.4 (https://github.com/vslavik/winsparkle), MIT license.
+Windows installers contain WinSparkle-LICENSE.txt and WinSparkle-expat-LICENSE.txt.
+The official archives, including their bundled dependencies, are SHA-256 pinned
+in tools/updaters.mjs.
