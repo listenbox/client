@@ -363,6 +363,7 @@ pub enum CompleteEpisodePackageResponse {
     Status400(ValidationErr),
     Status401(()),
     Status409(()),
+    Status423(YouTubeSyncStopped),
     Unexpected(reqwest::Response),
 }
 impl Response for CompleteEpisodePackageResponse {
@@ -372,6 +373,7 @@ impl Response for CompleteEpisodePackageResponse {
             400 => Self::Status400(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             401 => Self::Status401(()),
             409 => Self::Status409(()),
+            423 => Self::Status423(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             _ => Self::Unexpected(response),
         })
     }
@@ -381,6 +383,7 @@ impl Response for CompleteEpisodePackageResponse {
             Self::Status400(_) => 400,
             Self::Status401(_) => 401,
             Self::Status409(_) => 409,
+            Self::Status423(_) => 423,
             Self::Unexpected(response) => response.status().as_u16(),
         }
     }
@@ -391,6 +394,7 @@ impl Response for CompleteEpisodePackageResponse {
             Self::Status400(body) => serde_json::to_vec(&body).map_err(Error::Decode),
             Self::Status401(_) => Ok(Vec::new()),
             Self::Status409(_) => Ok(Vec::new()),
+            Self::Status423(body) => serde_json::to_vec(&body).map_err(Error::Decode),
             Self::Unexpected(response) => read_body(response, 64 << 10).await,
         };
         match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
@@ -656,6 +660,8 @@ pub struct CreateEpisodePackage {
     pub source_url: std::string::String,
     #[serde(rename = "title")]
     pub title: std::string::String,
+    #[serde(rename = "youtube_url")]
+    pub youtube_url: std::string::String,
 }
 
 #[derive(Clone, Debug)]
@@ -671,6 +677,7 @@ pub enum CreateEpisodePackageResponse {
     Status402(VideoAdmissionError),
     Status404(()),
     Status409(()),
+    Status423(YouTubeSyncStopped),
     Unexpected(reqwest::Response),
 }
 impl Response for CreateEpisodePackageResponse {
@@ -682,6 +689,7 @@ impl Response for CreateEpisodePackageResponse {
             402 => Self::Status402(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             404 => Self::Status404(()),
             409 => Self::Status409(()),
+            423 => Self::Status423(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             _ => Self::Unexpected(response),
         })
     }
@@ -693,6 +701,7 @@ impl Response for CreateEpisodePackageResponse {
             Self::Status402(_) => 402,
             Self::Status404(_) => 404,
             Self::Status409(_) => 409,
+            Self::Status423(_) => 423,
             Self::Unexpected(response) => response.status().as_u16(),
         }
     }
@@ -705,6 +714,7 @@ impl Response for CreateEpisodePackageResponse {
             Self::Status402(body) => serde_json::to_vec(&body).map_err(Error::Decode),
             Self::Status404(_) => Ok(Vec::new()),
             Self::Status409(_) => Ok(Vec::new()),
+            Self::Status423(body) => serde_json::to_vec(&body).map_err(Error::Decode),
             Self::Unexpected(response) => read_body(response, 64 << 10).await,
         };
         match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
@@ -882,8 +892,8 @@ pub struct CreateShow {
     pub source_kind: ShowSourceKind,
     #[serde(rename = "title")]
     pub title: NonEmptyString,
-    #[serde(rename = "youtube_source_url", default, skip_serializing_if = "Option::is_none")]
-    pub youtube_source_url: std::option::Option<std::string::String>,
+    #[serde(rename = "youtube_url", default, skip_serializing_if = "Option::is_none")]
+    pub youtube_url: std::option::Option<std::string::String>,
 }
 
 #[derive(Clone, Debug)]
@@ -1055,6 +1065,7 @@ impl Response for CreateShowResponse {
 pub struct CreateSyncEpisodeDeletionParams {
     pub show_slug: ShowSlug,
     pub episode_id: EpisodeID,
+    pub youtube_url: std::string::String,
 }
 
 #[derive(Debug)]
@@ -1066,6 +1077,7 @@ pub enum CreateSyncEpisodeDeletionResponse {
     Status403(()),
     Status404(()),
     Status409(()),
+    Status423(YouTubeSyncStopped),
     Unexpected(reqwest::Response),
 }
 impl Response for CreateSyncEpisodeDeletionResponse {
@@ -1078,6 +1090,7 @@ impl Response for CreateSyncEpisodeDeletionResponse {
             403 => Self::Status403(()),
             404 => Self::Status404(()),
             409 => Self::Status409(()),
+            423 => Self::Status423(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             _ => Self::Unexpected(response),
         })
     }
@@ -1090,6 +1103,7 @@ impl Response for CreateSyncEpisodeDeletionResponse {
             Self::Status403(_) => 403,
             Self::Status404(_) => 404,
             Self::Status409(_) => 409,
+            Self::Status423(_) => 423,
             Self::Unexpected(response) => response.status().as_u16(),
         }
     }
@@ -1103,6 +1117,7 @@ impl Response for CreateSyncEpisodeDeletionResponse {
             Self::Status403(_) => Ok(Vec::new()),
             Self::Status404(_) => Ok(Vec::new()),
             Self::Status409(_) => Ok(Vec::new()),
+            Self::Status423(body) => serde_json::to_vec(&body).map_err(Error::Decode),
             Self::Unexpected(response) => read_body(response, 64 << 10).await,
         };
         match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
@@ -1543,6 +1558,8 @@ pub struct EpisodeListItem {
     pub title: NonEmptyString,
     #[serde(rename = "video_hls_url", default, skip_serializing_if = "Option::is_none")]
     pub video_hls_url: std::option::Option<std::string::String>,
+    #[serde(rename = "youtube_url", default, skip_serializing_if = "Option::is_none")]
+    pub youtube_url: std::option::Option<std::string::String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -2081,6 +2098,7 @@ pub enum GetSyncInventoryResponse {
     Status402(()),
     Status403(()),
     Status404(()),
+    Status423(YouTubeSyncStopped),
     Unexpected(reqwest::Response),
 }
 impl Response for GetSyncInventoryResponse {
@@ -2092,6 +2110,7 @@ impl Response for GetSyncInventoryResponse {
             402 => Self::Status402(()),
             403 => Self::Status403(()),
             404 => Self::Status404(()),
+            423 => Self::Status423(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             _ => Self::Unexpected(response),
         })
     }
@@ -2103,6 +2122,7 @@ impl Response for GetSyncInventoryResponse {
             Self::Status402(_) => 402,
             Self::Status403(_) => 403,
             Self::Status404(_) => 404,
+            Self::Status423(_) => 423,
             Self::Unexpected(response) => response.status().as_u16(),
         }
     }
@@ -2115,6 +2135,7 @@ impl Response for GetSyncInventoryResponse {
             Self::Status402(_) => Ok(Vec::new()),
             Self::Status403(_) => Ok(Vec::new()),
             Self::Status404(_) => Ok(Vec::new()),
+            Self::Status423(body) => serde_json::to_vec(&body).map_err(Error::Decode),
             Self::Unexpected(response) => read_body(response, 64 << 10).await,
         };
         match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
@@ -2466,6 +2487,11 @@ impl Response for ListShowMembersResponse {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct ListShowsParams {
+    pub youtube_imports_only: std::option::Option<bool>,
+}
+
 #[derive(Debug)]
 pub enum ListShowsResponse {
     Status200(std::vec::Vec<Show>),
@@ -2663,6 +2689,7 @@ pub enum PresignEpisodePackagePartsResponse {
     Status400(ValidationErr),
     Status401(()),
     Status409(()),
+    Status423(YouTubeSyncStopped),
     Unexpected(reqwest::Response),
 }
 impl Response for PresignEpisodePackagePartsResponse {
@@ -2672,6 +2699,7 @@ impl Response for PresignEpisodePackagePartsResponse {
             400 => Self::Status400(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             401 => Self::Status401(()),
             409 => Self::Status409(()),
+            423 => Self::Status423(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             _ => Self::Unexpected(response),
         })
     }
@@ -2681,6 +2709,7 @@ impl Response for PresignEpisodePackagePartsResponse {
             Self::Status400(_) => 400,
             Self::Status401(_) => 401,
             Self::Status409(_) => 409,
+            Self::Status423(_) => 423,
             Self::Unexpected(response) => response.status().as_u16(),
         }
     }
@@ -2691,6 +2720,7 @@ impl Response for PresignEpisodePackagePartsResponse {
             Self::Status400(body) => serde_json::to_vec(&body).map_err(Error::Decode),
             Self::Status401(_) => Ok(Vec::new()),
             Self::Status409(_) => Ok(Vec::new()),
+            Self::Status423(body) => serde_json::to_vec(&body).map_err(Error::Decode),
             Self::Unexpected(response) => read_body(response, 64 << 10).await,
         };
         match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
@@ -3251,6 +3281,8 @@ pub type SHA256Hex = std::string::String;
 pub struct SetEpisodeOrder {
     #[serde(rename = "episode_ids")]
     pub episode_ids: std::vec::Vec<EpisodeID>,
+    #[serde(rename = "youtube_url", default, skip_serializing_if = "Option::is_none")]
+    pub youtube_url: std::option::Option<std::string::String>,
 }
 
 #[derive(Clone, Debug)]
@@ -3268,6 +3300,7 @@ pub enum SetEpisodeOrderResponse {
     Status403(()),
     Status404(()),
     Status409(()),
+    Status423(YouTubeSyncStopped),
     Unexpected(reqwest::Response),
 }
 impl Response for SetEpisodeOrderResponse {
@@ -3280,6 +3313,7 @@ impl Response for SetEpisodeOrderResponse {
             403 => Self::Status403(()),
             404 => Self::Status404(()),
             409 => Self::Status409(()),
+            423 => Self::Status423(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             _ => Self::Unexpected(response),
         })
     }
@@ -3292,6 +3326,7 @@ impl Response for SetEpisodeOrderResponse {
             Self::Status403(_) => 403,
             Self::Status404(_) => 404,
             Self::Status409(_) => 409,
+            Self::Status423(_) => 423,
             Self::Unexpected(response) => response.status().as_u16(),
         }
     }
@@ -3305,6 +3340,7 @@ impl Response for SetEpisodeOrderResponse {
             Self::Status403(_) => Ok(Vec::new()),
             Self::Status404(_) => Ok(Vec::new()),
             Self::Status409(_) => Ok(Vec::new()),
+            Self::Status423(body) => serde_json::to_vec(&body).map_err(Error::Decode),
             Self::Unexpected(response) => read_body(response, 64 << 10).await,
         };
         match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
@@ -3331,7 +3367,7 @@ pub struct Show {
     #[serde(rename = "title")]
     pub title: NonEmptyString,
     #[serde(rename = "youtube")]
-    pub youtube: YouTubeConnection,
+    pub youtube: YouTubeLinkage,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -3607,6 +3643,8 @@ pub type String = std::string::String;
 pub struct SyncEpisode {
     #[serde(rename = "id")]
     pub id: EpisodeID,
+    #[serde(rename = "imported")]
+    pub imported: bool,
     #[serde(rename = "position", default, skip_serializing_if = "Option::is_none")]
     pub position: std::option::Option<i64>,
     #[serde(rename = "source_url")]
@@ -4082,61 +4120,38 @@ impl Response for WhoamiResponse {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(tag = "kind", deny_unknown_fields)]
-pub enum YouTubeConnection {
-    #[serde(rename = "none")]
-    None {
-    },
-    #[serde(rename = "import")]
-    Import {
-        #[serde(rename = "source_url")]
-        source_url: std::string::String,
-    },
-    #[serde(rename = "destination")]
-    Destination {
-    },
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct YouTubeDestination {
-    #[serde(rename = "kind")]
-    pub kind: YouTubeDestinationKind,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum YouTubeDestinationKind {
-    #[serde(rename = "destination")]
-    Destination,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct YouTubeImport {
-    #[serde(rename = "kind")]
-    pub kind: YouTubeImportKind,
-    #[serde(rename = "source_url")]
-    pub source_url: std::string::String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum YouTubeImportKind {
-    #[serde(rename = "import")]
-    Import,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct YouTubeNone {
-    #[serde(rename = "kind")]
-    pub kind: YouTubeNoneKind,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum YouTubeNoneKind {
+pub enum YouTubeDestinationStatus {
     #[serde(rename = "none")]
     None,
+    #[serde(rename = "active")]
+    Active,
+    #[serde(rename = "paused")]
+    Paused,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct YouTubeLinkage {
+    #[serde(rename = "destination_status")]
+    pub destination_status: YouTubeDestinationStatus,
+    #[serde(rename = "url", default, skip_serializing_if = "Option::is_none")]
+    pub url: std::option::Option<std::string::String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct YouTubeSyncStopped {
+    #[serde(rename = "code")]
+    pub code: YouTubeSyncStoppedCode,
+    #[serde(rename = "message")]
+    pub message: NonEmptyString,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum YouTubeSyncStoppedCode {
+    #[serde(rename = "youtube_import_stopped")]
+    YoutubeImportStopped,
 }
 
 
@@ -4394,10 +4409,11 @@ impl<T: Transport> Client<T> {
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         self.transport.execute(request, self.body_limit).await
     }
-    pub async fn list_shows(&self) -> Result<ListShowsResponse, T::Error> {
+    pub async fn list_shows(&self, params: ListShowsParams) -> Result<ListShowsResponse, T::Error> {
         let path = "/s/shows".to_owned();
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
+        let request = match params.youtube_imports_only { Some(value) => request.query(&[("youtube_imports_only", value)]), None => request };
         self.transport.execute(request, self.body_limit).await
     }
     pub async fn create_show(&self, params: CreateShowParams) -> Result<CreateShowResponse, T::Error> {
@@ -4502,6 +4518,7 @@ impl<T: Transport> Client<T> {
         let path = path.replace("{episode_id}", &encode_path(&params.episode_id.to_string()));
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
+        let request = request.query(&[("youtube_url", &params.youtube_url)]);
         self.transport.execute(request, self.body_limit).await
     }
     pub async fn create_team_invitation(&self, params: CreateTeamInvitationParams) -> Result<CreateTeamInvitationResponse, T::Error> {

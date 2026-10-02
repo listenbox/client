@@ -449,13 +449,17 @@ impl Workspace {
                     }
                 }
             }
-            Message::SyncDue => self.sync_all(false, cx),
+            Message::SyncDue => {
+                self.sync_all(false, cx);
+                self.reload(cx);
+            }
             Message::Open(url) => cx.open_url(&url),
             Message::Catalog(result) => {
                 self.loading = false;
                 match result {
-                    Ok(mut catalog) => {
-                        catalog.shows.retain(|show| show.youtube_source().is_some());
+                    Ok(catalog) => {
+                        self.reports
+                            .retain(|slug, _| catalog.shows.iter().any(|show| &show.slug == slug));
                         let urls: Vec<_> = catalog
                             .shows
                             .iter()
@@ -556,6 +560,19 @@ impl Workspace {
                 }
             }
             Message::Report(slug, report) => {
+                if report.stopped {
+                    self.catalog.shows.retain(|show| show.slug != slug);
+                    self.reports.remove(&slug);
+                    if self.selected.as_ref() == Some(&slug) {
+                        self.select(
+                            self.catalog.shows.first().map(|show| show.slug.clone()),
+                            window,
+                            cx,
+                        );
+                    }
+                    cx.notify();
+                    return;
+                }
                 if self.selected.as_ref() == Some(&slug) {
                     self.load_episodes(false, cx);
                 }
@@ -1049,7 +1066,7 @@ impl Workspace {
         let show = self.show().unwrap();
         let running = self.jobs.contains_key(&show.slug);
         let disabled = running || self.stopping.is_some() || !show.has_active_subscription;
-        let source = show.youtube_source().unwrap_or_default().to_owned();
+        let source = show.youtube_linkage().unwrap_or_default().to_owned();
         let source_link = source.clone();
         let is_playlist = source.contains("/playlist?");
         let format = if show.source_kind == ShowSourceKind::Audio {

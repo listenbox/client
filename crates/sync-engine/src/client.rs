@@ -109,7 +109,9 @@ impl Client {
         let client = api.client();
         let (teams, shows, account) = tokio::try_join!(
             client.list_client_teams(),
-            client.list_shows(),
+            client.list_shows(p::ListShowsParams {
+                youtube_imports_only: Some(true)
+            }),
             client.whoami()
         )?;
         let teams = match teams {
@@ -179,10 +181,7 @@ impl Client {
 }
 
 impl p::Show {
-    pub fn youtube_source(&self) -> Option<&str> {
-        match &self.youtube {
-            p::YouTubeConnection::Import { source_url } => Some(source_url),
-            _ => None,
-        }
+    pub fn youtube_linkage(&self) -> Option<&str> {
+        self.youtube.url.as_deref()
     }
 }

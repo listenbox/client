@@ -27,6 +27,7 @@ pub struct Report {
     pub unchanged: usize,
     pub skipped: usize,
     pub reordered: bool,
+    pub stopped: bool,
 }
 
 #[derive(Clone)]
@@ -73,7 +74,7 @@ pub async fn inventory(api: &Api, slug: &str) -> Result<p::SyncInventory> {
             Some(result) => {
                 ensure!(
                     result.show.id == page.show.id
-                        && result.show.youtube_source() == page.show.youtube_source(),
+                        && result.show.youtube.url == page.show.youtube.url,
                     "Show source changed while reading inventory"
                 );
                 result.episodes.extend(page.episodes);
@@ -113,7 +114,15 @@ impl Engine {
     }
 
     pub async fn once(&self, api: &Api, slug: &str) -> Result<Report> {
-        self.sync(api, slug, None).await
+        let mut api = api.clone();
+        api.cancel = api.cancel.child_token();
+        match self.sync(&api, slug, None).await {
+            Err(error) if error.is::<crate::api::SyncStopped>() => Ok(Report {
+                stopped: true,
+                ..Report::default()
+            }),
+            result => result,
+        }
     }
 
     /// The initial sync consumes the exact listing used for creation admission.
@@ -124,7 +133,15 @@ impl Engine {
         source: &str,
         snapshot: PlaylistSnapshot,
     ) -> Result<Report> {
-        self.sync(api, slug, Some((source, snapshot))).await
+        let mut api = api.clone();
+        api.cancel = api.cancel.child_token();
+        match self.sync(&api, slug, Some((source, snapshot))).await {
+            Err(error) if error.is::<crate::api::SyncStopped>() => Ok(Report {
+                stopped: true,
+                ..Report::default()
+            }),
+            result => result,
+        }
     }
 
     async fn sync(
@@ -145,9 +162,10 @@ impl Engine {
             .context("Another client is already syncing this show on this computer")?;
         let journal = self.database(&api.config)?;
         let before = inventory(api, slug).await?;
-        let collection = before.show.youtube_source().context(
-            "This podcast has no YouTube import. Import a playlist to create a new podcast.",
-        )?;
+        let collection = before
+            .show
+            .youtube_linkage()
+            .context("This podcast has no linked YouTube playlist or video.")?;
         let source = url::Url::parse(collection)?;
         let youtube = YouTube::new(api).await?;
         let snapshot = if let Some((scanned_source, snapshot)) = scanned {
@@ -269,6 +287,9 @@ impl Engine {
                     let Err(error) = &result else {
                         break result;
                     };
+                    if error.is::<crate::api::SyncStopped>() {
+                        api.cancel.cancel();
+                    }
                     if api.cancel.is_cancelled()
                         || attempt == TRANSFER_ATTEMPTS
                         || classify(error) != Category::Retryable
@@ -314,6 +335,7 @@ impl Engine {
         }))
         .buffer_unordered(crate::downloads::MAX_TRANSFERS);
         let mut failures = Vec::new();
+        let mut stopped = false;
         let mut report = Report {
             unchanged: existing
                 .keys()
@@ -325,8 +347,14 @@ impl Engine {
             match result {
                 Ok(ImportOutcome::Published) => report.added += 1,
                 Ok(ImportOutcome::Skipped(_)) => report.skipped += 1,
-                Err(error) => failures.push(error),
+                Err(error) => {
+                    stopped |= error.is::<crate::api::SyncStopped>();
+                    failures.push(error);
+                }
             }
+        }
+        if stopped {
+            return Err(crate::api::SyncStopped.into());
         }
         if !failures.is_empty() {
             let message = format!(
@@ -341,16 +369,21 @@ impl Engine {
             bail!(message);
         }
 
+        let current = inventory(api, slug).await?;
+        ensure!(
+            current.show.youtube_linkage() == Some(collection),
+            "Show linkage changed during sync"
+        );
         for episode in &before.episodes {
-            if snapshot.can_remove && !remote.contains(&episode.source_url) {
-                delete(api, slug, &episode.id).await?;
+            if episode.imported && snapshot.can_remove && !remote.contains(&episode.source_url) {
+                delete(api, slug, &episode.id, collection).await?;
                 journal.forget(&api.config.api_origin, slug, &episode.source_url)?;
                 report.removed += 1;
             }
         }
         let after = inventory(api, slug).await?;
         ensure!(
-            after.show.youtube_source() == Some(collection),
+            after.show.youtube_linkage() == Some(collection),
             "Show source changed during sync"
         );
         let episodes: HashMap<_, _> = after
@@ -367,9 +400,10 @@ impl Engine {
             .enumerate()
             .any(|(position, episode)| episode.position != Some(position as i64))
         {
-            set_order(
+            set_order_for_linkage(
                 api,
                 slug,
+                Some(collection.into()),
                 ordered.iter().map(|episode| episode.id.clone()).collect(),
             )
             .await?;
@@ -392,7 +426,11 @@ impl Engine {
             if api.cancel.is_cancelled() {
                 return Ok(());
             }
-            report(&result?);
+            let result = result?;
+            report(&result);
+            if result.stopped {
+                return Ok(());
+            }
             if !self.next_scan(&api.cancel).await {
                 return Ok(());
             }
@@ -401,12 +439,24 @@ impl Engine {
 }
 
 pub async fn set_order(api: &Api, slug: &str, episode_ids: Vec<String>) -> Result<p::EpisodeOrder> {
+    set_order_for_linkage(api, slug, None, episode_ids).await
+}
+
+async fn set_order_for_linkage(
+    api: &Api,
+    slug: &str,
+    youtube_url: Option<String>,
+    episode_ids: Vec<String>,
+) -> Result<p::EpisodeOrder> {
     Ok(
         match api
             .client()
             .set_episode_order(p::SetEpisodeOrderParams {
                 show_slug: slug.into(),
-                body: p::SetEpisodeOrder { episode_ids },
+                body: p::SetEpisodeOrder {
+                    episode_ids,
+                    youtube_url,
+                },
             })
             .await?
         {
@@ -416,12 +466,13 @@ pub async fn set_order(api: &Api, slug: &str, episode_ids: Vec<String>) -> Resul
     )
 }
 
-async fn delete(api: &Api, slug: &str, episode: &str) -> Result<()> {
+async fn delete(api: &Api, slug: &str, episode: &str, collection: &str) -> Result<()> {
     let result = match api
         .client()
         .create_sync_episode_deletion(p::CreateSyncEpisodeDeletionParams {
             show_slug: slug.into(),
             episode_id: episode.into(),
+            youtube_url: collection.into(),
         })
         .await?
     {
