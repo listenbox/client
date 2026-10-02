@@ -282,6 +282,12 @@ snapshot readable. Response cookies are committed before consuming the body.
 Unix directories are private (0700) and snapshots are 0600; Windows uses the
 user profile's inherited access controls.
 
+Playback follows the client capabilities: anonymous requests use VisionOS, while
+signed-in requests load the embedded player configuration with its matching
+embedding origin and encrypted host flags. Web requests supply publication
+metadata. Audio selection keeps the default track rather than choosing a dub
+by bitrate. These paths do not require a proof-of-origin provider.
+
 Tests use synthetic cookie exports and local YouTube fixtures.
 
 ## Interrupted work

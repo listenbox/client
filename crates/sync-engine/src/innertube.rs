@@ -6,7 +6,7 @@ use sha1::{Digest, Sha1};
 use std::collections::HashSet;
 use youtubei::{
     BrowseOptions, Client, Engine, EngineOptions, FetchRequest, FetchResponse, Format,
-    GetVideoInfoOptions, Innertube, Player, Playlist, SessionOptions, UniversalCache,
+    GetVideoInfoOptions, Innertube, Player, Playlist, SessionOptions, UniversalCache, VideoInfo,
     models::{
         ContentImage, LockupContentType, Microformat, PlaylistAlert, PlaylistItem, ThumbnailOverlay,
     },
@@ -15,6 +15,7 @@ use youtubei::{
 pub struct YouTube {
     client: Innertube,
     user_agent: String,
+    playback_client: Client,
 }
 
 pub struct PlaylistSnapshot {
@@ -31,6 +32,11 @@ pub struct Video {
     pub id: String,
     pub title: String,
     pub duration_seconds: Option<u64>,
+}
+
+enum PlayerResponse {
+    Available(VideoInfo),
+    Unavailable(String),
 }
 
 pub enum Playback {
@@ -60,6 +66,16 @@ impl YouTube {
         let snapshot_jar = jar.clone();
         let initial = tokio::task::spawn_blocking(move || snapshot_jar.snapshot()).await??;
         let cookie = initial.header(&url::Url::parse("https://www.youtube.com/")?);
+        let playback_client = if cookie.split("; ").any(|part| {
+            part.split_once('=').is_some_and(|(name, value)| {
+                !value.is_empty()
+                    && matches!(name, "SAPISID" | "__Secure-1PAPISID" | "__Secure-3PAPISID")
+            })
+        }) {
+            Client::WebEmbedded
+        } else {
+            Client::VisionOs
+        };
         let engine = Engine::with_options(EngineOptions::default()).await?;
         let cancel = api.cancel.clone();
         engine
@@ -117,7 +133,7 @@ impl YouTube {
                 cookie: (!cookie.is_empty()).then_some(cookie),
                 generate_session_locally: Some(false),
                 fail_fast: Some(true),
-                // Web playback needs the player signature timestamp.
+                // Web and embedded playback need the player signature timestamp.
                 retrieve_player: Some(true),
                 retrieve_innertube_config: Some(false),
                 ..Default::default()
@@ -125,8 +141,21 @@ impl YouTube {
         )
         .await
         .context("initialize YouTube")?;
-        let user_agent = client.session().await?.user_agent().await?;
-        Ok(Self { client, user_agent })
+        let user_agent = match playback_client {
+            Client::VisionOs => {
+                engine
+                    .export(&["Constants", "CLIENTS", "VISIONOS", "USER_AGENT"])
+                    .await?
+                    .deserialize::<String>()
+                    .await?
+            }
+            _ => client.session().await?.user_agent().await?,
+        };
+        Ok(Self {
+            client,
+            user_agent,
+            playback_client,
+        })
     }
 
     pub async fn snapshot(&self, api: &Api, id: &str) -> Result<PlaylistSnapshot> {
@@ -294,66 +323,79 @@ impl YouTube {
         .await
     }
 
-    pub async fn media(&self, api: &Api, id: &str) -> Result<Playback> {
-        api.wait(async {
-            let info = match self
-                .client
-                .get_basic_info(
-                    id,
-                    GetVideoInfoOptions {
-                        client: Some(Client::Web),
-                        ..Default::default()
-                    },
-                )
-                .await
+    async fn player_info(&self, id: &str, client: Client) -> Result<PlayerResponse> {
+        let info = match self
+            .client
+            .get_basic_info(
+                id,
+                GetVideoInfoOptions {
+                    client: Some(client),
+                    ..Default::default()
+                },
+            )
+            .await
+        {
+            Ok(info) => info,
+            // YouTube.js throws for ERROR player responses before exposing
+            // VideoInfo. Inspect its structured status, never error wording.
+            Err(error)
+                if error
+                    .info
+                    .as_ref()
+                    .is_some_and(|info| info["status"] == "ERROR") =>
             {
-                Ok(info) => info,
-                // YouTube.js throws for ERROR player responses before exposing
-                // VideoInfo. Inspect its structured status, never error wording.
-                Err(error)
-                    if error
+                return Ok(PlayerResponse::Unavailable(
+                    error
                         .info
                         .as_ref()
-                        .is_some_and(|info| info["status"] == "ERROR") =>
-                {
-                    return Ok(Playback::Unavailable(
-                        error
-                            .info
-                            .as_ref()
-                            .and_then(|info| info["reason"].as_str())
-                            .unwrap_or("Video unavailable")
-                            .to_owned(),
-                    ));
-                }
-                Err(error) => return Err(error.into()),
+                        .and_then(|info| info["reason"].as_str())
+                        .unwrap_or("Video unavailable")
+                        .to_owned(),
+                ));
+            }
+            Err(error) => return Err(error.into()),
+        };
+        let data = info.data().await?;
+        let status = data
+            .playability_status
+            .as_ref()
+            .context("YouTube player response missing playability status")?;
+        match status.status.as_str() {
+            "OK" => {}
+            "UNPLAYABLE" => {
+                return Ok(PlayerResponse::Unavailable(
+                    status
+                        .reason
+                        .clone()
+                        .unwrap_or_else(|| "Video unavailable".into()),
+                ));
+            }
+            "LOGIN_REQUIRED" => {
+                return Err(anyhow::Error::new(SignInRequired).context(format!(
+                    "{} ({id})",
+                    status.reason.as_deref().unwrap_or("Sign in required")
+                )));
+            }
+            _ => bail!(
+                "YouTube could not resolve {id} ({}): {}",
+                status.status,
+                status.reason.as_deref().unwrap_or("No reason supplied")
+            ),
+        }
+        ensure!(
+            data.basic_info.id.as_deref() == Some(id),
+            "YouTube metadata video ID differs from the requested video"
+        );
+        Ok(PlayerResponse::Available(info))
+    }
+
+    pub async fn media(&self, api: &Api, id: &str) -> Result<Playback> {
+        api.wait(async {
+            let info = match self.player_info(id, Client::Web).await? {
+                PlayerResponse::Available(info) => info,
+                PlayerResponse::Unavailable(reason) => return Ok(Playback::Unavailable(reason)),
             };
             let data = info.data().await?;
-            let status = data
-                .playability_status
-                .as_ref()
-                .context("YouTube player response missing playability status")?;
-            match status.status.as_str() {
-                "OK" => {}
-                "UNPLAYABLE" => {
-                    return Ok(Playback::Unavailable(
-                        status
-                            .reason
-                            .clone()
-                            .unwrap_or_else(|| "Video unavailable".into()),
-                    ));
-                }
-                "LOGIN_REQUIRED" => {
-                    return Err(anyhow::Error::new(SignInRequired).context(format!(
-                        "{} ({id})",
-                        status.reason.as_deref().unwrap_or("Sign in required")
-                    )));
-                }
-                _ => bail!(
-                    "YouTube could not resolve {id} ({}): {}",
-                    status.status,
-                    status.reason.as_deref().unwrap_or("No reason supplied")
-                ),
-            }
             if data.basic_info.is_live.unwrap_or(false)
                 || data.basic_info.is_upcoming.unwrap_or(false)
             {
@@ -361,8 +403,14 @@ impl YouTube {
                     "Live or upcoming video; sync after it has finished".into(),
                 ));
             }
-            let mut formats = info.formats().await?;
-            formats.extend(info.adaptive_formats().await?);
+            // Web supplies publication metadata; native and embedded clients supply direct streams.
+            let playback = match self.player_info(id, self.playback_client).await? {
+                PlayerResponse::Available(info) => info,
+                PlayerResponse::Unavailable(reason) => return Ok(Playback::Unavailable(reason)),
+            };
+            let playback_data = playback.data().await?;
+            let mut formats = playback.formats().await?;
+            formats.extend(playback.adaptive_formats().await?);
             ensure!(
                 formats.iter().any(|format| {
                     let f = format.info();
@@ -398,7 +446,14 @@ impl YouTube {
                 Some(
                     formats
                         .iter()
-                        .filter(|format| format.info().has_audio && !format.info().has_video)
+                        .filter(|format| {
+                            let f = format.info();
+                            f.has_audio
+                                && !f.has_video
+                                && f.audio_track
+                                    .as_ref()
+                                    .is_none_or(|track| track.audio_is_default)
+                        })
                         .max_by(|a, b| a.info().bitrate.total_cmp(&b.info().bitrate))
                         .context("YouTube video has no audio stream")?,
                 )
@@ -432,9 +487,9 @@ impl YouTube {
                 title: data.basic_info.title.unwrap_or_else(|| id.into()),
                 description: data.basic_info.short_description.unwrap_or_default(),
                 published_at,
-                video: self.stream(video, &data.cpn).await?,
+                video: self.stream(video, &playback_data.cpn).await?,
                 audio: match audio {
-                    Some(format) => Some(self.stream(format, &data.cpn).await?),
+                    Some(format) => Some(self.stream(format, &playback_data.cpn).await?),
                     None => None,
                 },
             }))
@@ -490,7 +545,16 @@ async fn fetch(api: &Api, jar: &CookieJar, input: FetchRequest) -> Result<FetchR
     );
     let snapshot_jar = jar.clone();
     let snapshot = tokio::task::spawn_blocking(move || snapshot_jar.snapshot()).await??;
-    let cookie = snapshot.header(&url);
+    let native_playback = input
+        .body
+        .as_deref()
+        .and_then(|body| serde_json::from_slice::<serde_json::Value>(body).ok())
+        .is_some_and(|body| body["context"]["client"]["clientName"] == "VISIONOS");
+    let cookie = if native_playback {
+        String::new()
+    } else {
+        snapshot.header(&url)
+    };
     let mut request = api
         .http
         .request(input.method.parse()?, url.clone())
@@ -499,7 +563,12 @@ async fn fetch(api: &Api, jar: &CookieJar, input: FetchRequest) -> Result<FetchR
         let name_lower = name.to_ascii_lowercase();
         if matches!(
             name_lower.as_str(),
-            "cookie" | "authorization" | "x-goog-authuser" | "x-goog-pageid"
+            "cookie"
+                | "authorization"
+                | "x-goog-authuser"
+                | "x-goog-pageid"
+                | "x-origin"
+                | "x-youtube-bootstrap-logged-in"
         ) {
             continue;
         }
