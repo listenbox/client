@@ -11,12 +11,61 @@ pub(super) struct EpisodeRow {
 }
 
 impl EpisodeRow {
+    fn key(&self) -> &str {
+        self.episode
+            .as_ref()
+            .map(|episode| episode.id.as_str())
+            .unwrap_or_else(|| self.item.as_ref().unwrap().id.as_str())
+    }
+
     pub fn issue(&self) -> bool {
         self.episode.is_none()
             && self
                 .item
                 .as_ref()
                 .is_some_and(|item| matches!(item.phase, Phase::Failed | Phase::Skipped))
+    }
+}
+
+pub(super) struct EpisodeList {
+    state: ListState,
+    pub dirty: bool,
+    rows: Vec<EpisodeRow>,
+    missing: usize,
+    published: usize,
+    issues: bool,
+    focus: Vec<Option<FocusHandle>>,
+}
+
+impl EpisodeList {
+    pub fn new(cx: &mut Context<Workspace>) -> Self {
+        let focus = vec![
+            Some(cx.focus_handle().tab_stop(false)),
+            Some(cx.focus_handle().tab_stop(false)),
+        ];
+        let state = ListState::new(0, ListAlignment::Top, px(300.));
+        state.splice_focusable(0..0, focus.iter().cloned());
+        state.clone().with_uniform_item_height(px(80.));
+        Self {
+            state,
+            dirty: true,
+            rows: vec![],
+            missing: 0,
+            published: 0,
+            issues: false,
+            focus,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        let footer = self.focus.pop().unwrap();
+        self.focus.truncate(1);
+        self.focus.push(footer);
+        self.state.reset_with_uniform_height(2, px(80.));
+        self.state
+            .splice_focusable(0..2, self.focus.iter().cloned());
+        self.rows.clear();
+        self.dirty = true;
     }
 }
 
@@ -39,6 +88,7 @@ impl Workspace {
         {
             return;
         }
+        self.episode_view.dirty = true;
         if let Some(cancel) = self.episode_cancel.take() {
             cancel.cancel();
         }
@@ -288,23 +338,117 @@ impl Workspace {
                 );
             }
         }
-        element.into_any_element()
+        element.test_support().into_any_element()
     }
 
-    pub(super) fn episode_list(&self, cx: &mut Context<Self>) -> AnyElement {
-        if self.import_open || self.show().is_none() {
-            return div().into_any_element();
+    fn prepare_episode_list(&mut self, cx: &mut Context<Self>) {
+        if !self.episode_view.dirty {
+            return;
         }
-        let t = Tokens::current(cx);
-        let rows = self.episode_rows();
+        let mut rows = self.episode_rows();
         let missing = rows.iter().filter(|row| row.issue()).count();
-        let showing_issues = self.show_issues && missing > 0;
-        let published = self
+        let issues = self.show_issues && missing > 0;
+        rows.retain(|row| row.issue() == issues);
+        let cached = &mut self.episode_view;
+        let prefix = cached
+            .rows
+            .iter()
+            .zip(&rows)
+            .take_while(|(a, b)| a.key() == b.key())
+            .count();
+        let suffix = cached.rows[prefix..]
+            .iter()
+            .rev()
+            .zip(rows[prefix..].iter().rev())
+            .take_while(|(a, b)| a.key() == b.key())
+            .count();
+        let mut focus = vec![cached.focus[0].clone()];
+        focus.extend((0..rows.len()).map(|ix| {
+            if ix < prefix {
+                cached.focus[ix + 1].clone()
+            } else if ix >= rows.len() - suffix {
+                cached.focus[cached.rows.len() - (rows.len() - ix) + 1].clone()
+            } else {
+                rows[ix].issue().then(|| cx.focus_handle().tab_stop(false))
+            }
+        }));
+        focus.push(cached.focus.last().unwrap().clone());
+        if cached.issues != issues {
+            cached
+                .state
+                .reset_with_uniform_height(rows.len() + 2, px(80.));
+            cached
+                .state
+                .splice_focusable(0..rows.len() + 2, focus.iter().cloned());
+        } else {
+            // Retain measurements and the reading position for unchanged rows,
+            // including when a new API page is inserted before the footer.
+            cached.state.splice_focusable(
+                prefix + 1..cached.rows.len() - suffix + 1,
+                focus[prefix + 1..rows.len() - suffix + 1].iter().cloned(),
+            );
+            // A progress update or saved failure can change a row's height even
+            // while it is off-screen. Keep its scroll anchor when remeasuring.
+            cached.state.remeasure_items(0..rows.len() + 2);
+        }
+        // Wheel scrolling must be able to seek into unmeasured rows. Actual
+        // layout replaces this estimate as each row reaches the viewport.
+        cached.state.clone().with_uniform_item_height(px(80.));
+        cached.rows = rows;
+        cached.focus = focus;
+        cached.missing = missing;
+        cached.issues = issues;
+        cached.published = self
             .episodes
             .iter()
             .filter(|episode| episode.status == EpisodeStatus::Published)
             .count();
-        let mut pane = div()
+        cached.dirty = false;
+    }
+
+    pub(super) fn episode_content(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        self.prepare_episode_list(cx);
+        let state = self.episode_view.state.clone();
+        // Header/footer controls can change without an episode-data update.
+        state.remeasure_items(0..1);
+        state.remeasure_items(state.item_count() - 1..state.item_count());
+        list(
+            state,
+            cx.processor(|view, ix: usize, window, cx| {
+                // Keep keyboard focus alive when an interactive row (including
+                // the header and pagination) scrolls outside the viewport.
+                let pane = div()
+                    .px(px(tokens::SPACE))
+                    .when_some(view.episode_view.focus[ix].as_ref(), |pane, focus| {
+                        pane.track_focus(focus)
+                    });
+                if ix == 0 {
+                    pane.pt(px(tokens::SPACE))
+                        .pb_2()
+                        .child(view.content_header(window, cx))
+                        .child(view.episode_heading(cx))
+                        .into_any_element()
+                } else if let Some(row) = view.episode_view.rows.get(ix - 1) {
+                    pane.pb_2()
+                        .child(view.episode_row(row, cx))
+                        .into_any_element()
+                } else {
+                    pane.pb(px(tokens::SPACE))
+                        .child(view.episode_footer(cx))
+                        .into_any_element()
+                }
+            }),
+        )
+        .size_full()
+        .into_any_element()
+    }
+
+    fn episode_heading(&self, cx: &mut Context<Self>) -> AnyElement {
+        let t = Tokens::current(cx);
+        let missing = self.episode_view.missing;
+        let showing_issues = self.episode_view.issues;
+        let published = self.episode_view.published;
+        let pane = div()
             .mt(px(tokens::SPACE))
             .border_t_1()
             .border_color(t.divider)
@@ -325,7 +469,7 @@ impl Workspace {
                         }
                     )),
             );
-        pane = pane.child(
+        pane.child(
             div()
                 .flex()
                 .flex_wrap()
@@ -337,6 +481,7 @@ impl Workspace {
                         .selected(!showing_issues)
                         .on_click(cx.listener(|view, _, _, cx| {
                             view.show_issues = false;
+                            view.episode_view.dirty = true;
                             cx.notify();
                         })),
                 )
@@ -348,18 +493,18 @@ impl Workspace {
                             .selected(showing_issues)
                             .on_click(cx.listener(|view, _, _, cx| {
                                 view.show_issues = true;
+                                view.episode_view.dirty = true;
                                 cx.notify();
                             })),
                     )
                 }),
-        );
-        let visible: Vec<_> = rows
-            .iter()
-            .filter(|row| row.issue() == showing_issues)
-            .collect();
-        for row in &visible {
-            pane = pane.child(self.episode_row(row, cx));
-        }
+        )
+        .into_any_element()
+    }
+
+    fn episode_footer(&self, cx: &mut Context<Self>) -> AnyElement {
+        let t = Tokens::current(cx);
+        let mut pane = div().flex().flex_col().gap_2();
         if self.episode_loading || self.source_loading {
             pane = pane.child(div().py_3().text_color(t.muted).child(
                 match (self.episode_loading, self.source_loading) {
@@ -377,12 +522,14 @@ impl Workspace {
                         .label("Reload episodes")
                         .on_click(cx.listener(|view, _, _, cx| view.load_episodes(false, cx))),
                 );
-        } else if visible.is_empty() && self.source_error.is_none() {
-            pane = pane.child(div().py_3().text_color(t.muted).child(if showing_issues {
-                "Every listed video has imported or is waiting for sync."
-            } else {
-                "No episodes synced yet. New episodes will appear here as they sync."
-            }));
+        } else if self.episode_view.rows.is_empty() && self.source_error.is_none() {
+            pane = pane.child(div().py_3().text_color(t.muted).child(
+                if self.episode_view.issues {
+                    "Every listed video has imported or is waiting for sync."
+                } else {
+                    "No episodes synced yet. New episodes will appear here as they sync."
+                },
+            ));
         }
         if let Some(error) = &self.source_error {
             pane = pane
