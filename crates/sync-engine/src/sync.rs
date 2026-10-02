@@ -240,20 +240,10 @@ impl Engine {
         let transfers = self.downloads.enqueue(
             slug,
             &before.show.title,
-            &additions
-                .iter()
-                .map(|video| (video.id.clone(), video.title.clone()))
-                .collect::<Vec<_>>(),
+            &snapshot.present,
+            &existing.keys().copied().collect(),
         );
-        for (video, transfer) in additions.iter().zip(&transfers) {
-            transfer.duration(video.duration_seconds);
-            transfer.position(
-                snapshot
-                    .present
-                    .iter()
-                    .position(|item| item.id == video.id)
-                    .context("Missing source position")? as i64,
-            );
+        for transfer in &transfers {
             journal.outcome(&api.config.api_origin, slug, &transfer.item())?;
         }
         let audio = before.show.source_kind == p::ShowSourceKind::Audio;

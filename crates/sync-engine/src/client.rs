@@ -7,7 +7,8 @@ use crate::{
     publicapi as p,
     sync::{Engine, Report},
 };
-use anyhow::Result;
+use anyhow::{Result, ensure};
+use std::collections::HashSet;
 use tokio_util::sync::CancellationToken;
 
 #[derive(Clone, Default)]
@@ -64,27 +65,43 @@ impl Client {
     pub async fn episodes(
         &self,
         slug: String,
-        cursor: Option<String>,
         cancel: CancellationToken,
-    ) -> Result<p::EpisodePage> {
+    ) -> Result<Vec<p::EpisodeListItem>> {
         let api = self.api(cancel)?;
         if api.credential.is_none() {
             return Err(crate::api::AuthenticationRequired.into());
         }
-        Ok(
-            match api
+        let mut episodes = Vec::new();
+        let mut ids = HashSet::new();
+        let mut cursors = HashSet::new();
+        let mut cursor = None;
+        loop {
+            let page = match api
                 .client()
                 .list_episodes(p::ListEpisodesParams {
-                    show_slug: slug,
+                    show_slug: slug.clone(),
                     cursor,
-                    limit: Some(50),
+                    limit: Some(500),
                 })
                 .await?
             {
                 p::ListEpisodesResponse::Status200(value) => value,
                 response => return Err(api.response_error(response).await),
-            },
-        )
+            };
+            for episode in page.episodes {
+                if ids.insert(episode.id.clone()) {
+                    episodes.push(episode);
+                }
+            }
+            cursor = page.next_cursor;
+            match &cursor {
+                None => return Ok(episodes),
+                Some(cursor) => ensure!(
+                    !cursor.is_empty() && cursors.insert(cursor.clone()),
+                    "Episode listing returned an invalid or repeated cursor"
+                ),
+            }
+        }
     }
     fn api(&self, cancel: CancellationToken) -> Result<Api> {
         Api::new(self.config.clone(), cancel)

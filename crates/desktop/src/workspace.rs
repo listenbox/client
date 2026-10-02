@@ -22,12 +22,13 @@ use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
 #[path = "workspace/episodes.rs"]
 mod episodes;
+#[path = "workspace/import_progress.rs"]
+mod import_progress;
 #[path = "workspace/settings.rs"]
 mod settings;
 
 pub struct Workspace {
     episodes: Vec<listenbox_sync_engine::publicapi::EpisodeListItem>,
-    episode_cursor: Option<String>,
     episode_loading: bool,
     episode_error: Option<String>,
     episode_request: u64,
@@ -159,8 +160,7 @@ enum Message {
     CookiesSaved(bool, anyhow::Result<()>),
     Episodes(
         u64,
-        bool,
-        anyhow::Result<listenbox_sync_engine::publicapi::EpisodePage>,
+        anyhow::Result<Vec<listenbox_sync_engine::publicapi::EpisodeListItem>>,
     ),
     SourceItems(
         u64,
@@ -212,7 +212,6 @@ impl Workspace {
         .detach();
         let mut view = Self {
             episodes: vec![],
-            episode_cursor: None,
             episode_loading: false,
             episode_error: None,
             episode_request: 0,
@@ -409,9 +408,7 @@ impl Workspace {
             Message::CookiesSaved(saved, result) => {
                 self.cookies_received(saved, result, window, cx)
             }
-            Message::Episodes(request, append, result) => {
-                self.episodes_received(request, append, result)
-            }
+            Message::Episodes(request, result) => self.episodes_received(request, result),
             Message::SourceItems(request, result) => {
                 if request == self.episode_request {
                     self.source_loading = false;
@@ -502,7 +499,7 @@ impl Workspace {
                             );
                             self.error = error;
                         } else {
-                            self.load_episodes(false, cx);
+                            self.load_episodes(cx);
                         }
                         self.start_auto_sync(cx);
                     }
@@ -587,7 +584,7 @@ impl Workspace {
                     return;
                 }
                 if self.selected.as_ref() == Some(&slug) {
-                    self.load_episodes(false, cx);
+                    self.load_episodes(cx);
                 }
                 self.reports.insert(
                     slug,
@@ -607,7 +604,7 @@ impl Workspace {
             }
             Message::Finished(slug, result) => {
                 if result.is_err() && self.selected.as_ref() == Some(&slug) {
-                    self.load_episodes(false, cx);
+                    self.load_episodes(cx);
                 }
                 let stopped = self
                     .jobs
@@ -639,7 +636,7 @@ impl Workspace {
         self.settings_open = false;
         self.cookie_input = settings::cookie_input(_window, cx);
         self.import_open = false;
-        self.load_episodes(false, cx);
+        self.load_episodes(cx);
         self.error = None;
         cx.notify();
     }
@@ -753,6 +750,11 @@ impl Workspace {
         }
         let cancel = self.cancel.child_token();
         self.jobs.insert(slug.clone(), cancel.clone());
+        // This queue is display history, not the durable resume journal. Clear
+        // the previous pass so checking the source cannot show stale totals.
+        let downloads = self.client.downloads();
+        downloads.remove_source(&slug);
+        self.progress = downloads.snapshot();
         self.reports
             .insert(slug.clone(), "Reading YouTube and Listenbox…".into());
         let (client, sender) = (self.client.clone(), self.sender.clone());
@@ -944,12 +946,18 @@ impl Workspace {
             count += 1;
             let slug = show.slug.clone();
             let selected = !self.import_open && self.selected.as_ref() == Some(&slug);
-            let status = if self.jobs.contains_key(&slug) {
-                "Syncing"
+            let running = self.jobs.get(&slug);
+            let progress = self.import_progress(&slug);
+            let status = if running.is_some_and(|cancel| cancel.is_cancelled()) {
+                "Stopping…".into()
+            } else if running.is_some() && progress.total > 0 {
+                format!("{} / {} imported", progress.imported, progress.total)
+            } else if running.is_some() {
+                "Checking YouTube…".into()
             } else if !show.has_active_subscription {
-                "Plan required"
+                "Plan required".into()
             } else {
-                "Automatic sync"
+                "Automatic sync".into()
             };
             shows = shows.child(
                 Button::new(SharedString::from(format!("show-{slug}")))
@@ -984,7 +992,21 @@ impl Workspace {
                                     )
                                     .child(
                                         div().text_size(px(12.)).text_color(t.muted).child(status),
-                                    ),
+                                    )
+                                    .when(running.is_some() && progress.total > 0, |column| {
+                                        column.child(
+                                            Progress::new(SharedString::from(format!(
+                                                "sidebar-progress-{slug}"
+                                            )))
+                                            .xsmall()
+                                            .color(t.action)
+                                            .value(progress.percent())
+                                            .accessibility_label(format!(
+                                                "{}: {} of {} episodes imported",
+                                                show.title, progress.imported, progress.total
+                                            )),
+                                        )
+                                    }),
                             ),
                     )
                     .on_click(cx.listener(move |view, _, window, cx| {
@@ -1078,8 +1100,6 @@ impl Workspace {
             return self.import_form(window, cx);
         }
         let show = self.show().unwrap();
-        let running = self.jobs.contains_key(&show.slug);
-        let disabled = running || self.stopping.is_some() || !show.has_active_subscription;
         let source = show.youtube_linkage().unwrap_or_default().to_owned();
         let source_link = source.clone();
         let is_playlist = source.contains("/playlist?");
@@ -1096,6 +1116,7 @@ impl Workspace {
                     .child(div().text_color(t.muted).child(format))
                     .child(Button::new("open-show").ghost().small().icon(assets::IconName::ExternalLink).label("Open in Listenbox")
                         .on_click(cx.listener(|view, _, _, cx| { if let Some(url) = view.show().and_then(|show| view.client.show_url(show).ok()) { cx.open_url(&url); } })))))
+            .child(self.import_status(show, cx))
             .child(div().border_t_1().border_color(t.divider).pt(px(tokens::SPACE)).flex().flex_col().gap_2()
                 .child(div().font_weight(FontWeight::SEMIBOLD).child("YouTube source"))
                 .child(Button::new("open-playlist").ghost().w_full().min_w_0()
@@ -1127,38 +1148,7 @@ impl Workspace {
                     ),
             );
         }
-        pane.child(
-            div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .child(
-                    Button::new("sync-now")
-                        .primary()
-                        .icon(assets::IconName::RefreshCw)
-                        .label("Sync now")
-                        .disabled(disabled)
-                        .on_click(cx.listener(|view, _, _, cx| view.sync(cx))),
-                )
-                .when(running, |row| {
-                    row.child(Button::new("stop-sync").outline().label("Stop").on_click(
-                        cx.listener(|view, _, _, cx| {
-                            if let Some(cancel) =
-                                view.selected.as_ref().and_then(|slug| view.jobs.get(slug))
-                            {
-                                cancel.cancel();
-                            }
-                            cx.notify();
-                        }),
-                    ))
-                }),
-        )
-        .child(div().text_color(t.muted).child(
-            self.reports.get(&show.slug).cloned().unwrap_or_else(|| {
-                "Syncs automatically every hour while Listenbox is running.".into()
-            }),
-        ))
-        .into_any_element()
+        pane.into_any_element()
     }
 }
 
