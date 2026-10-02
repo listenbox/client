@@ -440,23 +440,34 @@ impl YouTube {
                         .total_cmp(&b.info().height.unwrap())
                 })
                 .context("YouTube video has no AVC rendition at or below 1080p")?;
-            let audio = if video.info().has_audio {
-                None
-            } else {
-                Some(
-                    formats
-                        .iter()
-                        .filter(|format| {
-                            let f = format.info();
-                            f.has_audio
-                                && !f.has_video
-                                && f.audio_track
-                                    .as_ref()
-                                    .is_none_or(|track| track.audio_is_default)
-                        })
-                        .max_by(|a, b| a.info().bitrate.total_cmp(&b.info().bitrate))
-                        .context("YouTube video has no audio stream")?,
-                )
+            // AAC can be copied into M4A, so prefer it before comparing bitrates.
+            let audio = formats
+                .iter()
+                .filter(|format| {
+                    let f = format.info();
+                    f.has_audio
+                        && !f.has_video
+                        && f.audio_track
+                            .as_ref()
+                            .is_none_or(|track| track.audio_is_default)
+                })
+                .max_by(|a, b| {
+                    let (a, b) = (a.info(), b.info());
+                    a.mime_type
+                        .contains("mp4a.40.")
+                        .cmp(&b.mime_type.contains("mp4a.40."))
+                        .then_with(|| a.bitrate.total_cmp(&b.bitrate))
+                });
+            let audio = match audio {
+                Some(audio)
+                    if audio.info().mime_type.contains("mp4a.40.")
+                        || !video.info().has_audio
+                        || !video.info().mime_type.contains("mp4a.40.") =>
+                {
+                    Some(audio)
+                }
+                _ if video.info().has_audio => None,
+                _ => bail!("YouTube video has no audio stream"),
             };
             ensure!(
                 data.basic_info.id.as_deref() == Some(id),
