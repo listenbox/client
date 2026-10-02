@@ -65,7 +65,7 @@ tasks:
       set -eu
       cd ../..
       exec crates/desktop/dist/dev-tools/bin/dx serve \
-        --desktop --hot-patch --package listenbox-desktop --features hot-reload \
+        --port 8090 --desktop --hot-patch --package listenbox-desktop --features hot-reload \
         --locked --args="--config $PWD/config/dev.yaml"
     options:
       cache: false
