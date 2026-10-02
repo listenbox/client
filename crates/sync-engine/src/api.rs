@@ -27,6 +27,15 @@ impl std::fmt::Display for PaymentRequired {
 }
 impl std::error::Error for PaymentRequired {}
 
+#[derive(Debug)]
+pub struct SyncStopped;
+impl std::fmt::Display for SyncStopped {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("The server stopped YouTube importing for this show. Progress is saved; refresh the podcast list.")
+    }
+}
+impl std::error::Error for SyncStopped {}
+
 #[derive(Clone)]
 pub struct Api {
     pub config: Config,
@@ -138,6 +147,9 @@ impl Api {
 
     pub async fn response_error<R: p::Response>(&self, response: R) -> anyhow::Error {
         let status = response.status();
+        if status == 423 {
+            return SyncStopped.into();
+        }
         if status == 401 {
             return AuthenticationRequired.into();
         }

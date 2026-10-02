@@ -78,7 +78,13 @@ pub async fn import(
         )
     });
     let slug = crate::slug(&slug).map_err(anyhow::Error::msg)?;
-    let shows: Vec<p::Show> = match api.client().list_shows().await? {
+    let shows: Vec<p::Show> = match api
+        .client()
+        .list_shows(p::ListShowsParams {
+            youtube_imports_only: None,
+        })
+        .await?
+    {
         p::ListShowsResponse::Status200(value) => value,
         response => return Err(api.response_error(response).await),
     };
@@ -166,7 +172,7 @@ pub async fn import(
         body: p::CreateShow {
             id: format!("shw_{}", &uuid::Uuid::new_v4().simple().to_string()[..16]),
             title, slug: slug.clone(), source_kind: kind.clone(), language: "en".into(),
-            image_asset_id: None, youtube_source_url: Some(canonical.clone()),
+            image_asset_id: None, youtube_url: Some(canonical.clone()),
         },
     }).await.with_context(|| format!("Create podcast {slug:?}. If creation completed but its reply was lost, reload your podcasts and resume with sync."))? {
         p::CreateShowResponse::Status201(show) => show,
@@ -332,6 +338,7 @@ pub(crate) async fn import_video(
             let manifest = p::CreateEpisodePackage {
                 show_slug: slug.into(),
                 source_url: source_url.clone(),
+                youtube_url: collection.into(),
                 operation_id,
                 title: media.title,
                 description: Some(media.description),

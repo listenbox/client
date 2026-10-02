@@ -7,6 +7,73 @@ use gpui_kit::test::TestWindowExt;
 use listenbox_sync_engine::config::Config;
 use std::{cell::Cell, rc::Rc, time::Duration};
 
+// Parent API E2E changes direction through the real destination endpoint at
+// the inventory/catalog request gates. No fake API or injected UI message.
+#[gpui_kit::test]
+#[ignore = "requires the parent workspace's ephemeral Listenbox services"]
+async fn live_server_direction(cx: &mut TestAppContext) {
+    let config = Config::load(None).unwrap();
+    let slug = std::fs::read_to_string(config.directory.join("test-direction-slug")).unwrap();
+    let client = Client::desktop(config).unwrap();
+    let runtime = Arc::new(tokio::runtime::Runtime::new().unwrap());
+    let cancel = CancellationToken::new();
+    cx.update(gpui_kit::init);
+    cx.executor().allow_parking();
+    let mut workspace = None;
+    let handle = cx.open_window(size(px(1080.), px(840.)), |window, cx| {
+        let view = cx.new(|cx| {
+            Workspace::new(
+                client,
+                runtime,
+                cancel.clone(),
+                TaskTracker::new(),
+                window,
+                cx,
+            )
+        });
+        workspace = Some(view.clone());
+        Root::new(view, window, cx)
+    });
+    let workspace = workspace.unwrap();
+    wait_for(cx, &workspace, |view| {
+        view.loaded && view.catalog.shows.is_empty() && view.jobs.is_empty()
+    })
+    .await;
+    cx.update_window(handle.into(), |_, window, cx| {
+        let view = workspace.read(cx);
+        assert!(view.selected.is_none());
+        assert!(!view.reports.contains_key(&slug));
+        assert!(view.error.is_none());
+        window.render_frame(cx);
+        assert!(
+            window
+                .try_find(SharedString::from(format!("show-{slug}")))
+                .is_none()
+        );
+        window.click("reload", cx);
+    })
+    .unwrap();
+    wait_for(cx, &workspace, |view| {
+        !view.loading
+            && view.catalog.shows.len() == 1
+            && view.jobs.is_empty()
+            && view.reports.contains_key(&slug)
+    })
+    .await;
+    cx.update_window(handle.into(), |_, window, cx| {
+        assert_eq!(workspace.read(cx).selected.as_deref(), Some(slug.as_str()));
+        assert!(workspace.read(cx).error.is_none());
+        window.render_frame(cx);
+        assert!(
+            window
+                .try_find(SharedString::from(format!("show-{slug}")))
+                .is_some()
+        );
+    })
+    .unwrap();
+    cancel.cancel();
+}
+
 // Runs against the real ephemeral Listenbox API from apps/api/e2e. Standalone
 // checks do not silently substitute a fake API; the parent explicitly invokes it.
 #[gpui_kit::test]
@@ -632,7 +699,7 @@ async fn live_import(cx: &mut TestAppContext) {
         }
         assert_eq!(state.catalog.shows.len(), 1);
         assert_eq!(
-            state.show().unwrap().youtube_source(),
+            state.show().unwrap().youtube_linkage(),
             Some(source.as_str())
         );
         if !recover_scan {
@@ -775,7 +842,7 @@ fn unpaid_podcast_opens_its_teams_upgrade_page(cx: &mut TestAppContext) {
                 "id": "shw_0123456789abcdef", "team_id": "team_fedcba9876543210",
                 "title": "Podcast", "slug": "podcast", "language": "en", "source_kind": "audio",
                 "has_active_subscription": false,
-                "youtube": {"kind":"import", "source_url":"https://www.youtube.com/playlist?list=PLtest"}
+                "youtube": {"destination_status":"none", "url":"https://www.youtube.com/playlist?list=PLtest"}
             })).unwrap()];
             view.select(Some("podcast".into()), window, cx);
         });
@@ -1039,7 +1106,7 @@ fn advance_quit_clock(cx: &TestAppContext, elapsed: Duration) {
 }
 
 #[gpui_kit::test]
-fn library_filters_connections_and_shares_artwork_requests(cx: &mut TestAppContext) {
+fn library_shares_artwork_requests(cx: &mut TestAppContext) {
     use std::sync::atomic::{AtomicUsize, Ordering};
     let count = Arc::new(AtomicUsize::new(0));
     let requests = count.clone();
@@ -1057,15 +1124,12 @@ fn library_filters_connections_and_shares_artwork_requests(cx: &mut TestAppConte
         }))
     });
     let (_profile, handle, view) = quit_workspace(cx);
-    let shows = ["import", "none", "destination"].into_iter().map(|kind| {
-        let mut connection = serde_json::json!({"kind":kind});
-        if kind == "import" { connection["source_url"] = "https://www.youtube.com/playlist?list=PLabc".into(); }
-        serde_json::from_value(serde_json::json!({
-            "id":"shw_0123456789abcdef", "team_id":"team_0123456789abcdef", "slug":kind,
+    let shows = vec![serde_json::from_value(serde_json::json!({
+            "id":"shw_0123456789abcdef", "team_id":"team_0123456789abcdef", "slug":"import",
             "title":"Podcast artwork", "language":"en", "source_kind":"audio",
-            "has_active_subscription":true, "image_url":"https://artwork.example.test/podcast.png", "youtube":connection
-        })).unwrap()
-    }).collect();
+            "has_active_subscription":true, "image_url":"https://artwork.example.test/podcast.png",
+            "youtube":{"destination_status":"none", "url":"https://www.youtube.com/playlist?list=PLabc"}
+        })).unwrap()];
     cx.update_window(handle.into(), |_, window, cx| {
         view.update(cx, |view, cx| {
             view.receive(

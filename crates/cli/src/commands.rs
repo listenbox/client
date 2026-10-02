@@ -36,6 +36,12 @@ pub async fn shows(api: &Api, command: ShowCommand) -> Result<()> {
                 progress_stop.clone(),
             ));
             let report = |report: &listenbox_sync_engine::sync::Report| {
+                if report.stopped {
+                    println!(
+                        "Sync stopped by Listenbox. Progress is saved; this show is no longer importing from YouTube."
+                    );
+                    return;
+                }
                 println!(
                     "{} added, {} removed, {} unchanged, {} skipped{}",
                     report.added,
@@ -59,7 +65,13 @@ pub async fn shows(api: &Api, command: ShowCommand) -> Result<()> {
             result?;
         }
         ShowCommand::List => {
-            let result = match api.client().list_shows().await? {
+            let result = match api
+                .client()
+                .list_shows(p::ListShowsParams {
+                    youtube_imports_only: None,
+                })
+                .await?
+            {
                 p::ListShowsResponse::Status200(value) => value,
                 response => return Err(api.response_error(response).await),
             };
@@ -89,7 +101,7 @@ pub async fn shows(api: &Api, command: ShowCommand) -> Result<()> {
                         slug: slug.clone(),
                         language,
                         image_asset_id,
-                        youtube_source_url: None,
+                        youtube_url: None,
                         source_kind: serde_json::from_value(serde_json::to_value(source_kind)?)?,
                     },
                 })
