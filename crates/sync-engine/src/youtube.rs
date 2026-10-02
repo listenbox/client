@@ -7,7 +7,7 @@ use crate::{
 use anyhow::{Context, Result, ensure};
 use serde_json::json;
 use sha2::{Digest, Sha256};
-use std::path::Path;
+use std::{path::Path, time::Instant};
 use url::Url;
 
 enum ImportListing {
@@ -235,6 +235,9 @@ pub(crate) async fn import_video(
                     "Prepared media changed on disk; cannot resume this upload"
                 );
             }
+            eprintln!(
+                "FFmpeg preparation reused show_slug={slug} video_id={id} operation_id={operation_id}"
+            );
             manifest
         }
         None => {
@@ -294,18 +297,36 @@ pub(crate) async fn import_video(
             let root = directory.clone();
             let separate_audio = media.audio.is_some();
             let cancel = api.cancel.clone();
+            let preparation = format!(
+                "show_slug={slug} video_id={id} operation_id={operation_id} kind={} title={:?}",
+                if audio { "audio" } else { "video" },
+                media.title,
+            );
             // Join the FFmpeg owner before releasing files, including after cancellation.
             let duration = tokio::task::spawn_blocking(move || {
-                if audio {
-                    let output = root.join("audio.m4a");
-                    if output.exists() {
-                        std::fs::remove_file(&output)?;
+                // Measure execution, excluding download and blocking-pool wait time.
+                let started = Instant::now();
+                eprintln!("FFmpeg preparation started {preparation}");
+                let result = (|| {
+                    if audio {
+                        let output = root.join("audio.m4a");
+                        if output.exists() {
+                            std::fs::remove_file(&output)?;
+                        }
+                        crate::audio::prepare_m4a(&root.join("source-audio"), &output, &cancel)?;
+                        crate::audio::duration(&output)
+                    } else {
+                        crate::media::prepare(&root, separate_audio, &cancel)
                     }
-                    crate::audio::prepare_m4a(&root.join("source-audio"), &output, &cancel)?;
-                    crate::audio::duration(&output)
-                } else {
-                    crate::media::prepare(&root, separate_audio, &cancel)
-                }
+                })();
+                eprintln!(
+                    "FFmpeg preparation finished {preparation} elapsed_ms={} result={} media_duration_seconds={:?} error={:?}",
+                    started.elapsed().as_millis(),
+                    if result.is_ok() { "success" } else { "failed" },
+                    result.as_ref().ok(),
+                    result.as_ref().err().map(ToString::to_string),
+                );
+                result
             })
             .await??;
             let manifest = p::CreateEpisodePackage {

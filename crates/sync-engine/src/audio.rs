@@ -37,6 +37,15 @@ fn convert(input: &Path, output: &Path, cancelled: &CancellationToken) -> Result
     let index = source.index();
     let time_base = source.time_base();
     let parameters = source.parameters();
+    let mode = if parameters.id() == codec::Id::AAC {
+        "copy"
+    } else {
+        "transcode"
+    };
+    eprintln!(
+        "FFmpeg audio mode={mode} input_codec={:?} output_codec=AAC output={output:?}",
+        parameters.id()
+    );
     let mut output = format::output_as(output, "ipod")?;
     if parameters.id() != codec::Id::AAC {
         let decoder = codec::Context::from_parameters(parameters)?

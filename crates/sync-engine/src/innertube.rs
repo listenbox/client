@@ -481,6 +481,16 @@ impl YouTube {
                 })
                 .context("YouTube publication date is invalid")?
                 .timestamp_millis();
+            let selected_audio = audio.unwrap_or(video).info();
+            eprintln!(
+                "YouTube media selected video_id={id} video_itag={} video_mime={:?} audio_itag={} audio_mime={:?} audio_bitrate_bps={} audio_has_video={}",
+                video.info().itag,
+                video.info().mime_type,
+                selected_audio.itag,
+                selected_audio.mime_type,
+                selected_audio.bitrate,
+                selected_audio.has_video,
+            );
             Ok(Playback::Available(Media {
                 estimated_seconds: known_seconds(data.basic_info.duration.unwrap_or(0.0)),
                 duration_seconds: data.basic_info.duration.and_then(duration_seconds),
