@@ -7,6 +7,8 @@ mod artwork;
 #[cfg(all(debug_assertions, feature = "hot-reload"))]
 mod hot_reload;
 mod platform;
+#[cfg(feature = "profiling")]
+mod profiling;
 mod quit;
 mod tokens;
 mod updater;
@@ -60,10 +62,22 @@ fn main() -> anyhow::Result<()> {
     let tasks = TaskTracker::new();
     let drain = tasks.clone();
     let runtime_ui = runtime.clone();
+    #[cfg(feature = "profiling")]
+    let recorder = profiling::Recorder::open()?;
+    #[cfg(feature = "profiling")]
+    let recorder_tasks = TaskTracker::new();
+    #[cfg(feature = "profiling")]
+    let recorder_drain = recorder_tasks.clone();
     let application = gpui_kit::application().with_assets(gpui_kit::assets::AllAssets);
     application.on_reopen(platform::show_window);
     application.run(move |cx| {
         gpui_kit::init(cx);
+        #[cfg(feature = "profiling")]
+        if let Some(recorder) = recorder {
+            // Recording lives through workspace logout and stops with the app.
+            // It must not hold the workspace's pre-quit sync drain open.
+            recorder.start(cx, &runtime_ui, cancel.clone(), &recorder_tasks);
+        }
         let (quit_cancel, quit_tasks) = (cancel.clone(), tasks.clone());
         cx.on_app_quit(move |_| {
             quit_cancel.cancel();
@@ -88,6 +102,8 @@ fn main() -> anyhow::Result<()> {
                 },
                 |window, cx| {
                     tokens::apply(window, cx);
+                    #[cfg(feature = "profiling")]
+                    window.set_debug_frame_overlay_mode(gpui_kit::DebugFrameOverlayMode::Full);
                     window
                         .observe_window_appearance(|window, cx| {
                             tokens::apply(window, cx);
@@ -118,6 +134,11 @@ fn main() -> anyhow::Result<()> {
     drain.close();
     // Also cover OS termination paths: GPUI bounds its own quit observers.
     runtime.block_on(drain.wait());
+    #[cfg(feature = "profiling")]
+    {
+        recorder_drain.close();
+        runtime.block_on(recorder_drain.wait());
+    }
     updater::cleanup();
     Ok(())
 }

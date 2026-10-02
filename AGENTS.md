@@ -5,6 +5,9 @@
 
 - Run `shellcheck` on every shell script you create or change. `moon run client:lint`
   checks the client's shell scripts with the installed ShellCheck binary.
+- Write client command and build automation as simple Bash scripts checked by
+  ShellCheck, never TypeScript or zx scripts. This does not apply to application
+  code in the YouTube.js submodule.
 
 - CLI and desktop share `crates/sync-engine`; put HTTP, format selection,
   configuration, and sync behavior there.
