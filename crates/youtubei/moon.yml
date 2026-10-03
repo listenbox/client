@@ -10,17 +10,22 @@ taskOptions:
 fileGroups:
   sources:
     - src/**/*.rs
-    - tests/**/*
     - build.rs
     - Cargo.toml
+  tests:
+    - tests/**/*
 tasks:
   build:
-    deps: [client:prerequisites]
-    inputs: ['@group(sources)', 'project://client?group=sources']
+    deps:
+      - target: youtubejs:bundle
+        cacheStrategy: outputs
+    inputs: ['@group(sources)', 'project://client?group=cargo-config']
     script: |-
       set -euo pipefail
       cargo build --locked -p youtubei
   test:
-    deps: [client:prerequisites]
-    inputs: ['@group(sources)', 'project://client?group=sources']
+    deps:
+      - target: youtubejs:bundle
+        cacheStrategy: outputs
+    inputs: ['@group(sources)', '@group(tests)', 'project://client?group=cargo-config']
     command: cargo test --locked -p youtubei

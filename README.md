@@ -59,14 +59,18 @@ moon run client:test       # Run each crate's existing test runner
 moon run client:check      # Lint, tests, and debug builds
 ```
 
-Build, lint, and test tasks retain the native FFmpeg prerequisite.
+CLI, desktop, sync-engine, and workspace lint tasks retain the native FFmpeg prerequisite.
 In the parent workspace, it also waits for the OpenAPI client and configuration
 generators; standalone checkouts use the committed generated Rust sources.
 Moon caches deliverable binaries under `dist/`, never Cargo's `target/` directory.
 
 The YouTube.js fork is bundled with Aube. The bundler replaces
 `vendor/bundle/cf-worker.js` only when its contents change, so Cargo can reuse
-the Rust crates that embed it. This task does not use Moon's output cache.
+the Rust crates that embed it. Moon caches the locked dependency installation
+locally and the source bundle as a build output. Unchanged runs reuse the existing
+bundle without touching its timestamp; missing outputs are restored from cache.
+The `youtubei` tasks track their own Rust sources, Cargo configuration, and the
+bundle contents, so editing the desktop UI does not invalidate them.
 
 ### Worktree disk usage
 

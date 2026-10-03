@@ -1,5 +1,7 @@
 language: typescript
 layer: library
+taskOptions:
+  cache: true
 fileGroups:
   sources:
     - youtubejs/src/**/*
@@ -14,16 +16,16 @@ tasks:
   install:
     command: aube install --frozen-lockfile --ignore-scripts
     inputs: [package.json, youtubejs/package.json, aube-workspace.yaml, aube-lock.yaml]
+    outputs: [node_modules, youtubejs/node_modules]
     options:
-      cache: false
+      cache: local
       internal: true
+      outputStyle: buffer-only-failure
   bundle:
     deps: [~:install]
     command: bash bundle.sh
     inputs: ['@group(sources)', bundle.sh]
     outputs: [bundle/cf-worker.js]
-    options:
-      cache: false
   test:
     deps: [~:bundle]
     command: aube exec --no-install vitest run --globals --testTimeout 30000 tests/youtubejs.test.js

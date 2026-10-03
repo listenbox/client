@@ -50,9 +50,13 @@ tasks:
   dev-tools:
     description: Install the pinned Subsecond build and watch driver.
     command: cargo install --locked --root dist/dev-tools dioxus-cli --version 0.7.10
-    inputs: [Cargo.toml, moon.yml]
-    outputs: [dist/dev-tools/bin/dx]
+    toolchains: [system]
+    inputs: ['project://client?group=rust-toolchain']
+    outputs: [dist/dev-tools/**/*]
     options:
+      cache: local
+      os: macos
+      outputStyle: buffer-only-failure
       runInCI: false
   dev-bundle-info:
     description: Generate the macOS development bundle's product name and current Cargo version.
