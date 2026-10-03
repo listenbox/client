@@ -76,14 +76,15 @@ pub fn install_actions(view: &Entity<Workspace>, cx: &mut App) {
 }
 
 pub fn refresh_menus(cx: &mut App) {
-    let mut items = vec![MenuItem::action("Settings…", OpenSettings)];
+    let mut items = vec![
+        MenuItem::action("Settings…", OpenSettings),
+        MenuItem::action("Check for Updates…", CheckUpdates).disabled(!crate::updater::can_check()),
+    ];
     if crate::updater::enabled() {
-        items.extend([
-            MenuItem::action("Check for Updates…", CheckUpdates)
-                .disabled(!crate::updater::can_check()),
+        items.push(
             MenuItem::action("Automatically Check for Updates", AutomaticUpdates)
                 .checked(crate::updater::automatic()),
-        ]);
+        );
     }
     items.extend([
         MenuItem::separator(),
@@ -92,6 +93,8 @@ pub fn refresh_menus(cx: &mut App) {
         MenuItem::action("Quit Listenbox", Quit),
     ]);
     cx.set_menus(vec![Menu::new("Listenbox").items(items)]);
+    #[cfg(target_os = "macos")]
+    macos::set_app_menu_title();
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     status_item::refresh(cx);
 }
@@ -134,11 +137,8 @@ mod status_item {
         let open = TrayMenuItem::new("Open Listenbox", true, None);
         let quit = TrayMenuItem::new("Quit Listenbox", true, None);
         let check = TrayMenuItem::new("Check for Updates…", crate::updater::can_check(), None);
-        menu.append_items(&[&open]).expect("status menu");
-        if crate::updater::enabled() {
-            menu.append_items(&[&check]).expect("updater status menu");
-        }
-        menu.append_items(&[&quit]).expect("status menu");
+        menu.append_items(&[&open, &check, &quit])
+            .expect("status menu");
         let check_id = check.id().clone();
         let (open, quit) = (open.id().clone(), quit.id().clone());
         let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
@@ -211,6 +211,23 @@ mod status_item {
 #[cfg(target_os = "macos")]
 mod macos {
     use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
+    use objc2_foundation::NSString;
+
+    pub(super) fn set_app_menu_title() {
+        let Some(main_thread) = objc2::MainThreadMarker::new() else {
+            return;
+        };
+        let app = NSApplication::sharedApplication(main_thread);
+        if let Some(menu) = app
+            .mainMenu()
+            .and_then(|menu| menu.itemAtIndex(0))
+            .and_then(|item| item.submenu())
+        {
+            // AppKit replaces the first menu's title with the bundle name when
+            // installing it. Set our product name after assigning the main menu.
+            menu.setTitle(&NSString::from_str("Listenbox"));
+        }
+    }
 
     pub(super) fn hide_window() {
         let app = NSApplication::sharedApplication(
