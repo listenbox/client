@@ -94,7 +94,7 @@ pub fn refresh_menus(cx: &mut App) {
     ]);
     cx.set_menus(vec![Menu::new("Listenbox").items(items)]);
     #[cfg(target_os = "macos")]
-    macos::set_app_menu_title();
+    macos::configure_app_menu();
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     status_item::refresh(cx);
 }
@@ -211,9 +211,7 @@ mod status_item {
 #[cfg(target_os = "macos")]
 mod macos {
     use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
-    use objc2_foundation::NSString;
-
-    pub(super) fn set_app_menu_title() {
+    pub(super) fn configure_app_menu() {
         let Some(main_thread) = objc2::MainThreadMarker::new() else {
             return;
         };
@@ -223,9 +221,10 @@ mod macos {
             .and_then(|menu| menu.itemAtIndex(0))
             .and_then(|item| item.submenu())
         {
-            // AppKit replaces the first menu's title with the bundle name when
-            // installing it. Set our product name after assigning the main menu.
-            menu.setTitle(&NSString::from_str("Listenbox"));
+            // GPUI's native validation only checks whether an action has a
+            // handler. Preserve our explicit enabled states, including Sparkle's
+            // canCheckForUpdates and development builds without an updater.
+            menu.setAutoenablesItems(false);
         }
     }
 

@@ -6,6 +6,7 @@ env:
   CARGO_TERM_COLOR: always
 tags: [client-workspace]
 fileGroups:
+  desktop-dev-config: [Cargo.toml, Cargo.lock, Dioxus.toml]
   notices: [LICENSE, THIRD-PARTY-NOTICES.txt]
   macos-install-tools: [tools/reinstall-macos.swift]
   sources:
@@ -21,6 +22,7 @@ fileGroups:
     - crates/desktop/assets/**/*
     - Cargo.toml
     - Cargo.lock
+    - Dioxus.toml
     - rust-toolchain.toml
     - .cargo/config.toml
     - .kache.toml

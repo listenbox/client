@@ -54,9 +54,17 @@ tasks:
     outputs: [dist/dev-tools/bin/dx]
     options:
       runInCI: false
+  dev-bundle-info:
+    description: Generate the macOS development bundle's product name and current Cargo version.
+    command: bash tools/dev-bundle-info.sh
+    inputs: [tools/dev-bundle-info.sh, Cargo.toml, 'project://client?group=desktop-dev-config']
+    outputs: [dist/dev-bundle/Info.plist]
+    options:
+      os: macos
+      runInCI: false
   dev:
     description: Hotpatch the running desktop UI with Subsecond against local Listenbox services.
-    deps: [client:prerequisites, ~:dev-tools]
+    deps: [client:prerequisites, ~:dev-tools, ~:dev-bundle-info]
     preset: server
     inputs: []
     env:

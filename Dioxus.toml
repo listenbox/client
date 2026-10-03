@@ -1,0 +1,3 @@
+[application]
+name = "Listenbox"
+macos_info_plist = "crates/desktop/dist/dev-bundle/Info.plist"

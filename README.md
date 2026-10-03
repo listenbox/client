@@ -194,6 +194,10 @@ moonx desktop:dev
 
 Moon installs the pinned Dioxus CLI (`dx` 0.7.10) into `crates/desktop/dist/dev-tools` and runs `dx serve --hot-patch` with the desktop's `hot-reload` feature. Subsecond patches rendering and UI event code in the running app. Each patch refreshes GPUI's window and recreates element callbacks while retaining the workspace, input entities, and active sync jobs. Failed builds leave the development session available for the next edit.
 
+Before starting `dx`, Moon generates the development bundle's `Info.plist` with
+the Listenbox application name and current Cargo version. `Dioxus.toml` selects
+that metadata. Native update controls remain disabled in development builds.
+
 Starting a new `dx` session recompiles the desktop executable to capture linker
 arguments, even when its source is unchanged. Cargo reuses unchanged dependency
 crates. Keep the session running for fast live patches.
