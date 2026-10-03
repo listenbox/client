@@ -95,8 +95,6 @@ pub fn refresh_menus(cx: &mut App) {
     cx.set_menus(vec![Menu::new("Listenbox").items(items)]);
     #[cfg(target_os = "macos")]
     macos::configure_app_menu();
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
-    status_item::refresh(cx);
 }
 
 pub fn show_window(cx: &mut App) {
@@ -128,7 +126,6 @@ mod status_item {
 
     struct StatusItem {
         _icon: TrayIcon,
-        check: TrayMenuItem,
     }
     impl Global for StatusItem {}
 
@@ -136,10 +133,7 @@ mod status_item {
         let menu = TrayMenu::new();
         let open = TrayMenuItem::new("Open Listenbox", true, None);
         let quit = TrayMenuItem::new("Quit Listenbox", true, None);
-        let check = TrayMenuItem::new("Check for Updates…", crate::updater::can_check(), None);
-        menu.append_items(&[&open, &check, &quit])
-            .expect("status menu");
-        let check_id = check.id().clone();
+        menu.append_items(&[&open, &quit]).expect("status menu");
         let (open, quit) = (open.id().clone(), quit.id().clone());
         let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
         #[cfg(target_os = "windows")]
@@ -171,9 +165,6 @@ mod status_item {
                         super::show_window(cx);
                     } else if id == quit {
                         view.update(cx, |view, cx| view.shutdown(Shutdown::Quit, cx));
-                    } else if id == check_id {
-                        super::show_window(cx);
-                        crate::updater::check();
                     }
                 });
             }
@@ -198,13 +189,7 @@ mod status_item {
         #[cfg(target_os = "windows")]
         let builder = builder.with_menu_on_left_click(false);
         let icon = builder.build().expect("Listenbox status icon");
-        cx.set_global(StatusItem { _icon: icon, check });
-    }
-
-    pub(super) fn refresh(cx: &App) {
-        if let Some(item) = cx.try_global::<StatusItem>() {
-            item.check.set_enabled(crate::updater::can_check());
-        }
+        cx.set_global(StatusItem { _icon: icon });
     }
 }
 
