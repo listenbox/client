@@ -34,11 +34,8 @@ pub fn prepare(directory: &Path, separate_audio: bool, cancel: &CancellationToke
         options.set("hls_time", "6");
         options.set("hls_playlist_type", "vod");
         options.set("hls_segment_type", "fmp4");
-        options.set("hls_fmp4_init_filename", "init.mp4");
-        options.set(
-            "hls_segment_filename",
-            &hls_path(&root.join("segment-%05d.m4s"))?,
-        );
+        options.set("hls_flags", "single_file");
+        options.set("hls_segment_filename", &hls_path(&root.join("media.mp4"))?);
         remux(&mut input, &mp4, &output, kind, options, cancel)?;
     }
     std::fs::write(
@@ -175,7 +172,7 @@ fn next_packet(
 }
 
 fn hls_path(path: &Path) -> Result<String> {
-    // FFmpeg's HLS muxer locates init.mp4 using '/' even on Windows.
+    // FFmpeg's HLS muxer resolves payload paths using '/' even on Windows.
     Ok(path
         .to_str()
         .context("non-UTF-8 media path")?

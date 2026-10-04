@@ -144,32 +144,28 @@ fn prepare_video(separate_audio: bool) {
         let hls = root.join("hls").join(kind);
         let playlist = fs::read_to_string(hls.join("index.m3u8")).unwrap();
         assert!(playlist.contains("#EXT-X-ENDLIST"));
-        assert!(playlist.contains("#EXT-X-MAP:URI=\"init.mp4\""));
-        let init = hls.join("init.mp4");
-        let mut bytes = fs::read(&init).unwrap_or_else(|error| panic!("reading {init:?}: {error}"));
+        assert!(playlist.contains("#EXT-X-MAP:URI=\"media.mp4\",BYTERANGE=\""));
+        assert!(playlist.contains("#EXT-X-BYTERANGE:"));
+        let payload = hls.join("media.mp4");
+        let bytes =
+            fs::read(&payload).unwrap_or_else(|error| panic!("reading {payload:?}: {error}"));
         let mut segments = 0;
         for line in playlist
             .lines()
             .filter(|line| !line.is_empty() && !line.starts_with('#'))
         {
             assert!(
-                line.starts_with("segment-") && !line.contains(['/', '\\', ':']),
+                line == "media.mp4",
                 "segment must be relative to its playlist: {line:?}"
-            );
-            let segment = hls.join(line);
-            bytes.extend(
-                fs::read(&segment).unwrap_or_else(|error| panic!("reading {segment:?}: {error}")),
             );
             segments += 1;
         }
         assert!((1..=2).contains(&segments));
         assert!((5_000..1_500_000).contains(&bytes.len()));
-        let joined = root.join(format!("{kind}-segments.mp4"));
-        fs::write(&joined, bytes).unwrap();
         if kind == "audio" {
-            assert_audio(&joined);
+            assert_audio(&payload);
         } else {
-            assert_video(&joined);
+            assert_video(&payload);
         }
     }
 }

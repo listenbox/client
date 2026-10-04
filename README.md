@@ -135,6 +135,18 @@ test executable for integrated tests; release packaging stays in this repository
 
 ### Native media acceptance
 
+Video imports select H.264 up to 1080p and prefer AAC so preparation copies
+encoded streams. At the same resolution and frame rate, selection favors an
+AAC-compatible source, then the smallest complete download; combined AAC is
+reused when a standalone AAC stream is unavailable. Opus is encoded to AAC only
+when the selected rendition has no usable AAC source.
+
+Each video package contains progressive MP4 and M4A, three HLS playlists, and
+one fragmented MP4 payload per HLS track. Init data and segments use byte ranges
+in those two payloads, keeping the package at seven objects regardless of length.
+Admission signs their first parts together, and the existing upload journal
+preserves acknowledged parts across interruption and explicit sync.
+
 `moon run client-engine:test-media` runs the production media preparation code
 against local AAC, Opus, and AVC fixtures. It decodes M4A, MP4, and HLS output and
 checks invalid input, cancellation before preparation, and native tool paths.

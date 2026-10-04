@@ -415,22 +415,6 @@ impl YouTube {
                     && !f.is_type_otf
                     && (f.url.is_some() || f.cipher.is_some() || f.signature_cipher.is_some())
             });
-            let video = formats
-                .iter()
-                .filter(|format| {
-                    let f = format.info();
-                    f.has_video
-                        && f.mime_type.contains("avc1")
-                        && f.height
-                            .is_some_and(|height| height > 0.0 && height <= 1080.0)
-                })
-                .max_by(|a, b| {
-                    a.info()
-                        .height
-                        .unwrap()
-                        .total_cmp(&b.info().height.unwrap())
-                })
-                .context("YouTube video has no AVC rendition at or below 1080p")?;
             // AAC can be copied into M4A, so prefer it before comparing bitrates.
             let audio = formats
                 .iter()
@@ -449,17 +433,63 @@ impl YouTube {
                         .cmp(&b.mime_type.contains("mp4a.40."))
                         .then_with(|| a.bitrate.total_cmp(&b.bitrate))
                 });
-            let audio = match audio {
-                Some(audio)
-                    if audio.info().mime_type.contains("mp4a.40.")
-                        || !video.info().has_audio
-                        || !video.info().mime_type.contains("mp4a.40.") =>
-                {
-                    Some(audio)
-                }
-                _ if video.info().has_audio => None,
-                _ => bail!("YouTube video has no audio stream"),
+            let embedded_aac = |format: &Format| {
+                let f = format.info();
+                f.has_audio && f.mime_type.contains("mp4a.40.")
             };
+            let separate_audio = |video: &Format| {
+                // Keep standalone AAC for audio-only imports and its default track.
+                // Embedded AAC avoids using a standalone stream that needs encoding.
+                if embedded_aac(video)
+                    && !audio.is_some_and(|audio| audio.info().mime_type.contains("mp4a.40."))
+                {
+                    None
+                } else {
+                    audio
+                }
+            };
+            let copyable_audio = |video: &Format| {
+                embedded_aac(video)
+                    || audio.is_some_and(|audio| audio.info().mime_type.contains("mp4a.40."))
+            };
+            let seconds = data.basic_info.duration.filter(|seconds| seconds.is_finite() && *seconds > 0.0);
+            let download_bitrate = |video: &Format| {
+                let valid_rate = |format: &Format| {
+                    if let Some(seconds) = seconds
+                        && let Some(length) = format.info().content_length.filter(|length| length.is_finite() && *length > 0.0)
+                    {
+                        return length * 8.0 / seconds;
+                    }
+                    let rate = format.info().bitrate;
+                    if rate.is_finite() && rate > 0.0 { rate } else { f64::INFINITY }
+                };
+                valid_rate(video) + separate_audio(video).map_or(0.0, valid_rate)
+            };
+            let frame_rate = |format: &Format| format.info().fps.filter(|fps| fps.is_finite() && *fps > 0.0).unwrap_or(0.0);
+            // Keep the highest AVC resolution/frame rate within the 1080p cap.
+            // Within that resolution/frame rate, avoid AAC encoding, then minimize bytes.
+            let video = formats
+                .iter()
+                .filter(|format| {
+                    let f = format.info();
+                    f.has_video
+                        && f.mime_type.contains("avc1")
+                        && f.height
+                            .is_some_and(|height| height > 0.0 && height <= 1080.0)
+                        && f.audio_track
+                            .as_ref()
+                            .is_none_or(|track| track.audio_is_default)
+                        && (f.has_audio || audio.is_some())
+                })
+                .max_by(|a, b| {
+                    a.info().height.unwrap().total_cmp(&b.info().height.unwrap())
+                        .then_with(|| frame_rate(a).total_cmp(&frame_rate(b)))
+                        .then_with(|| copyable_audio(a).cmp(&copyable_audio(b)))
+                        .then_with(|| download_bitrate(b).total_cmp(&download_bitrate(a)))
+                        .then_with(|| b.info().itag.cmp(&a.info().itag))
+                })
+                .context("YouTube video has no AVC rendition with audio at or below 1080p")?;
+            let audio = separate_audio(video);
             ensure!(
                 data.basic_info.id.as_deref() == Some(id),
                 "YouTube metadata video ID differs from the requested video"
