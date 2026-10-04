@@ -452,7 +452,7 @@ impl YouTube {
         Ok(PlayerResponse::Available(info))
     }
 
-    pub async fn media(&self, api: &Api, id: &str) -> Result<Playback> {
+    pub async fn media(&self, api: &Api, id: &str, collection: &str) -> Result<Playback> {
         api.wait(async {
             let info = match self.player_info(id, Client::Web).await? {
                 PlayerResponse::Available(info) => info,
@@ -567,10 +567,14 @@ impl YouTube {
                 "YouTube metadata video ID differs from the requested video"
             );
             let published = match data.microformat {
-                Some(Microformat::PlayerMicroformat(metadata)) => metadata
-                    .publish_date
-                    .filter(|date| !date.is_empty())
-                    .or(metadata.upload_date),
+                Some(Microformat::PlayerMicroformat(metadata)) => {
+                    let (primary, secondary) = if collection.starts_with("https://www.youtube.com/channel/") {
+                        (metadata.upload_date, metadata.publish_date)
+                    } else {
+                        (metadata.publish_date, metadata.upload_date)
+                    };
+                    primary.filter(|date| !date.is_empty()).or(secondary.filter(|date| !date.is_empty()))
+                },
                 _ => None,
             }
             .context("YouTube video has no publication date")?;

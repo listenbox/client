@@ -168,7 +168,7 @@ impl Engine {
         let collection = before
             .show
             .youtube_linkage()
-            .context("This podcast has no linked YouTube playlist or video.")?;
+            .context("This podcast has no linked YouTube playlist, channel or video.")?;
         let source = url::Url::parse(collection)?;
         let initialized;
         let youtube = if let Some((_, _, youtube)) = &scanned {
@@ -183,7 +183,7 @@ impl Engine {
                 "Show source differs from the admitted playlist"
             );
             snapshot
-        } else if let Some((_, playlist)) = source.query_pairs().find(|(key, _)| key == "list") {
+        } else if let Some(playlist) = crate::youtube::collection_playlist_id(&source) {
             youtube.snapshot(api, &playlist).await?
         } else {
             let id = source

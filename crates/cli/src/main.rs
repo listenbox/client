@@ -27,7 +27,7 @@ enum Command {
         #[command(subcommand)]
         command: AuthCommand,
     },
-    /// Import an RSS feed or public YouTube video/playlist
+    /// Import an RSS feed or public YouTube video, playlist or channel
     Import {
         #[arg(long)]
         slug: Option<String>,

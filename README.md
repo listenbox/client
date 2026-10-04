@@ -268,13 +268,14 @@ The desktop's sign-in button opens Listenbox in your browser. `listenbox login` 
 listenbox login
 listenbox shows list
 listenbox import --slug field-notes 'https://www.youtube.com/playlist?list=PLAYLIST_ID'
+listenbox import --slug channel-notes 'https://www.youtube.com/@your-channel/videos'
 listenbox shows sync youtube --show field-notes
 listenbox shows sync youtube --show field-notes --watch
 ```
 
-An active paid audio or video plan is required for synchronization. The desktop automatically syncs on startup and every hour while running. Sync now requests an immediate pass. Its library lists only existing YouTube imports, including accessible imports shared with you. Import creates a fresh podcast; its source is fixed. Once that podcast is created, another playlist can be imported while its episodes continue importing. Progress and Stop apply to each podcast independently. A URL is needed only for import. Sync and watch need just the slug. A source cannot coexist with a YouTube publishing destination; PostgreSQL enforces both directions. The backend checks permissions and video allowance when admitting work.
+An active paid audio or video plan is required for synchronization. The desktop automatically syncs on startup and every hour while running. Sync now requests an immediate pass. Its library lists only existing YouTube imports, including accessible imports shared with you. Import creates a fresh podcast; its canonical YouTube linkage is shared with the publishing destination. Once that podcast is created, another playlist can be imported while its episodes continue importing. Progress and Stop apply to each podcast independently. A URL is needed only for import. Sync and watch need just the slug. An active destination stops imports; pausing it resumes imports from the same playlist or channel. Saving No playlist links the connected channel and never adds uploaded videos to its uploads playlist. The backend checks permissions and video allowance when admitting work.
 
-The engine requests a listing that includes hidden videos and follows every continuation before reconciling canonical item URLs. Each new video ID gets a playback check, even when playlist metadata labels it unavailable. Playable videos become episodes; unavailable videos are skipped without retries until the next sync. A playlist with no playable videos can still be imported and populated later. Informational and warning alerts allow imports but prevent deleting missing episodes because YouTube may have hidden them. Removed videos are deleted only after an alert-free scan and only when imported into this podcast. Unavailable videos and manually uploaded episodes are preserved. Playlist order becomes RSS order; real publication dates stay intact. Reordering does not repeat media work.
+The engine requests a listing that includes hidden videos and follows every continuation before reconciling canonical item URLs. Each new video ID gets a playback check, even when playlist metadata labels it unavailable. Playable videos become episodes; unavailable videos are skipped without retries until the next sync. A playlist with no playable videos can still be imported and populated later. Informational and warning alerts allow imports but prevent deleting missing episodes because YouTube may have hidden them. Removed videos are deleted only after an alert-free scan and only when imported into this podcast. Unavailable videos and manually uploaded episodes are preserved. Playlist order becomes RSS order; real publication dates stay intact. Channels resolve their handle to a canonical channel ID, derive the uploads playlist by replacing UC with UU, and order episodes by upload dates, newest first. Reordering does not repeat media work.
 
 Media packages are immutable after admission, through preparation, upload and publication. Each sync pass also reconciles mutable metadata through the public API: source title changes update existing imported episodes without replacing media, changing publication dates or allocating upload sessions. Missing or unavailable source titles preserve the saved title. Metadata requests are atomic and split by serialized JSON size at 4 MiB, with no limit on a podcast's episode count. The backend rechecks permissions, the paid plan and current source linkage under the same show lock used for media admission and deletion.
 
@@ -296,7 +297,7 @@ listenbox shows order --show field-notes
 listenbox shows order --show field-notes --episode ep_0123456789abcdef --episode ep_fedcba9876543210
 ```
 
-Supplied episodes move to the front in sequence; other episodes retain their relative order. Sync restores playlist order for imported podcasts.
+Supplied episodes move to the front in sequence; other episodes retain their relative order. Sync restores playlist order for playlist imports. Channel imports retain upload-date ordering.
 
 ## YouTube sign-in checks
 

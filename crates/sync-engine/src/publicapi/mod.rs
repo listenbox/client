@@ -1025,6 +1025,8 @@ pub enum CreateShowResponse {
     Status402(()),
     Status403(()),
     Status409(()),
+    Status422(()),
+    Status502(()),
     Unexpected(reqwest::Response),
 }
 impl Response for CreateShowResponse {
@@ -1036,6 +1038,8 @@ impl Response for CreateShowResponse {
             402 => Self::Status402(()),
             403 => Self::Status403(()),
             409 => Self::Status409(()),
+            422 => Self::Status422(()),
+            502 => Self::Status502(()),
             _ => Self::Unexpected(response),
         })
     }
@@ -1047,6 +1051,8 @@ impl Response for CreateShowResponse {
             Self::Status402(_) => 402,
             Self::Status403(_) => 403,
             Self::Status409(_) => 409,
+            Self::Status422(_) => 422,
+            Self::Status502(_) => 502,
             Self::Unexpected(response) => response.status().as_u16(),
         }
     }
@@ -1059,6 +1065,8 @@ impl Response for CreateShowResponse {
             Self::Status402(_) => Ok(Vec::new()),
             Self::Status403(_) => Ok(Vec::new()),
             Self::Status409(_) => Ok(Vec::new()),
+            Self::Status422(_) => Ok(Vec::new()),
+            Self::Status502(_) => Ok(Vec::new()),
             Self::Unexpected(response) => read_body(response, 64 << 10).await,
         };
         match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
