@@ -174,10 +174,12 @@ Stable desktop releases use the workspace `X.Y.Z` version and matching
 `vX.Y.Z` tag. Each complete release contains a Developer ID signed,
 notarized Apple Silicon DMG and Windows x64/ARM64 per-user Setup installers.
 Sparkle on macOS and WinSparkle on Windows provide native update prompts,
-manual checks and persisted automatic-check preferences. Both verify Ed25519
-signatures for the final download. Settings offers Check for Updates and
-Automatically Check for Updates on macOS and Windows. The macOS Listenbox
-menu also offers Check for Updates.
+manual checks and persisted update preferences. Automatic checks default to on
+for both systems; macOS also defaults to automatic downloads and installation.
+Podcasters can disable these in Settings. Update prompts use compact native
+controls without embedded release pages or webviews. Both verify Ed25519
+signatures for the final download. Settings offers Check for Updates on macOS
+and Windows. The macOS Listenbox menu also offers Check for Updates.
 
 Windows installers currently have no Authenticode publisher certificate and
 may show a SmartScreen warning. Their in-app update authenticity is protected

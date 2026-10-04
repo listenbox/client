@@ -50,7 +50,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             r#"<key>SUFeedURL</key><string>https://github.com/listenbox/client/releases/latest/download/appcast-macos-arm64.xml</string>
 <key>SUPublicEDKey</key><string>{updater_key}</string>
 <key>SUEnableAutomaticChecks</key><true/>
-<key>SUAutomaticallyUpdate</key><false/>
+<key>SUAutomaticallyUpdate</key><true/>
+<key>SUShowReleaseNotes</key><false/>
 <key>SUUpdateCheckInterval</key><integer>86400</integer>"#
         )
     } else {

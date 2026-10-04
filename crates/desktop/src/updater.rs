@@ -30,6 +30,8 @@ mod native {
         fn listenbox_updater_can_check() -> i32;
         fn listenbox_updater_automatic() -> i32;
         fn listenbox_updater_set_automatic(enabled: i32);
+        fn listenbox_updater_automatic_downloads() -> i32;
+        fn listenbox_updater_set_automatic_downloads(enabled: i32);
         fn listenbox_updater_check();
         fn listenbox_updater_drained();
         fn listenbox_updater_permit_termination();
@@ -58,6 +60,38 @@ mod native {
         event(2);
     }
 
+    #[cfg(target_os = "windows")]
+    fn default_automatic_checks(registry_path: &[u16]) {
+        use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
+        use windows_sys::Win32::System::Registry::{
+            HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_ANY, RegGetValueW,
+        };
+
+        // WinSparkle reads user settings first, then machine-wide settings.
+        // Its getter cannot distinguish an absent preference from an opt-out.
+        let name: Vec<u16> = "CheckForUpdates".encode_utf16().chain([0]).collect();
+        for hive in [HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE] {
+            let status = unsafe {
+                RegGetValueW(
+                    hive,
+                    registry_path.as_ptr(),
+                    name.as_ptr(),
+                    RRF_RT_ANY,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                )
+            };
+            if status != ERROR_FILE_NOT_FOUND {
+                if status != ERROR_SUCCESS {
+                    eprintln!("Cannot read the saved automatic-update preference: {status}");
+                }
+                return;
+            }
+        }
+        unsafe { win_sparkle_set_automatic_check_for_updates(1) };
+    }
+
     pub fn init(sender: UnboundedSender<i32>) -> anyhow::Result<()> {
         EVENTS
             .set(sender)
@@ -84,6 +118,7 @@ mod native {
                 unsafe { win_sparkle_set_eddsa_public_key(key.as_ptr()) } == 1,
                 "WinSparkle rejected the update public key"
             );
+            let registry_path = c"Software\\Listenbox\\Updates";
             unsafe {
                 win_sparkle_set_app_details(
                     wide("Listenbox").as_ptr(),
@@ -93,10 +128,13 @@ mod native {
                 win_sparkle_set_app_build_version(
                     wide(concat!(env!("CARGO_PKG_VERSION"), ".0")).as_ptr(),
                 );
-                win_sparkle_set_registry_path(c"Software\\Listenbox\\Updates".as_ptr());
+                win_sparkle_set_registry_path(registry_path.as_ptr());
                 win_sparkle_set_appcast_url(feed.as_ptr());
                 win_sparkle_set_shutdown_request_callback(shutdown);
                 win_sparkle_set_update_check_interval(86400);
+            }
+            default_automatic_checks(&wide(registry_path.to_str()?));
+            unsafe {
                 win_sparkle_init();
             }
         }
@@ -126,6 +164,14 @@ mod native {
         unsafe {
             win_sparkle_set_automatic_check_for_updates(enabled);
         }
+    }
+    #[cfg(target_os = "macos")]
+    pub fn automatic_downloads() -> bool {
+        unsafe { listenbox_updater_automatic_downloads() == 1 }
+    }
+    #[cfg(target_os = "macos")]
+    pub fn toggle_automatic_downloads() {
+        unsafe { listenbox_updater_set_automatic_downloads(i32::from(!automatic_downloads())) };
     }
     pub fn check() {
         #[cfg(target_os = "macos")]
@@ -209,6 +255,16 @@ pub fn check() {
 pub fn toggle_automatic() {
     #[cfg(listenbox_updater)]
     native::toggle_automatic();
+}
+pub fn automatic_downloads() -> bool {
+    #[cfg(all(listenbox_updater, target_os = "macos"))]
+    return native::automatic_downloads();
+    #[cfg(not(all(listenbox_updater, target_os = "macos")))]
+    false
+}
+pub fn toggle_automatic_downloads() {
+    #[cfg(all(listenbox_updater, target_os = "macos"))]
+    native::toggle_automatic_downloads();
 }
 pub fn drained(cx: &mut App) {
     #[cfg(listenbox_updater)]

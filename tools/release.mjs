@@ -72,7 +72,6 @@ function appcast(manifest) {
 <sparkle:version>${xml(buildVersion)}</sparkle:version>
 <sparkle:shortVersionString>${xml(manifest.version)}</sparkle:shortVersionString>
 <sparkle:minimumSystemVersion>${windows ? '10.0.22000' : '13.0'}</sparkle:minimumSystemVersion>
-<sparkle:releaseNotesLink>${base}/tag/${xml(manifest.tag)}</sparkle:releaseNotesLink>
 <enclosure url="${base}/download/${xml(manifest.tag)}/${xml(manifest.asset)}" length="${manifest.length}" type="application/octet-stream" sparkle:version="${xml(buildVersion)}" sparkle:shortVersionString="${xml(manifest.version)}" sparkle:edSignature="${xml(manifest.signature)}" sparkle:os="${windows ? xml(manifest.platform) : 'macos'}"${windows ? ' sparkle:installerArguments="/SILENT /SP- /NOICONS /NORESTART /UPGRADE"' : ''}/>
 </item></channel></rss>
 `;

@@ -7,11 +7,28 @@ verified before extraction, and their licenses accompany installed files.
 Developer builds have no native updater or production checks. Release builds
 enable `native-updater` explicitly and require a valid public key.
 
-Both frameworks check every 24 hours. Settings exposes Check for Updates and
-Automatically Check for Updates on macOS and Windows, using the native
-framework's persisted preference. Developer builds show both controls disabled.
-The macOS Listenbox menu also offers Check for Updates. Manual checks bring the
-app forward and use native current/error feedback.
+Both frameworks check every 24 hours. Automatic checks default to enabled on
+both platforms; macOS also defaults to automatically downloading and installing
+updates. Settings exposes an automatic-check checkbox on both platforms and a
+download-and-install checkbox on macOS. Each reads and writes the native
+framework's persisted preference. Existing opt-outs survive application restarts:
+macOS uses bundle defaults, while Windows enables checks before initialization
+only if WinSparkle's `CheckForUpdates` value is absent from both its user and
+machine registry locations. Registry read failures do not overwrite preferences.
+WinSparkle 0.9.4 has no automatic-download preference, so Windows continues to
+ask before downloading or installing. Windows changes apply on the next launch:
+WinSparkle starts its periodic checker during initialization, and its preference
+setter only writes the saved setting. Listenbox does not create another checker
+or restart the framework when the checkbox changes.
+Developer builds show the update controls disabled. Settings offers Check for
+Updates on both platforms; the macOS Listenbox menu also offers it. Manual
+checks bring the app forward and use native current/error feedback.
+
+Update alerts use the frameworks' compact native version and installation
+controls. Appcast items contain neither release-notes links nor inline
+descriptions, so Sparkle and WinSparkle do not create release-notes webviews.
+The macOS bundle also sets `SUShowReleaseNotes=false`. GitHub release pages are
+for reading in a browser, never inside an update alert.
 
 The workspace TaskTracker remains the authoritative owner of admitted work.
 Updater callbacks only enqueue a request onto GPUI. The workspace cancels new
@@ -130,6 +147,15 @@ reject modified/missing/wrong signatures, malformed feeds and incompatible OS.
 Inject interrupted install/download and denied permissions without repairing
 state before assertions. Assert admitted work is reached before cancellation.
 
+With no saved updater preferences, verify the automatic-check checkbox is
+checked on both systems and the download-and-install checkbox is checked on
+macOS. Disable each, restart, and verify the opt-out persists; re-enable and
+verify persistence again. A preference changed in Sparkle's native alert must
+also update an already-open Settings view. Verify both update alerts in light
+and dark appearance contain the current/new versions and native install,
+skip and reminder controls, with no embedded browser or empty notes panel.
+On Windows, also verify a machine-level `CheckForUpdates` opt-out is honored.
+
 Publication proof must cover missing targets, missing signing/notary inputs,
 partial uploads, same-identity draft retries, conflicting bytes, and stale
 promotion. Tests must exercise the actual publisher boundary rather than
@@ -137,3 +163,11 @@ restating manifest values. Local smoke checks and compilation do not prove
 the real cross-platform upgrade path. No real cross-platform upgrade result
 has been recorded yet. Apple credentials are provisioned; native Windows
 machines and two complete release versions are needed for upgrade acceptance.
+
+The parent dashboard's `src/e2e/desktop-release.test.ts` invokes the actual
+release CLI with isolated signed payloads for macOS ARM64 and Windows x64/ARM64.
+Its dialog regressions fail when appcasts contain a release-notes URL or inline
+description, while retaining version and signed download metadata. These
+regressions were red before removing the GitHub URL and green afterward. They
+prove the feed contract, not native appearance or persisted OS preferences;
+those require the installed-app checks above.

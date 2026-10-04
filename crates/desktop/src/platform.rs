@@ -13,7 +13,14 @@ pub use windows::InstallationLock;
 
 actions!(
     listenbox,
-    [Logout, Quit, OpenSettings, CheckUpdates, AutomaticUpdates]
+    [
+        Logout,
+        Quit,
+        OpenSettings,
+        CheckUpdates,
+        AutomaticUpdates,
+        AutomaticDownloads
+    ]
 );
 
 /// Query the actual shortcut key while its quit attempt is active. macOS can
@@ -75,6 +82,11 @@ pub fn install_actions(view: &Entity<Workspace>, cx: &mut App) {
     cx.on_action(move |_: &AutomaticUpdates, cx| {
         crate::updater::toggle_automatic();
         automatic_updates.update(cx, |_, cx| cx.notify());
+    });
+    let automatic_downloads = view.clone();
+    cx.on_action(move |_: &AutomaticDownloads, cx| {
+        crate::updater::toggle_automatic_downloads();
+        automatic_downloads.update(cx, |_, cx| cx.notify());
     });
     refresh_menus(cx);
 }
