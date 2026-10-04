@@ -44,8 +44,10 @@
 
 - Manually bump `[workspace.package].version` in `Cargo.toml`, run `kache cargo -- update --workspace`,
   commit/merge, then tag that client commit `vX.Y.Z` and push that specific tag.
-- Approve `desktop-release` jobs; Actions publishes all desktop installers and
-  update feeds together. Branch/PR builds never publish releases.
+- Pushing the matching version tag automatically starts `desktop-release` jobs;
+  no manual deployment approval is required. Actions publishes all desktop
+  installers and update feeds together after all native builds and publication
+  checks succeed. Branch/PR builds never publish releases.
 
 ## YouTube.js fork and upstream fixes
 

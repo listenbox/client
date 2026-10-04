@@ -186,8 +186,9 @@ by WinSparkle's embedded public key. SignPath approval is being pursued
 separately and is not a release prerequisite.
 
 Pushes to `master` and pull requests build validation artifacts without
-production signing secrets. Tagged builds use the protected `desktop-release`
-environment and publish only after all three native builds complete. The
+production signing secrets. Pushing a matching version tag automatically starts
+the release through the `desktop-release` environment without manual deployment
+approval. It publishes only after all three native builds complete. The
 publisher verifies immutable assets and anonymous downloads before selecting
 the new stable release as Latest. See [native updates](docs/native-updates.md)
 for the release contract, signing setup, recovery and remaining native upgrade

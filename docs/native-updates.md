@@ -46,8 +46,10 @@ compile the same per-user installer as stable releases. Their
 validation packages an ad-hoc development bundle; protected tags enable its
 native updater and Developer ID/notarization path.
 
-The `desktop-release` environment requires owner review and allows only
-`v*` tags. Its protected jobs sign/notarize the macOS artifact and build
+The `desktop-release` environment allows only `v*` tags and has no required
+reviewers or wait timer. Pushing a matching version tag automatically starts
+the release jobs and publication without manual deployment approval. Its
+jobs sign/notarize the macOS artifact and build
 Windows per-user installers before generating separate architecture appcasts.
 Final payload bytes receive Ed25519 signatures after packaging and macOS
 stapling. Missing updater or Apple signing credentials fail closed.
