@@ -7,8 +7,11 @@ use std::{
 use tokio::sync::watch;
 
 mod adaptive;
-use adaptive::AdaptiveLimit;
-pub use adaptive::{INITIAL_TRANSFERS, MAX_TRANSFERS};
+pub use adaptive::{INITIAL_DOWNLOADS, INITIAL_UPLOADS, MAX_DOWNLOADS, MAX_UPLOADS};
+use adaptive::{NetworkLimits, Observation};
+
+const MAX_PREPARATIONS: usize = 4;
+pub const MAX_IN_FLIGHT: usize = MAX_DOWNLOADS + MAX_UPLOADS + MAX_PREPARATIONS;
 
 pub const RANGES_PER_TRANSFER: usize = 4;
 pub const RANGE_BYTES: usize = 1024 * 1024;
@@ -59,7 +62,9 @@ pub enum Phase {
     Queued,
     Resolving,
     Downloading,
+    WaitingToPrepare,
     Preparing,
+    WaitingToUpload,
     Uploading,
     Retrying,
     Complete,
@@ -80,7 +85,9 @@ impl Phase {
             Self::Queued => "Queued",
             Self::Resolving => "Resolving media",
             Self::Downloading => "Downloading",
+            Self::WaitingToPrepare => "Waiting to prepare",
             Self::Preparing => "Preparing media",
+            Self::WaitingToUpload => "Waiting to upload",
             Self::Uploading => "Uploading",
             Self::Retrying => "Retrying",
             Self::Complete => "Complete",
@@ -94,7 +101,6 @@ impl Phase {
 pub enum RangePhase {
     Waiting,
     Active,
-    Retrying,
     Complete,
 }
 
@@ -162,14 +168,21 @@ impl Download {
 #[derive(Clone, PartialEq, Eq)]
 pub struct Snapshot {
     pub items: Vec<Download>,
-    pub slot_limit: usize,
+    pub download_slots: usize,
+    pub upload_slots: usize,
+    pub preparation_slots: usize,
 }
 
 impl Default for Snapshot {
     fn default() -> Self {
         Self {
             items: Vec::new(),
-            slot_limit: INITIAL_TRANSFERS,
+            download_slots: INITIAL_DOWNLOADS,
+            upload_slots: INITIAL_UPLOADS,
+            preparation_slots: std::thread::available_parallelism()
+                .map_or(1, usize::from)
+                .saturating_sub(1)
+                .clamp(1, MAX_PREPARATIONS),
         }
     }
 }
@@ -177,11 +190,14 @@ impl Default for Snapshot {
 struct ManagerState {
     snapshot: Snapshot,
     active: usize,
-    adaptive: AdaptiveLimit,
-    sampled_at: Instant,
-    received: u64,
-    retried: bool,
-    idle_since: Option<Instant>,
+    stage_active: [usize; 3],
+    stage_waiting: [usize; 3],
+    adaptive: NetworkLimits,
+    sampled_at: tokio::time::Instant,
+    bytes: [u64; 2],
+    failed: [bool; 2],
+    population_changed: [bool; 2],
+    idle_since: Option<tokio::time::Instant>,
 }
 
 impl Default for ManagerState {
@@ -189,44 +205,41 @@ impl Default for ManagerState {
         Self {
             snapshot: Snapshot::default(),
             active: 0,
-            adaptive: AdaptiveLimit::default(),
-            sampled_at: Instant::now(),
-            received: 0,
-            retried: false,
-            idle_since: Some(Instant::now()),
+            stage_active: [0; 3],
+            stage_waiting: [0; 3],
+            adaptive: NetworkLimits::default(),
+            sampled_at: tokio::time::Instant::now(),
+            bytes: [0; 2],
+            failed: [false; 2],
+            population_changed: [false; 2],
+            idle_since: Some(tokio::time::Instant::now()),
         }
     }
 }
 
 impl ManagerState {
-    fn sample(&mut self, now: Instant) -> bool {
+    fn sample(&mut self, now: tokio::time::Instant) -> bool {
         let elapsed = now.duration_since(self.sampled_at);
         if elapsed < SAMPLE_INTERVAL {
             return false;
         }
-        let downloading = self
-            .snapshot
-            .items
-            .iter()
-            .filter(|item| item.phase == Phase::Downloading)
-            .count();
-        let saturated = self.active >= self.adaptive.limit
-            && self
-                .snapshot
-                .items
-                .iter()
-                .any(|item| item.phase == Phase::Queued);
-        self.adaptive.sample(
-            (self.received as f64 / elapsed.as_secs_f64()) as u64,
-            saturated,
-            downloading,
-            self.retried,
-        );
-        self.received = 0;
-        self.retried = false;
+        let limits = self.adaptive.limits();
+        self.adaptive
+            .sample(std::array::from_fn(|index| Observation {
+                rate: self.bytes[index] as f64 / elapsed.as_secs_f64(),
+                active: self.stage_active[index],
+                saturated: self.stage_active[index] >= limits[index]
+                    && self.stage_waiting[index] > 0,
+                stable: !self.population_changed[index],
+                failed: self.failed[index],
+            }));
+        self.bytes = [0; 2];
+        self.failed = [false; 2];
+        self.population_changed = [false; 2];
         self.sampled_at = now;
-        let changed = self.snapshot.slot_limit != self.adaptive.limit;
-        self.snapshot.slot_limit = self.adaptive.limit;
+        let next = self.adaptive.limits();
+        let changed = limits != next;
+        [self.snapshot.download_slots, self.snapshot.upload_slots] = next;
         changed
     }
 }
@@ -269,7 +282,7 @@ impl DownloadManager {
         self.state.read().snapshot.clone()
     }
 
-    fn sample(&self, now: Instant) {
+    fn sample(&self, now: tokio::time::Instant) {
         if self.state.write().sample(now) {
             self.changed.send_replace(());
         }
@@ -357,31 +370,26 @@ impl Transfer {
     pub async fn acquire(&self) -> ActiveTransfer {
         let mut changed = self.manager.changed.subscribe();
         loop {
-            self.manager.sample(Instant::now());
+            self.manager.sample(tokio::time::Instant::now());
             {
                 let mut state = self.manager.state.write();
-                if state.active < state.snapshot.slot_limit {
-                    // One shared budget includes resolution, conversion and upload.
+                if state.active < MAX_IN_FLIGHT {
+                    // Bound downloaded/prepared work if a later stage is slower.
+                    // Resource permits are acquired separately, never nested.
                     if state
                         .idle_since
                         .take()
                         .is_some_and(|since| since.elapsed() >= SAMPLE_INTERVAL)
                     {
-                        state.adaptive = AdaptiveLimit::default();
-                        state.snapshot.slot_limit = INITIAL_TRANSFERS;
-                        state.sampled_at = Instant::now();
-                        state.received = 0;
-                        state.retried = false;
+                        state.adaptive = NetworkLimits::default();
+                        state.snapshot.download_slots = INITIAL_DOWNLOADS;
+                        state.snapshot.upload_slots = INITIAL_UPLOADS;
+                        state.sampled_at = tokio::time::Instant::now();
+                        state.bytes = [0; 2];
+                        state.failed = [false; 2];
+                        state.population_changed = [false; 2];
                     }
                     state.active += 1;
-                    if let Some(item) = state
-                        .snapshot
-                        .items
-                        .iter_mut()
-                        .find(|item| item.id == self.id)
-                    {
-                        item.phase = Phase::Resolving;
-                    }
                     return ActiveTransfer {
                         transfer: self.clone(),
                         finished: false,
@@ -395,6 +403,55 @@ impl Transfer {
                 _ = tokio::time::sleep(Duration::from_secs(1)) => {}
             }
         }
+    }
+
+    pub(crate) async fn acquire_stage(&self, stage: Stage) -> StageTransfer {
+        let mut changed = self.manager.changed.subscribe();
+        let index = stage as usize;
+        self.manager.state.write().stage_waiting[index] += 1;
+        let mut waiting = WaitingStage {
+            manager: self.manager.clone(),
+            stage,
+            waiting: true,
+        };
+        self.phase(stage.waiting_phase());
+        loop {
+            self.manager.sample(tokio::time::Instant::now());
+            {
+                let mut state = self.manager.state.write();
+                let limit = match stage {
+                    Stage::Download => state.snapshot.download_slots,
+                    Stage::Upload => state.snapshot.upload_slots,
+                    Stage::Prepare => state.snapshot.preparation_slots,
+                };
+                if state.stage_active[index] < limit {
+                    state.stage_active[index] += 1;
+                    state.stage_waiting[index] -= 1;
+                    waiting.waiting = false;
+                    if index < 2 {
+                        state.population_changed[index] = true;
+                    }
+                    drop(state);
+                    self.phase(stage.active_phase());
+                    return StageTransfer {
+                        manager: self.manager.clone(),
+                        stage,
+                    };
+                }
+            }
+            tokio::select! {
+                result = changed.changed() => result.expect("Manager owns admission channel"),
+                _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+            }
+        }
+    }
+
+    pub(crate) fn uploaded(&self, bytes: u64) {
+        let mut state = self.manager.state.write();
+        state.bytes[Stage::Upload as usize] += bytes;
+        state.sample(tokio::time::Instant::now());
+        drop(state);
+        self.manager.changed.send_replace(());
     }
 
     pub fn attempt(&self, attempt: usize) {
@@ -458,7 +515,6 @@ impl Transfer {
         let now = Instant::now();
         let mut state = self.manager.state.write();
         let mut bytes = 0;
-        let mut retried = false;
         if let Some(item) = state
             .snapshot
             .items
@@ -470,17 +526,91 @@ impl Transfer {
         {
             let range = &mut item.ranges[index];
             let received = received.min(range.end - range.start + 1);
-            bytes = received.saturating_sub(range.received);
-            retried = phase == RangePhase::Retrying && range.phase != RangePhase::Retrying;
+            // Verified journal ranges update the display, but are not network
+            // traffic. A completion callback must not count the same bytes twice.
+            if phase == RangePhase::Active {
+                bytes = received.saturating_sub(range.received);
+            }
             range.received = received;
             range.phase = phase;
             if let Some(rate) = &mut item.rate {
                 rate.record(bytes, now);
             }
         }
-        state.received += bytes;
-        state.retried |= retried;
-        state.sample(now);
+        state.bytes[Stage::Download as usize] += bytes;
+        state.sample(tokio::time::Instant::now());
+        self.manager.changed.send_replace(());
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum Stage {
+    Download = 0,
+    Upload = 1,
+    Prepare = 2,
+}
+
+impl Stage {
+    fn waiting_phase(self) -> Phase {
+        match self {
+            Self::Download => Phase::Queued,
+            Self::Upload => Phase::WaitingToUpload,
+            Self::Prepare => Phase::WaitingToPrepare,
+        }
+    }
+
+    fn active_phase(self) -> Phase {
+        match self {
+            Self::Download => Phase::Resolving,
+            Self::Upload => Phase::Uploading,
+            Self::Prepare => Phase::Preparing,
+        }
+    }
+}
+
+struct WaitingStage {
+    manager: DownloadManager,
+    stage: Stage,
+    waiting: bool,
+}
+
+impl Drop for WaitingStage {
+    fn drop(&mut self) {
+        if self.waiting {
+            self.manager.state.write().stage_waiting[self.stage as usize] -= 1;
+            self.manager.changed.send_replace(());
+        }
+    }
+}
+
+pub(crate) struct StageTransfer {
+    manager: DownloadManager,
+    stage: Stage,
+}
+
+impl StageTransfer {
+    pub(crate) fn finish<T>(self, result: &anyhow::Result<T>, cancelled: bool) {
+        let index = self.stage as usize;
+        if index < 2
+            && !cancelled
+            && result.as_ref().is_err_and(|error| {
+                crate::errors::classify(error) == crate::errors::Category::Retryable
+            })
+        {
+            self.manager.state.write().failed[index] = true;
+        }
+    }
+}
+
+impl Drop for StageTransfer {
+    fn drop(&mut self) {
+        let index = self.stage as usize;
+        let mut state = self.manager.state.write();
+        state.stage_active[index] -= 1;
+        if index < 2 {
+            state.population_changed[index] = true;
+        }
+        drop(state);
         self.manager.changed.send_replace(());
     }
 }
@@ -522,7 +652,7 @@ impl Drop for ActiveTransfer {
         let mut state = self.transfer.manager.state.write();
         state.active -= 1;
         if state.active == 0 {
-            state.idle_since = Some(Instant::now());
+            state.idle_since = Some(tokio::time::Instant::now());
         }
         drop(state);
         self.transfer.manager.changed.send_replace(());
@@ -532,189 +662,6 @@ impl Drop for ActiveTransfer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures_util::poll;
-
-    fn enqueue(manager: &DownloadManager, source: &str, count: usize) -> Vec<Transfer> {
-        manager.enqueue(
-            source,
-            source,
-            &(0..count)
-                .map(|index| crate::innertube::Video {
-                    id: index.to_string(),
-                    title: format!("Episode {index}"),
-                    duration_seconds: None,
-                })
-                .collect::<Vec<_>>(),
-            &HashSet::new(),
-        )
-    }
-
-    #[tokio::test]
-    async fn podcasts_share_one_budget_and_release_admits_waiting_work() {
-        let manager = DownloadManager::default();
-        let first = enqueue(&manager, "first", INITIAL_TRANSFERS);
-        let second = enqueue(&manager, "second", 2);
-        let mut active = Vec::new();
-        for transfer in &first {
-            active.push(transfer.acquire().await);
-        }
-        let mut waiting = Box::pin(second[0].acquire());
-        assert!(poll!(&mut waiting).is_pending());
-        assert_eq!(
-            manager
-                .snapshot()
-                .items
-                .iter()
-                .filter(|item| item.phase.active())
-                .count(),
-            INITIAL_TRANSFERS
-        );
-        assert_eq!(
-            manager.snapshot().items.last().unwrap().phase,
-            Phase::Queued
-        );
-        active.pop().unwrap().finish(&Ok(()));
-        let admitted = waiting.await;
-        assert_eq!(
-            manager
-                .snapshot()
-                .items
-                .iter()
-                .filter(|item| item.phase.active())
-                .count(),
-            INITIAL_TRANSFERS
-        );
-        // Cancellation releases its slot and reports an actionable failure.
-        drop(admitted);
-        let next = second[1].acquire().await;
-        assert_eq!(
-            manager.snapshot().items[INITIAL_TRANSFERS].phase,
-            Phase::Failed
-        );
-        next.finish(&Ok(()));
-        for item in active {
-            item.finish(&Ok(()));
-        }
-        assert_eq!(manager.state.read().active, 0);
-    }
-
-    #[tokio::test]
-    async fn retry_resets_ranges_and_failure_does_not_block_other_podcasts() {
-        let manager = DownloadManager::default();
-        let transfers = enqueue(&manager, "first", 1);
-        let transfer = &transfers[0];
-        let active = transfer.acquire().await;
-        transfer.attempt(1);
-        transfer.start_download(10, 4);
-        transfer.range(4, 4, RangePhase::Complete);
-        transfer.range(0, 2, RangePhase::Active);
-        assert_eq!(manager.snapshot().items[0].received(), 6);
-        transfer.range(0, 0, RangePhase::Retrying);
-        assert_eq!(manager.snapshot().items[0].received(), 4);
-        transfer.error(&anyhow::anyhow!(
-            "Failed https://secret.example/audio?token=private"
-        ));
-        assert!(
-            !manager.snapshot().items[0]
-                .error
-                .as_ref()
-                .unwrap()
-                .contains("token")
-        );
-        transfer.attempt(2);
-        let item = &manager.snapshot().items[0];
-        assert!(item.ranges.is_empty());
-        assert!(item.error.is_none());
-        assert_eq!(item.total, 0);
-        active.finish(&Err(anyhow::anyhow!("Upload failed")));
-        let second = enqueue(&manager, "second", 1);
-        second[0].acquire().await.finish(&Ok(()));
-        let snapshot = manager.snapshot();
-        assert_eq!(snapshot.items[0].phase, Phase::Failed);
-        assert_eq!(snapshot.items[1].phase, Phase::Complete);
-    }
-
-    #[tokio::test]
-    async fn adaptive_growth_wakes_waiters_and_shrinking_drains_without_cancellation() {
-        let manager = DownloadManager::default();
-        let first = enqueue(&manager, "first", 2);
-        let other = enqueue(&manager, "other", 3);
-        let mut active = Vec::new();
-        for transfer in &first {
-            active.push(transfer.acquire().await);
-            transfer.start_download(100_000_000, 10_000_000);
-        }
-        let mut waiting = Box::pin(other[0].acquire());
-        assert!(poll!(&mut waiting).is_pending());
-        // Advance the sampling window without a wall-clock sleep, then exercise
-        // the real byte callback and admission notification.
-        manager.state.write().sampled_at = Instant::now() - SAMPLE_INTERVAL;
-        first[0].range(0, 5_000_000, RangePhase::Active);
-        assert_eq!(manager.snapshot().slot_limit, 3);
-        active.push(waiting.await);
-        other[0].start_download(100_000_000, 10_000_000);
-
-        let mut next = Box::pin(other[1].acquire());
-        assert!(poll!(&mut next).is_pending());
-        manager.state.write().sampled_at = Instant::now() - SAMPLE_INTERVAL;
-        first[0].range(0, 10_000_000, RangePhase::Complete);
-        assert_eq!(manager.snapshot().slot_limit, 2);
-        assert_eq!(manager.state.read().active, 3);
-        assert!(poll!(&mut next).is_pending());
-        active.pop().unwrap().finish(&Ok(()));
-        assert!(poll!(&mut next).is_pending());
-        active.pop().unwrap().finish(&Ok(()));
-        let admitted = next.await;
-        assert_eq!(manager.state.read().active, 2);
-        drop(admitted);
-        other[2].acquire().await.finish(&Ok(()));
-        active.pop().unwrap().finish(&Ok(()));
-        assert_eq!(manager.state.read().active, 0);
-    }
-
-    #[tokio::test]
-    async fn uploads_do_not_probe_and_retry_feedback_closes_slots() {
-        let manager = DownloadManager::default();
-        let transfers = enqueue(&manager, "first", 3);
-        let first = transfers[0].acquire().await;
-        let second = transfers[1].acquire().await;
-        transfers[0].start_download(100_000_000, 10_000_000);
-        transfers[1].phase(Phase::Uploading);
-        let mut waiting = Box::pin(transfers[2].acquire());
-        assert!(poll!(&mut waiting).is_pending());
-        transfers[0].phase(Phase::Uploading);
-        manager.state.write().sampled_at = Instant::now() - SAMPLE_INTERVAL;
-        manager.sample(Instant::now());
-        assert_eq!(manager.snapshot().slot_limit, INITIAL_TRANSFERS);
-        transfers[0].phase(Phase::Downloading);
-        manager.state.write().sampled_at = Instant::now() - SAMPLE_INTERVAL;
-        transfers[0].range(0, 0, RangePhase::Retrying);
-        assert_eq!(manager.snapshot().slot_limit, 1);
-        first.finish(&Ok(()));
-        assert!(poll!(&mut waiting).is_pending());
-        second.finish(&Ok(()));
-        let admitted = waiting.await;
-        assert_eq!(manager.snapshot().slot_limit, 1);
-        admitted.finish(&Ok(()));
-    }
-
-    #[test]
-    fn telemetry_counts_received_deltas_and_retries_without_double_counting_completion() {
-        let manager = DownloadManager::default();
-        let transfers = enqueue(&manager, "first", 1);
-        let transfer = &transfers[0];
-        transfer.start_download(10, 10);
-        transfer.range(0, 5, RangePhase::Active);
-        transfer.range(0, 5, RangePhase::Active);
-        assert_eq!(manager.state.read().received, 5);
-        transfer.range(0, 0, RangePhase::Retrying);
-        assert!(manager.state.read().retried);
-        assert_eq!(manager.state.read().received, 5);
-        transfer.range(0, 10, RangePhase::Active);
-        transfer.range(0, 10, RangePhase::Complete);
-        assert_eq!(manager.state.read().received, 15);
-        assert_eq!(manager.snapshot().items[0].received(), 10);
-    }
 
     #[test]
     fn displayed_speed_uses_recent_traffic_and_expires_when_stalled() {

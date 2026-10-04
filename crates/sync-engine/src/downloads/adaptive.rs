@@ -1,162 +1,178 @@
-/// Application-level throughput probing, inspired by additive increase / multiplicative
-/// decrease. This controls episode admissions; TCP still controls individual connections.
-pub(super) struct AdaptiveLimit {
-    pub limit: usize,
+//! Application-level connection admission. TCP owns congestion control; we probe
+//! whether another episode actually adds useful throughput. Both directions can
+//! run together, but only one probes at a time so they do not chase each other.
+
+pub const INITIAL_DOWNLOADS: usize = 2;
+pub const INITIAL_UPLOADS: usize = 2;
+pub const MAX_DOWNLOADS: usize = 16;
+pub const MAX_UPLOADS: usize = 8;
+
+#[derive(Clone, Copy)]
+pub(super) struct Observation {
+    pub rate: f64,
+    pub active: usize,
+    pub saturated: bool,
+    pub stable: bool,
+    pub failed: bool,
+}
+
+struct Direction {
+    limit: usize,
+    maximum: usize,
     baseline: Option<(f64, usize)>,
-    probe: Option<(usize, f64, usize)>,
     cooldown: usize,
     stalled: usize,
 }
 
-pub const INITIAL_TRANSFERS: usize = 2;
-pub const MAX_TRANSFERS: usize = 16;
+struct Probe {
+    direction: usize,
+    previous_limit: usize,
+    baseline: [Observation; 2],
+    windows: usize,
+}
 
-impl Default for AdaptiveLimit {
+pub(super) struct NetworkLimits {
+    directions: [Direction; 2],
+    probe: Option<Probe>,
+    next: usize,
+}
+
+impl Default for NetworkLimits {
     fn default() -> Self {
         Self {
-            limit: INITIAL_TRANSFERS,
-            baseline: None,
+            directions: [
+                Direction::new(INITIAL_DOWNLOADS, MAX_DOWNLOADS),
+                Direction::new(INITIAL_UPLOADS, MAX_UPLOADS),
+            ],
             probe: None,
-            cooldown: 0,
-            stalled: 0,
+            next: 0,
         }
     }
 }
 
-impl AdaptiveLimit {
-    pub fn sample(&mut self, rate: u64, saturated: bool, downloading: usize, retried: bool) {
-        if retried {
-            self.back_off();
-            return;
-        }
-        // An empty queue, conversion, or upload is not network congestion.
-        if !saturated || downloading == 0 {
-            self.baseline = None;
-            // Inconclusive probes do not permanently raise the budget.
-            if let Some((previous_limit, _, _)) = self.probe.take() {
-                self.limit = previous_limit;
-                self.cooldown = 3;
-            }
-            self.stalled = 0;
-            return;
-        }
-        self.stalled = if rate == 0 { self.stalled + 1 } else { 0 };
-        let rate = rate as f64;
-        let slowdown = self.baseline.is_some_and(|(baseline, receivers)| {
-            downloading >= receivers && rate < baseline * 0.65
-        });
-        if self.stalled >= 2 || (rate > 0. && slowdown) {
-            self.back_off();
-            return;
-        }
-        if rate == 0. {
-            return;
-        }
-        let smoothed = self
-            .baseline
-            .map_or(rate, |(baseline, _)| baseline * 0.5 + rate * 0.5);
-        self.baseline = Some((smoothed, downloading));
-        if let Some((previous_limit, previous_rate, receivers)) = self.probe.take() {
-            // Keep an extra slot only if aggregate throughput improves with at
-            // least as many receivers; otherwise revert and allow time to settle.
-            // Five percent filters small fluctuations while still recognizing a
-            // useful extra receiver near the 16-transfer ceiling (about 7%).
-            if downloading < receivers || rate < previous_rate * 1.05 {
-                self.limit = previous_limit;
-                self.cooldown = 3;
-                self.baseline = Some((rate, downloading));
-            }
-            return;
-        }
-        if self.cooldown > 0 {
-            self.cooldown -= 1;
-        } else if self.limit < MAX_TRANSFERS {
-            self.probe = Some((self.limit, smoothed, downloading));
-            self.limit += 1;
+impl Direction {
+    fn new(limit: usize, maximum: usize) -> Self {
+        Self {
+            limit,
+            maximum,
+            baseline: None,
+            cooldown: 0,
+            stalled: 0,
         }
     }
 
     fn back_off(&mut self) {
         self.limit = (self.limit / 2).max(1);
         self.baseline = None;
-        self.probe = None;
         self.cooldown = 3;
         self.stalled = 0;
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn useful_bandwidth_growth_opens_slots_up_to_the_cap() {
-        let mut limit = AdaptiveLimit::default();
-        for _ in 0..100 {
-            limit.sample(limit.limit as u64 * 1_000_000, true, limit.limit, false);
-        }
-        assert_eq!(limit.limit, MAX_TRANSFERS);
+impl NetworkLimits {
+    pub fn limits(&self) -> [usize; 2] {
+        self.directions.each_ref().map(|direction| direction.limit)
     }
 
-    #[test]
-    fn plateau_reverts_the_probe_and_waits_before_trying_again() {
-        let mut limit = AdaptiveLimit::default();
-        limit.sample(1_000_000, true, 2, false);
-        assert_eq!(limit.limit, 3);
-        limit.sample(1_040_000, true, 3, false);
-        assert_eq!(limit.limit, 2);
-        for _ in 0..3 {
-            limit.sample(1_000_000, true, 2, false);
-            assert_eq!(limit.limit, 2);
+    pub fn sample(&mut self, observations: [Observation; 2]) {
+        // Resolve a probe before ordinary congestion feedback: a harmful upload
+        // probe must be rolled back, rather than shrinking the download budget.
+        if let Some(mut probe) = self.probe.take() {
+            probe.windows += 1;
+            let own = observations[probe.direction];
+            let peer = 1 - probe.direction;
+            let comparable = observations.iter().all(|sample| sample.stable)
+                && own.active > probe.baseline[probe.direction].active
+                && observations[peer].active == probe.baseline[peer].active;
+            let no_demand = !own.saturated || own.active == 0;
+            let failed = observations.iter().any(|sample| sample.failed);
+            if comparable || no_demand || failed || probe.windows >= 3 {
+                // Multiplying relative rates is equivalent to adding log-rate
+                // utilities (proportional fairness). Raw byte totals would let a
+                // fast downlink hide a severe regression on a slow uplink.
+                let gain = observations.iter().zip(probe.baseline).try_fold(
+                    1.,
+                    |gain, (current, previous)| {
+                        if previous.active == 0 || previous.rate == 0. {
+                            Some(gain)
+                        } else if previous.rate > 0. && current.rate > 0. {
+                            Some(gain * current.rate / previous.rate)
+                        } else {
+                            None
+                        }
+                    },
+                );
+                if !comparable || no_demand || failed || gain.is_none_or(|gain| gain < 1.05) {
+                    self.directions[probe.direction].limit = probe.previous_limit;
+                    self.directions[probe.direction].cooldown = 3;
+                }
+                // A changed population is not an independent congestion sample.
+                for direction in &mut self.directions {
+                    direction.baseline = None;
+                    direction.stalled = 0;
+                }
+                for (direction, sample) in self.directions.iter_mut().zip(observations) {
+                    if sample.failed {
+                        direction.back_off();
+                    }
+                }
+            } else {
+                self.probe = Some(probe);
+            }
+            return;
         }
-        limit.sample(1_000_000, true, 2, false);
-        assert_eq!(limit.limit, 3);
-    }
 
-    #[test]
-    fn inconclusive_probes_do_not_accumulate_slots() {
-        let mut limit = AdaptiveLimit::default();
-        for _ in 0..30 {
-            limit.sample(1_000_000, true, 2, false);
-            limit.sample(0, true, 0, false);
-            assert_eq!(limit.limit, INITIAL_TRANSFERS);
+        let mut backed_off = false;
+        for (direction, sample) in self.directions.iter_mut().zip(observations) {
+            if sample.failed {
+                direction.back_off();
+                backed_off = true;
+                continue;
+            }
+            if !sample.saturated || sample.active == 0 || !sample.stable {
+                direction.baseline = None;
+                direction.stalled = 0;
+                continue;
+            }
+            direction.stalled = if sample.rate == 0. {
+                direction.stalled + 1
+            } else {
+                0
+            };
+            let slowdown = direction.baseline.is_some_and(|(rate, active)| {
+                active == sample.active && sample.rate > 0. && sample.rate < rate * 0.65
+            });
+            if direction.stalled >= 2 || slowdown {
+                direction.back_off();
+                backed_off = true;
+                continue;
+            }
+            direction.baseline = Some((sample.rate, sample.active));
+            direction.cooldown = direction.cooldown.saturating_sub(1);
         }
-        let mut limit = AdaptiveLimit::default();
-        limit.sample(1_000_000, true, 2, false);
-        limit.sample(500_000, true, 1, false);
-        assert_eq!(limit.limit, INITIAL_TRANSFERS);
-        for _ in 0..10 {
-            limit.sample(10_000_000, false, 1, false);
+        if backed_off {
+            return;
         }
-        assert_eq!(limit.limit, INITIAL_TRANSFERS);
-    }
-
-    #[test]
-    fn congestion_and_stalls_back_off_but_idle_uploads_and_pause_do_not() {
-        let mut limit = AdaptiveLimit::default();
-        for _ in 0..12 {
-            limit.sample(limit.limit as u64 * 1_000_000, true, limit.limit, false);
+        for index in [self.next, 1 - self.next] {
+            let sample = observations[index];
+            let direction = &mut self.directions[index];
+            if sample.saturated
+                && sample.stable
+                && sample.rate > 0.
+                && direction.cooldown == 0
+                && direction.limit < direction.maximum
+                && observations.iter().all(|sample| sample.stable)
+            {
+                self.probe = Some(Probe {
+                    direction: index,
+                    previous_limit: direction.limit,
+                    baseline: observations,
+                    windows: 0,
+                });
+                direction.limit += 1;
+                self.next = 1 - index;
+                break;
+            }
         }
-        let before = limit.limit;
-        limit.sample(1_000, true, before, false);
-        assert_eq!(limit.limit, before / 2);
-        let before = limit.limit;
-        for _ in 0..10 {
-            limit.sample(0, true, 0, false);
-            limit.sample(0, false, before, false);
-        }
-        assert_eq!(limit.limit, before);
-        limit.sample(0, true, before, false);
-        assert_eq!(limit.limit, before);
-        limit.sample(0, true, before, false);
-        assert_eq!(limit.limit, (before / 2).max(1));
-        for _ in 0..10 {
-            limit.sample(0, true, 1, true);
-        }
-        assert_eq!(limit.limit, 1);
-        for _ in 0..10 {
-            limit.sample(limit.limit as u64 * 1_000_000, true, limit.limit, false);
-        }
-        assert!(limit.limit > 1);
     }
 }

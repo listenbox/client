@@ -58,7 +58,9 @@ impl Workspace {
             progress.total += 1;
             match item.phase {
                 Phase::Complete => progress.imported += 1,
-                Phase::Queued => progress.queued += 1,
+                Phase::Queued | Phase::WaitingToPrepare | Phase::WaitingToUpload => {
+                    progress.queued += 1
+                }
                 Phase::Resolving => progress.resolving += 1,
                 Phase::Downloading => progress.downloading += 1,
                 Phase::Preparing => progress.preparing += 1,

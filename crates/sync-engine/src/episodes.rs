@@ -5,6 +5,7 @@ use crate::{
     publicapi as p,
 };
 use anyhow::{Context, Result, bail, ensure};
+use futures_util::TryStreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -178,8 +179,8 @@ pub async fn create(api: &Api, args: EpisodeCreate) -> Result<()> {
                     );
                     let offset = (number as u64 - 1) * part_size;
                     let size = part_size.min(length - offset);
-                    let etag =
-                        upload_part(api, &path, offset, size, "PUT", &part.upload_url).await?;
+                    let etag = upload_part(api, &path, offset, size, "PUT", &part.upload_url, None)
+                        .await?;
                     record.completed_parts.push(p::CompletedEpisodeUploadPart {
                         part_number: number,
                         etag,
@@ -286,10 +287,18 @@ pub async fn upload_part(
     length: u64,
     method: &str,
     url: &str,
+    transfer: Option<&crate::downloads::Transfer>,
 ) -> Result<String> {
     let mut file = tokio::fs::File::open(path).await?;
     file.seek(std::io::SeekFrom::Start(offset)).await?;
-    let stream = tokio_util::io::ReaderStream::new(file.take(length));
+    let transfer = transfer.cloned();
+    // Measure bytes as reqwest consumes the streaming body, rather than only
+    // observing a multipart acknowledgement after an arbitrarily large part.
+    let stream = tokio_util::io::ReaderStream::new(file.take(length)).inspect_ok(move |chunk| {
+        if let Some(transfer) = &transfer {
+            transfer.uploaded(chunk.len() as u64);
+        }
+    });
     let response = api
         .send(
             api.http

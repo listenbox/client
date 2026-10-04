@@ -268,7 +268,7 @@ impl Engine {
                             slug,
                             id: &video.id,
                             collection,
-                            transfer: Some(&transfer),
+                            transfer: &transfer,
                             journal,
                             audio,
                         },
@@ -323,7 +323,7 @@ impl Engine {
                 result
             }
         }))
-        .buffer_unordered(crate::downloads::MAX_TRANSFERS);
+        .buffer_unordered(crate::downloads::MAX_IN_FLIGHT);
         let mut failures = Vec::new();
         let mut stopped = false;
         let mut report = Report {

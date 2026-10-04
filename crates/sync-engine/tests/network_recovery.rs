@@ -1,6 +1,10 @@
 //! Live sync driver invoked by apps/api/e2e with a test-owned API and YouTube proxy.
 use listenbox_sync_engine::{
-    api::Api, client::Client, config::Config, downloads::Phase, sync::Engine,
+    api::Api,
+    client::Client,
+    config::Config,
+    downloads::{DownloadManager, Phase, RangePhase},
+    sync::Engine,
 };
 use reqwest::dns::{Addrs, Name, Resolve, Resolving};
 use std::{
@@ -11,6 +15,355 @@ use std::{
     },
 };
 use tokio_util::sync::CancellationToken;
+
+async fn hold_manual_clock() -> (std::sync::mpsc::Sender<()>, tokio::task::JoinHandle<()>) {
+    let (hold_clock, receive) = std::sync::mpsc::channel::<()>();
+    let (started, ready) = tokio::sync::oneshot::channel();
+    let clock_guard = tokio::task::spawn_blocking(move || {
+        started.send(()).unwrap();
+        let _ = receive.recv();
+    });
+    ready.await.unwrap();
+    tokio::time::pause();
+    (hold_clock, clock_guard)
+}
+
+async fn downloading_gate(
+    manager: &DownloadManager,
+    changes: &mut tokio::sync::watch::Receiver<()>,
+    count: usize,
+) {
+    loop {
+        let snapshot = manager.snapshot();
+        let downloading: Vec<_> = snapshot
+            .items
+            .iter()
+            .filter(|item| item.phase == Phase::Downloading)
+            .collect();
+        if downloading.len() == count
+            && downloading.iter().all(|item| {
+                item.ranges
+                    .iter()
+                    .filter(|range| range.start > 0)
+                    .all(|range| range.phase == RangePhase::Complete)
+            })
+        {
+            return;
+        }
+        changes.changed().await.unwrap();
+    }
+}
+
+async fn receive_window(
+    api: &Api,
+    mock: &str,
+    manager: &DownloadManager,
+    changes: &mut tokio::sync::watch::Receiver<()>,
+    credit: u64,
+) {
+    let before: Vec<_> = manager
+        .snapshot()
+        .items
+        .into_iter()
+        .filter(|item| item.phase == Phase::Downloading)
+        .map(|item| {
+            let received = item.received();
+            (item.source_url, received)
+        })
+        .collect();
+    assert!(
+        !before.is_empty(),
+        "A throughput window needs admitted downloads"
+    );
+    for (source, _) in &before {
+        api.http.post(format!("{mock}/__mock__/media-window"))
+            .json(&serde_json::json!({ "context": source.strip_prefix("https://www.youtube.com/watch?v=").unwrap(), "bytes": credit }))
+            .send().await.unwrap().error_for_status().unwrap();
+    }
+    loop {
+        let snapshot = manager.snapshot();
+        if before.iter().all(|(source, received)| {
+            snapshot
+                .items
+                .iter()
+                .any(|item| item.source_url == *source && item.received() >= received + credit)
+        }) {
+            break;
+        }
+        changes.changed().await.unwrap();
+    }
+    tokio::time::advance(std::time::Duration::from_secs(5)).await;
+    tokio::task::yield_now().await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires the parent API's finite media windows and real sync fixture"]
+async fn live_download_adaptation() {
+    let config = Config::load(None).unwrap();
+    let fixture: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(config.directory.join("test-pipeline.json")).unwrap(),
+    )
+    .unwrap();
+    let slug = fixture["slug"].as_str().unwrap();
+    let mock = fixture["mock"].as_str().unwrap();
+    let prelude = fixture["prelude"].as_str().unwrap();
+    let cancel = CancellationToken::new();
+    let api = Api::new(config, cancel.clone()).unwrap();
+    let engine = Engine::default();
+    let mut changes = engine.downloads.changes();
+    let (hold_clock, clock_guard) = hold_manual_clock().await;
+    let upload_work = engine.once(&api, prelude);
+    let work = async {
+        let mut admission = engine.downloads.changes();
+        while engine
+            .downloads
+            .snapshot()
+            .items
+            .iter()
+            .filter(|item| item.phase == Phase::Uploading)
+            .count()
+            != 2
+        {
+            let snapshot = engine.downloads.snapshot();
+            assert!(
+                !snapshot.items.iter().any(|item| matches!(
+                    item.phase,
+                    Phase::Skipped | Phase::Failed | Phase::Complete
+                )),
+                "Upload precondition ended before the storage gate: {:?}",
+                snapshot.items
+            );
+            admission.changed().await.unwrap();
+        }
+        engine.once(&api, slug).await
+    };
+    let monitor = async {
+        while engine
+            .downloads
+            .snapshot()
+            .items
+            .iter()
+            .filter(|item| item.phase == Phase::Uploading)
+            .count()
+            != 2
+        {
+            changes.changed().await.unwrap();
+        }
+        downloading_gate(&engine.downloads, &mut changes, 2).await;
+        tokio::time::advance(std::time::Duration::from_secs(5)).await;
+        tokio::task::yield_now().await;
+        receive_window(&api, mock, &engine.downloads, &mut changes, 16 << 10).await;
+        downloading_gate(&engine.downloads, &mut changes, 3).await;
+        // Exclude the window in which the third receiver joined.
+        tokio::time::advance(std::time::Duration::from_secs(5)).await;
+        tokio::task::yield_now().await;
+        receive_window(&api, mock, &engine.downloads, &mut changes, 16 << 10).await;
+        assert_eq!(
+            engine.downloads.snapshot().download_slots,
+            3,
+            "Useful throughput growth was rolled back"
+        );
+        receive_window(&api, mock, &engine.downloads, &mut changes, 16 << 10).await;
+        downloading_gate(&engine.downloads, &mut changes, 4).await;
+        tokio::time::advance(std::time::Duration::from_secs(5)).await;
+        tokio::task::yield_now().await;
+        // Four receivers get the same aggregate bytes as the previous three.
+        receive_window(&api, mock, &engine.downloads, &mut changes, 12 << 10).await;
+        assert_eq!(
+            engine.downloads.snapshot().download_slots,
+            3,
+            "A throughput plateau kept an extra connection"
+        );
+        for _ in 0..2 {
+            tokio::time::advance(std::time::Duration::from_secs(5)).await;
+            tokio::task::yield_now().await;
+        }
+        while engine.downloads.snapshot().download_slots > 1 {
+            changes.changed().await.unwrap();
+        }
+        let drained = engine.downloads.snapshot();
+        assert_eq!(
+            drained
+                .items
+                .iter()
+                .filter(|item| item.phase == Phase::Downloading)
+                .count(),
+            4,
+            "Backoff cancelled existing downloads"
+        );
+        assert_eq!(
+            drained
+                .items
+                .iter()
+                .filter(|item| item.phase == Phase::Queued)
+                .count(),
+            4
+        );
+        assert_eq!(
+            drained.upload_slots, 2,
+            "Download congestion reduced the upload budget"
+        );
+        assert_eq!(
+            drained
+                .items
+                .iter()
+                .filter(|item| item.phase == Phase::Uploading)
+                .count(),
+            2,
+            "Download probing displaced existing uploads"
+        );
+        cancel.cancel();
+    };
+    let (upload_result, result, ()) = tokio::join!(upload_work, work, monitor);
+    tokio::time::resume();
+    drop(hold_clock);
+    clock_guard.await.unwrap();
+    assert!(result.is_err());
+    assert!(upload_result.is_err());
+    assert!(
+        engine
+            .downloads
+            .snapshot()
+            .items
+            .iter()
+            .all(|item| item.phase == Phase::Queued && item.attempt <= 1)
+    );
+}
+
+/// Real network I/O continues while only the scheduler's production clock is
+/// advanced. A live blocking task inhibits Tokio's automatic clock advancement.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires the parent API's gated storage and real sync fixture"]
+async fn live_pipeline_stall() {
+    let config = Config::load(None).unwrap();
+    let fixture: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(config.directory.join("test-pipeline.json")).unwrap(),
+    )
+    .unwrap();
+    let slug = fixture["slug"].as_str().unwrap();
+    let control = fixture["control"].as_str().unwrap();
+    let api = Api::new(config, CancellationToken::new()).unwrap();
+    let engine = Engine::default();
+    let mut changes = engine.downloads.changes();
+    let (hold_clock, clock_guard) = hold_manual_clock().await;
+    let work = engine.once(&api, slug);
+    let monitor = async {
+        loop {
+            let snapshot = engine.downloads.snapshot();
+            if snapshot
+                .items
+                .iter()
+                .filter(|item| item.phase == Phase::Uploading)
+                .count()
+                == 2
+                && snapshot
+                    .items
+                    .iter()
+                    .filter(|item| item.phase == Phase::WaitingToUpload)
+                    .count()
+                    == 1
+            {
+                break;
+            }
+            changes.changed().await.unwrap();
+        }
+        // The storage gate establishes real admitted requests, not just a UI phase.
+        api.http
+            .get(format!("{control}/ready"))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+        let initial = engine.downloads.snapshot().upload_slots;
+        for _ in 0..4 {
+            tokio::time::advance(std::time::Duration::from_secs(5)).await;
+            tokio::task::yield_now().await;
+        }
+        while engine.downloads.snapshot().upload_slots >= initial {
+            changes.changed().await.unwrap();
+        }
+        let drained = engine.downloads.snapshot();
+        assert_eq!(
+            drained
+                .items
+                .iter()
+                .filter(|item| item.phase == Phase::Uploading)
+                .count(),
+            2,
+            "Backoff cancelled an admitted upload"
+        );
+        assert_eq!(
+            drained
+                .items
+                .iter()
+                .filter(|item| item.phase == Phase::WaitingToUpload)
+                .count(),
+            1
+        );
+        assert_eq!(
+            drained.download_slots, 2,
+            "An upload stall reduced download capacity"
+        );
+        api.http
+            .get(format!("{control}/release/0"))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+        loop {
+            let snapshot = engine.downloads.snapshot();
+            if snapshot
+                .items
+                .iter()
+                .any(|item| item.phase == Phase::Complete)
+            {
+                assert_eq!(
+                    snapshot
+                        .items
+                        .iter()
+                        .filter(|item| item.phase == Phase::Uploading)
+                        .count(),
+                    1
+                );
+                assert_eq!(
+                    snapshot
+                        .items
+                        .iter()
+                        .filter(|item| item.phase == Phase::WaitingToUpload)
+                        .count(),
+                    1,
+                    "A new upload was admitted before the reduced budget drained"
+                );
+                break;
+            }
+            changes.changed().await.unwrap();
+        }
+        api.http
+            .get(format!("{control}/release/1"))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+    };
+    let (result, ()) = tokio::join!(work, monitor);
+    tokio::time::resume();
+    drop(hold_clock);
+    clock_guard.await.unwrap();
+    let report = result.unwrap();
+    assert_eq!(report.added, 3);
+    assert_eq!(report.skipped, 0);
+    assert!(
+        engine
+            .downloads
+            .snapshot()
+            .items
+            .iter()
+            .all(|item| item.phase == Phase::Complete && item.attempt == 1)
+    );
+}
 
 struct DnsFailure {
     address: SocketAddr,
@@ -120,7 +473,12 @@ async fn live_network_recovery() {
         let report = result.unwrap();
         assert_eq!(report.unchanged, 1);
         assert_eq!(report.added, 0);
-        assert!(items.is_empty());
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].phase, Phase::Complete);
+        assert_eq!(
+            items[0].attempt, 0,
+            "Published media started another transfer"
+        );
         assert_eq!(saved.len(), 1);
         assert_eq!(saved[0].phase, Phase::Complete);
         return;

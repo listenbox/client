@@ -1,6 +1,7 @@
 use crate::{
     api::{Api, PaymentRequired},
     download::download,
+    downloads::Stage,
     innertube::{Playback, PlaylistSnapshot, Video, YouTube},
     publicapi as p,
 };
@@ -204,7 +205,7 @@ pub(crate) struct VideoImport<'a> {
     pub slug: &'a str,
     pub id: &'a str,
     pub collection: &'a str,
-    pub transfer: Option<&'a crate::downloads::Transfer>,
+    pub transfer: &'a crate::downloads::Transfer,
     pub journal: &'a crate::database::Database,
     pub audio: bool,
 }
@@ -255,21 +256,22 @@ pub(crate) async fn import_video(
                     std::fs::remove_file(path)?;
                 }
             }
-            let media = match youtube.media(api, id).await? {
-                Playback::Available(media) => media,
-                Playback::Unavailable(reason) => return Ok(ImportOutcome::Skipped(reason)),
-            };
-            if let Some(transfer) = transfer {
+            let downloading = api
+                .wait(async { Ok(transfer.acquire_stage(Stage::Download).await) })
+                .await?;
+            let downloaded: Result<Playback> = async {
+                let playback = youtube.media(api, id).await?;
+                let Playback::Available(media) = playback else {
+                    return Ok(playback);
+                };
                 transfer.title(&media.title);
                 transfer.duration(media.duration_seconds);
-            }
-            let downloaded: Result<()> = async {
                 if audio {
                     download(
                         api,
                         media.audio.as_ref().unwrap_or(&media.video),
                         &directory.join("source-audio"),
-                        transfer,
+                        Some(transfer),
                         Some((journal, operation_id.as_str())),
                     )
                     .await?;
@@ -278,7 +280,7 @@ pub(crate) async fn import_video(
                         api,
                         &media.video,
                         &directory.join("source-video"),
-                        transfer,
+                        Some(transfer),
                         Some((journal, operation_id.as_str())),
                     )
                     .await?;
@@ -287,19 +289,24 @@ pub(crate) async fn import_video(
                             api,
                             stream,
                             &directory.join("source-audio"),
-                            transfer,
+                            Some(transfer),
                             Some((journal, operation_id.as_str())),
                         )
                         .await?;
                     }
                 }
-                Ok(())
+                Ok(Playback::Available(media))
             }
             .await;
-            downloaded?;
-            if let Some(transfer) = transfer {
-                transfer.phase(crate::downloads::Phase::Preparing);
-            }
+            // Range writes are joined before handing these files to FFmpeg.
+            downloading.finish(&downloaded, api.cancel.is_cancelled());
+            let media = match downloaded? {
+                Playback::Available(media) => media,
+                Playback::Unavailable(reason) => return Ok(ImportOutcome::Skipped(reason)),
+            };
+            let preparing = api
+                .wait(async { Ok(transfer.acquire_stage(Stage::Prepare).await) })
+                .await?;
             let root = directory.clone();
             let separate_audio = media.audio.is_some();
             let cancel = api.cancel.clone();
@@ -310,6 +317,9 @@ pub(crate) async fn import_video(
             );
             // Join the FFmpeg owner before releasing files, including after cancellation.
             let duration = tokio::task::spawn_blocking(move || {
+                // The actual blocking worker owns the CPU permit, including if
+                // its async caller is dropped. Normal Stop still joins it.
+                let _preparing = preparing;
                 // Measure execution, excluding download and blocking-pool wait time.
                 let started = Instant::now();
                 eprintln!("FFmpeg preparation started {preparation}");
@@ -354,25 +364,24 @@ pub(crate) async fn import_video(
         }
     };
     let objects = &manifest.objects;
-    if let Some(transfer) = transfer {
-        transfer.phase(crate::downloads::Phase::Uploading);
-    }
-    let response = api
-        .client()
-        .create_episode_package(p::CreateEpisodePackageParams {
-            body: manifest.clone(),
-        })
+    let uploading = api
+        .wait(async { Ok(transfer.acquire_stage(Stage::Upload).await) })
         .await?;
-    let session = match response {
-        p::CreateEpisodePackageResponse::Status201(session) => session,
-        response => return Err(api.response_error(response).await),
-    };
-    if session.status == p::EpisodePackageStatus::Completed {
-        journal.forget(&api.config.api_origin, slug, &source_url)?;
-        return Ok(ImportOutcome::Published);
-    }
-    journal.session(&manifest.operation_id, &session.upload_session_id)?;
     let result: Result<()> = async {
+        let response = api
+            .client()
+            .create_episode_package(p::CreateEpisodePackageParams {
+                body: manifest.clone(),
+            })
+            .await?;
+        let session = match response {
+            p::CreateEpisodePackageResponse::Status201(session) => session,
+            response => return Err(api.response_error(response).await),
+        };
+        if session.status == p::EpisodePackageStatus::Completed {
+            return Ok(());
+        }
+        journal.session(&manifest.operation_id, &session.upload_session_id)?;
         ensure!(session.part_size >= 5 << 20, "invalid package part size");
         for (ordinal, object) in objects.iter().enumerate() {
             let initial = session
@@ -424,6 +433,7 @@ pub(crate) async fn import_video(
                     length as u64,
                     "PUT",
                     &parts[0].upload_url,
+                    Some(transfer),
                 )
                 .await?;
                 journal.save_part(&manifest.operation_id, ordinal, number)?;
@@ -448,6 +458,7 @@ pub(crate) async fn import_video(
         Ok(())
     }
     .await;
+    uploading.finish(&result, api.cancel.is_cancelled());
     // Failure and cancellation preserve this operation for the next explicit sync.
     result?;
     journal.forget(&api.config.api_origin, slug, &source_url)?;
