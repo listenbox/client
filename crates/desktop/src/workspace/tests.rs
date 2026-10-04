@@ -7,6 +7,41 @@ use gpui_kit::test::TestWindowExt;
 use listenbox_sync_engine::config::Config;
 use std::{cell::Cell, rc::Rc, time::Duration};
 
+#[gpui_kit::test]
+#[ignore = "requires the parent workspace's ephemeral Listenbox services"]
+async fn live_artwork(cx: &mut TestAppContext) {
+    let runtime = Arc::new(tokio::runtime::Runtime::new().unwrap());
+    let config = Config::load(None).unwrap();
+    let slug = std::fs::read_to_string(config.directory.join("test-artwork-slug")).unwrap();
+    cx.update(|cx| crate::initialize(cx, &config, &runtime).unwrap());
+    cx.executor().allow_parking();
+    let client = Client::desktop(config).unwrap();
+    let catalog = runtime
+        .block_on(client.catalog(CancellationToken::new()))
+        .unwrap();
+    let show = catalog
+        .shows
+        .iter()
+        .find(|show| show.slug == slug)
+        .expect("artwork show in catalog");
+    let url = show
+        .image_url
+        .clone()
+        .expect("catalog includes artwork URL");
+    let image = cx
+        .update(|cx| {
+            let executor = cx.background_executor().clone();
+            executor.spawn(ImageAssetLoader::load(Resource::Uri(url.into()), cx))
+        })
+        .await
+        .expect("production desktop image loader must fetch and decode remote artwork");
+    assert!(
+        image
+            .as_bytes(0)
+            .is_some_and(|bytes| (1_000..20_000_000).contains(&bytes.len()))
+    );
+}
+
 // Parent API E2E changes direction through the real destination endpoint at
 // the inventory/catalog request gates. No fake API or injected UI message.
 #[gpui_kit::test]

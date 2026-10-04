@@ -6,6 +6,7 @@
 mod artwork;
 #[cfg(all(debug_assertions, feature = "hot-reload"))]
 mod hot_reload;
+mod http;
 mod platform;
 #[cfg(feature = "profiling")]
 mod profiling;
@@ -57,7 +58,7 @@ fn main() -> anyhow::Result<()> {
             config.directory.join("sync.sqlite").display()
         );
     }
-    let client = Client::desktop(config)?;
+    let client = Client::desktop(config.clone())?;
     let shutdown_signal = shutdown_signal(&runtime)?;
     let cancel = CancellationToken::new();
     let stop = cancel.clone();
@@ -73,7 +74,7 @@ fn main() -> anyhow::Result<()> {
     let application = gpui_kit::application().with_assets(gpui_kit::assets::AllAssets);
     application.on_reopen(platform::show_window);
     application.run(move |cx| {
-        gpui_kit::init(cx);
+        initialize(cx, &config, &runtime_ui).expect("initialize desktop");
         #[cfg(feature = "profiling")]
         if let Some(recorder) = recorder {
             // Recording lives through workspace logout and stops with the app.
@@ -142,6 +143,19 @@ fn main() -> anyhow::Result<()> {
         runtime.block_on(recorder_drain.wait());
     }
     updater::cleanup();
+    Ok(())
+}
+
+fn initialize(
+    cx: &mut gpui_kit::App,
+    config: &Config,
+    runtime: &Arc<tokio::runtime::Runtime>,
+) -> anyhow::Result<()> {
+    gpui_kit::init(cx);
+    cx.set_http_client(Arc::new(http::DesktopHttpClient::new(
+        &config.directory,
+        runtime.handle().clone(),
+    )?));
     Ok(())
 }
 

@@ -74,6 +74,14 @@ impl Api {
     }
 
     pub(crate) fn http_client(no_redirects: bool) -> Result<ClientWithMiddleware> {
+        let mut builder = Self::http_client_builder()?;
+        if no_redirects {
+            builder = builder.redirect(reqwest::redirect::Policy::none());
+        }
+        Ok(reqwest_middleware::ClientBuilder::new(builder.build()?).build())
+    }
+
+    pub(crate) fn http_client_builder() -> Result<reqwest::ClientBuilder> {
         let mut builder = Client::builder()
             .connect_timeout(Duration::from_secs(30))
             .timeout(Duration::from_secs(30 * 60));
@@ -82,10 +90,7 @@ impl Api {
                 builder = builder.add_root_certificate(certificate);
             }
         }
-        if no_redirects {
-            builder = builder.redirect(reqwest::redirect::Policy::none());
-        }
-        Ok(reqwest_middleware::ClientBuilder::new(builder.build()?).build())
+        Ok(builder)
     }
 
     pub fn client(&self) -> p::Client<&Self> {

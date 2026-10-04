@@ -225,8 +225,15 @@ the selected row uses a neutral fill rather than a decorative marker.
 
 A workspace-owned cache coalesces requests and decoding across both cover
 sizes. It retains at most 128 covers, releases evicted GPU images, prunes covers
-that leave the catalog, and clears on logout or explicit Reload. Preview assets
-are synthetic fixtures with provenance in `tests/fixtures/README.md`.
+that leave the catalog, and clears on logout or explicit Reload. Startup installs
+the shared image HTTP transport on GPUI using the desktop's Tokio runtime and
+TLS configuration. HTTP responses persist under the active profile's
+`http-cache/`, honor shared-cache freshness and revalidation rules, and keep
+redirect policies in separate stores. Only bodyless GETs use this cache; other
+requests pass through directly. Startup clears HTTP data exceeding 128 MiB.
+Reload clears decoded images and lets HTTP freshness determine whether to
+download or revalidate. Preview assets are synthetic fixtures with provenance
+in `tests/fixtures/README.md`.
 
 ## Sync and episode status
 

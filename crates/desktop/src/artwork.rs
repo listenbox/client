@@ -80,6 +80,7 @@ pub fn artwork(url: Option<&str>, side: f32, t: Tokens) -> AnyElement {
         .overflow_hidden()
         .child(match url {
             Some(url) => img(SharedString::from(url.to_owned()))
+                .id(SharedString::from(url.to_owned()))
                 .size_full()
                 .object_fit(ObjectFit::Cover)
                 .rounded(px(if side > 64. { 14. } else { 8. }))

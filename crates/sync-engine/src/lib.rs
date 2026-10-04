@@ -10,6 +10,7 @@ pub mod config;
 pub mod cookies;
 pub mod episodes;
 pub mod events;
+pub mod image_http;
 pub mod innertube;
 mod media;
 #[cfg(test)]
