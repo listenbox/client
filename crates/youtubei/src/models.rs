@@ -22,7 +22,7 @@ macro_rules! model {
 /// The result of upstream Text.toString(), evaluated while taking the snapshot.
 /// Formatting, endpoints and mutation are outside this read-only projection.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TextValue(String);
+pub struct TextValue(String, Option<String>);
 
 impl TextValue {
     pub fn as_str(&self) -> &str {
@@ -30,6 +30,11 @@ impl TextValue {
     }
     pub fn into_string(self) -> String {
         self.0
+    }
+    /// Native source text excludes Text.toString's display placeholder for
+    /// empty nodes. A real title equal to that placeholder remains meaningful.
+    pub fn source_text(&self) -> Option<&str> {
+        self.1.as_deref()
     }
 }
 
@@ -42,10 +47,12 @@ impl std::fmt::Display for TextValue {
 impl<'js> FromJs<'js> for TextValue {
     fn from_js(ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<Self> {
         let object = Object::from_js(ctx, value)?;
+        let source = object.get("text")?;
         Ok(Self(
             object
                 .get::<_, Function>("toString")?
                 .call((This(object),))?,
+            source,
         ))
     }
 }
@@ -259,6 +266,7 @@ impl<'js> FromJs<'js> for PlaylistAlert {
 
 model!(BasicInfo {
     id: Option<String>, title: Option<String>, short_description: Option<String>,
+    thumbnail: Option<Vec<Thumbnail>>,
     duration: Option<f64>, is_live: Option<bool>, is_upcoming: Option<bool>,
     is_live_content: Option<bool>,
 });

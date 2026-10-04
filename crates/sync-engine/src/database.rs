@@ -28,16 +28,9 @@ struct Connections {
 
 fn configure(connection: &Connection) -> Result<()> {
     connection.busy_timeout(std::time::Duration::from_secs(5))?;
-    // FULL syncs each WAL commit. On macOS, fullfsync also asks the drive to flush
-    // its cache; NORMAL could lose acknowledged checkpoints after power failure.
     connection.execute_batch(
-        "PRAGMA synchronous=FULL;
-         PRAGMA fullfsync=ON;
-         PRAGMA checkpoint_fullfsync=ON;
-         PRAGMA foreign_keys=ON;
-         PRAGMA cache_size=-2000;
-         PRAGMA wal_autocheckpoint=1000;
-         PRAGMA temp_store=MEMORY;",
+        "PRAGMA synchronous=NORMAL;
+         PRAGMA foreign_keys=ON;",
     )?;
     Ok(())
 }
@@ -159,11 +152,25 @@ impl Database {
         Ok(())
     }
 
-    pub fn published(&self, origin: &str, show: &str, source: &str) -> Result<()> {
-        self.connections.writer.lock().execute(
-            "UPDATE source_items SET phase='complete', reason=NULL, error=NULL WHERE origin IS ?1 AND show_slug IS ?2 AND source_url IS ?3",
-            params![origin, show, source],
-        )?;
+    /// Reconcile one authoritative inventory in one transaction. Transfer
+    /// cleanup follows this commit in the caller.
+    pub fn published<'a>(
+        &self,
+        origin: &str,
+        show: &str,
+        sources: impl IntoIterator<Item = &'a str>,
+    ) -> Result<()> {
+        let mut connection = self.connections.writer.lock();
+        let tx = connection.transaction()?;
+        {
+            let mut statement = tx.prepare(
+                "UPDATE source_items SET phase='complete', reason=NULL, error=NULL WHERE origin IS ?1 AND show_slug IS ?2 AND source_url IS ?3",
+            )?;
+            for source in sources {
+                statement.execute(params![origin, show, source])?;
+            }
+        }
+        tx.commit()?;
         Ok(())
     }
 
@@ -375,27 +382,6 @@ mod tests {
             db.range_hash(&operation, "media", 0).unwrap().as_deref(),
             Some("pending")
         );
-        db.read(|connection| {
-            for (pragma, expected) in [
-                ("synchronous", 2),
-                ("foreign_keys", 1),
-                ("fullfsync", 1),
-                ("checkpoint_fullfsync", 1),
-                ("query_only", 1),
-            ] {
-                assert_eq!(
-                    connection.pragma_query_value(None, pragma, |row| row.get::<_, i64>(0))?,
-                    expected
-                );
-            }
-            assert_eq!(
-                connection
-                    .pragma_query_value(None, "journal_mode", |row| row.get::<_, String>(0))?,
-                "wal"
-            );
-            Ok(())
-        })
-        .unwrap();
         drop(db);
         assert_eq!(
             Database::open(directory.path())

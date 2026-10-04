@@ -5,7 +5,6 @@ use listenbox_sync_engine::{
     events::{Events, Progress},
     publicapi as p,
 };
-use serde_json::json;
 
 pub async fn shows(api: &Api, command: ShowCommand) -> Result<()> {
     match command {
@@ -161,6 +160,10 @@ async fn print_sync_progress(
             changed = changes.changed() => if changed.is_err() { return; },
         }
         for item in manager.snapshot().items {
+            if item.phase == listenbox_sync_engine::downloads::Phase::Complete && item.attempt == 0
+            {
+                continue;
+            }
             let bucket = item
                 .received()
                 .saturating_mul(10)
@@ -182,9 +185,8 @@ async fn print_sync_progress(
 async fn upload_artwork(api: &Api, show: &str, path: &std::path::Path) -> Result<String> {
     let raw = std::fs::read(path).with_context(|| format!("read artwork {}", path.display()))?;
     let reader = image::ImageReader::new(std::io::Cursor::new(&raw)).with_guessed_format()?;
-    let content_type = match reader.format() {
-        Some(image::ImageFormat::Jpeg) => "image/jpeg",
-        Some(image::ImageFormat::Png) => "image/png",
+    match reader.format() {
+        Some(image::ImageFormat::Jpeg | image::ImageFormat::Png) => {}
         _ => bail!("artwork must be a JPEG or PNG image"),
     };
     let (width, height) = reader
@@ -194,46 +196,7 @@ async fn upload_artwork(api: &Api, show: &str, path: &std::path::Path) -> Result
         width == height && (1400..=3000).contains(&width),
         "upload a square image between 1400 and 3000 pixels. Attempted resolution: {width} × {height} pixels"
     );
-    let result = match api
-        .client()
-        .create_image_upload_presign(p::CreateImageUploadPresignParams {
-            body: serde_json::from_value(json!({
-                "show_id": show, "byte_length": raw.len(), "content_type": content_type,
-                "file_name": path.file_name().context("artwork filename")?.to_string_lossy(),
-            }))?,
-        })
-        .await?
-    {
-        p::CreateImageUploadPresignResponse::Status201(value) => value,
-        response => return Err(api.response_error(response).await),
-    };
-    let response = api
-        .send(
-            api.http
-                .request(reqwest::Method::PUT, &result.upload_url)
-                .header("Content-Type", content_type)
-                .body(raw),
-        )
-        .await?;
-    ensure!(
-        response.status().is_success(),
-        "upload artwork: HTTP {}",
-        response.status()
-    );
-    let completed = match api
-        .client()
-        .complete_image_upload(p::CompleteImageUploadParams {
-            image_asset_id: result.image_asset_id,
-            body: p::CompleteImageUpload {
-                object_key: result.object_key,
-            },
-        })
-        .await?
-    {
-        p::CompleteImageUploadResponse::Status201(value) => value,
-        response => return Err(api.response_error(response).await),
-    };
-    Ok(completed.id)
+    listenbox_sync_engine::artwork::upload(api, show, raw).await
 }
 
 pub async fn import_rss(api: &Api, source: &str, slug: Option<&str>) -> Result<()> {

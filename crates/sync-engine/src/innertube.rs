@@ -21,6 +21,7 @@ pub struct YouTube {
 
 pub struct PlaylistSnapshot {
     pub title: String,
+    pub artwork_url: Option<String>,
     pub present: Vec<Video>,
     /// Sum of known listing durations, including unplayable entries, rounded up per video.
     pub estimated_seconds: i64,
@@ -41,6 +42,8 @@ pub struct PlaylistScan {
 pub struct Video {
     pub id: String,
     pub title: String,
+    /// Only real source titles may replace published metadata.
+    pub source_title: Option<String>,
     pub duration_seconds: Option<u64>,
 }
 
@@ -50,7 +53,7 @@ enum PlayerResponse {
 }
 
 pub enum Playback {
-    Available(Media),
+    Available(Box<Media>),
     Unavailable(String),
 }
 
@@ -58,6 +61,7 @@ pub struct Media {
     pub estimated_seconds: i64,
     pub duration_seconds: Option<u64>,
     pub title: String,
+    pub artwork_url: Option<String>,
     pub description: String,
     pub published_at: i64,
     pub video: Stream,
@@ -216,6 +220,7 @@ impl YouTube {
     ) -> Result<PlaylistSnapshot> {
         api.wait(async {
             let mut title = None;
+            let mut artwork_url = None;
             let mut present = Vec::new();
             let mut estimated_seconds = 0_i64;
             let mut seen = HashSet::new();
@@ -243,6 +248,9 @@ impl YouTube {
                 if title.is_none() {
                     title = data.info.title;
                 }
+                if artwork_url.is_none() {
+                    artwork_url = thumbnail_url(data.info.thumbnails);
+                }
                 for item in data.items {
                     let (video, seconds) = match item {
                         PlaylistItem::PlaylistVideo(video) => {
@@ -250,10 +258,17 @@ impl YouTube {
                                 valid_video_id(&video.id),
                                 "Playlist contains an unidentified unavailable item"
                             );
+                            let source_title = video
+                                .title
+                                .source_text()
+                                .filter(|title| video.is_playable && !title.trim().is_empty())
+                                .map(str::to_owned);
+                            let title = video.title.into_string();
                             (
                                 Video {
                                     id: video.id,
-                                    title: video.title.into_string(),
+                                    title,
+                                    source_title,
                                     duration_seconds: duration_seconds(video.duration.seconds),
                                 },
                                 known_seconds(video.duration.seconds),
@@ -289,16 +304,17 @@ impl YouTube {
                                 }
                                 _ => None,
                             };
+                            let source_title = video
+                                .metadata
+                                .and_then(|metadata| metadata.title)
+                                .and_then(|title| title.source_text().map(str::to_owned))
+                                .filter(|title| !title.trim().is_empty());
                             (
                                 Video {
-                                    title: video
-                                        .metadata
-                                        .and_then(|metadata| metadata.title)
-                                        .map(|title| title.into_string())
-                                        .filter(|title| !title.trim().is_empty())
-                                        .unwrap_or_else(|| {
-                                            format!("YouTube video {}", video.content_id)
-                                        }),
+                                    title: source_title.clone().unwrap_or_else(|| {
+                                        format!("YouTube video {}", video.content_id)
+                                    }),
+                                    source_title,
                                     id: video.content_id,
                                     duration_seconds: duration
                                         .and_then(|seconds| duration_seconds(seconds as f64)),
@@ -334,9 +350,47 @@ impl YouTube {
                 title: title
                     .filter(|title| !title.is_empty())
                     .context("YouTube playlist missing title")?,
+                artwork_url,
                 present,
                 estimated_seconds,
                 can_remove,
+            })
+        })
+        .await
+    }
+
+    /// A single-video show still reconciles source metadata after publication,
+    /// without resolving streams or downloading its media again.
+    pub(crate) async fn video_snapshot(&self, api: &Api, id: &str) -> Result<PlaylistSnapshot> {
+        api.wait(async {
+            let (source_title, artwork_url, duration_seconds) =
+                match self.player_info(id, Client::Web).await? {
+                    PlayerResponse::Available(info) => {
+                        let data = info.data().await?;
+                        (
+                            data.basic_info
+                                .title
+                                .filter(|title| !title.trim().is_empty()),
+                            thumbnail_url(data.basic_info.thumbnail),
+                            data.basic_info.duration.and_then(duration_seconds),
+                        )
+                    }
+                    PlayerResponse::Unavailable(_) => (None, None, None),
+                };
+            let title = source_title
+                .clone()
+                .unwrap_or_else(|| format!("YouTube video {id}"));
+            Ok(PlaylistSnapshot {
+                title: title.clone(),
+                artwork_url,
+                present: vec![Video {
+                    id: id.into(),
+                    title,
+                    source_title,
+                    duration_seconds,
+                }],
+                estimated_seconds: 0,
+                can_remove: true,
             })
         })
         .await
@@ -541,10 +595,11 @@ impl YouTube {
                 selected_audio.bitrate,
                 selected_audio.has_video,
             );
-            Ok(Playback::Available(Media {
+            Ok(Playback::Available(Box::new(Media {
                 estimated_seconds: known_seconds(data.basic_info.duration.unwrap_or(0.0)),
                 duration_seconds: data.basic_info.duration.and_then(duration_seconds),
                 title: data.basic_info.title.unwrap_or_else(|| id.into()),
+                artwork_url: thumbnail_url(data.basic_info.thumbnail),
                 description: data.basic_info.short_description.unwrap_or_default(),
                 published_at,
                 video: self.stream(video, &playback_data.cpn).await?,
@@ -552,7 +607,7 @@ impl YouTube {
                     Some(format) => Some(self.stream(format, &playback_data.cpn).await?),
                     None => None,
                 },
-            }))
+            })))
         })
         .await
     }
@@ -723,6 +778,26 @@ fn duration_badge_seconds(text: &str) -> Option<i64> {
         total = total.checked_mul(60)?.checked_add(value)?;
     }
     Some(total)
+}
+
+fn thumbnail_url(thumbnails: Option<Vec<youtubei::models::Thumbnail>>) -> Option<String> {
+    thumbnails?
+        .into_iter()
+        .filter(|thumbnail| {
+            url::Url::parse(&thumbnail.url).is_ok_and(|url| {
+                matches!(url.scheme(), "http" | "https")
+                    && url.host_str().is_some()
+                    && url.username().is_empty()
+                    && url.password().is_none()
+            })
+        })
+        .max_by(|a, b| {
+            let area = |thumbnail: &youtubei::models::Thumbnail| {
+                thumbnail.width.unwrap_or(0.0) * thumbnail.height.unwrap_or(0.0)
+            };
+            area(a).total_cmp(&area(b))
+        })
+        .map(|thumbnail| thumbnail.url)
 }
 
 fn unavailable_reason(status: &PlayabilityStatus) -> String {

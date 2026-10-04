@@ -192,8 +192,10 @@ pub async fn import(
             format!("https://www.youtube.com/watch?v={id}"),
             ImportListing::Complete(PlaylistSnapshot {
                 title: media.title.clone(),
+                artwork_url: media.artwork_url,
                 present: vec![Video {
                     id: id.clone(),
+                    source_title: Some(media.title.clone()),
                     title: media.title,
                     duration_seconds: media.duration_seconds,
                 }],

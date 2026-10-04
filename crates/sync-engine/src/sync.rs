@@ -19,6 +19,7 @@ use std::{
 
 pub const WATCH_INTERVAL: Duration = Duration::from_secs(3600);
 const TRANSFER_ATTEMPTS: usize = 5;
+const METADATA_REQUEST_BYTES: usize = 4 << 20;
 
 #[derive(Default, Clone, Debug)]
 pub struct Report {
@@ -190,17 +191,18 @@ impl Engine {
                 .find(|(key, _)| key == "v")
                 .map(|(_, id)| id.into_owned())
                 .context("Show source has no video ID")?;
-            crate::innertube::PlaylistSnapshot {
-                title: before.show.title.clone(),
-                present: vec![crate::innertube::Video {
-                    title: format!("YouTube video {id}"),
-                    id,
-                    duration_seconds: None,
-                }],
-                estimated_seconds: 0,
-                can_remove: true,
-            }
+            youtube.video_snapshot(api, &id).await?
         };
+        if before
+            .show
+            .image_url
+            .as_deref()
+            .is_none_or(|url| url.trim().is_empty())
+            && let Some(url) = &snapshot.artwork_url
+        {
+            let image = crate::artwork::upload_source(api, &before.show.id, url).await?;
+            update_metadata(api, slug, collection, Some(image), Vec::new()).await?;
+        }
         let ordered_urls: Vec<String> = snapshot
             .present
             .iter()
@@ -218,8 +220,15 @@ impl Engine {
             .iter()
             .map(|video| format!("https://www.youtube.com/watch?v={}", video.id))
             .collect();
+        journal.published(
+            &api.config.api_origin,
+            slug,
+            before
+                .episodes
+                .iter()
+                .map(|episode| episode.source_url.as_str()),
+        )?;
         for episode in &before.episodes {
-            journal.published(&api.config.api_origin, slug, &episode.source_url)?;
             journal.forget(&api.config.api_origin, slug, &episode.source_url)?;
         }
         let existing: HashMap<&str, &p::SyncEpisode> = before
@@ -372,9 +381,9 @@ impl Engine {
             bail!(message);
         }
 
-        let current = inventory(api, slug).await?;
+        let mut after = inventory(api, slug).await?;
         ensure!(
-            current.show.youtube_linkage() == Some(collection),
+            after.show.youtube_linkage() == Some(collection),
             "Show linkage changed during sync"
         );
         for episode in &before.episodes {
@@ -384,7 +393,9 @@ impl Engine {
                 report.removed += 1;
             }
         }
-        let after = inventory(api, slug).await?;
+        if report.removed > 0 {
+            after = inventory(api, slug).await?;
+        }
         ensure!(
             after.show.youtube_linkage() == Some(collection),
             "Show source changed during sync"
@@ -394,6 +405,21 @@ impl Engine {
             .iter()
             .map(|episode| (episode.source_url.as_str(), episode))
             .collect();
+        let titles: Vec<_> = snapshot
+            .present
+            .iter()
+            .filter_map(|video| {
+                let title = video.source_title.as_ref()?;
+                let source_url = format!("https://www.youtube.com/watch?v={}", video.id);
+                let episode = episodes.get(source_url.as_str())?;
+                (episode.imported && episode.title != *title).then(|| p::SyncEpisodeTitle {
+                    episode_id: episode.id.clone(),
+                    source_url,
+                    title: title.clone(),
+                })
+            })
+            .collect();
+        update_titles(api, slug, collection, titles).await?;
         let ordered: Vec<_> = ordered_urls
             .iter()
             .filter_map(|url| episodes.get(url.as_str()))
@@ -438,6 +464,64 @@ impl Engine {
                 return Ok(());
             }
         }
+    }
+}
+
+async fn update_titles(
+    api: &Api,
+    slug: &str,
+    collection: &str,
+    titles: Vec<p::SyncEpisodeTitle>,
+) -> Result<()> {
+    let overhead = serde_json::to_vec(&p::UpdateSyncMetadata {
+        youtube_url: collection.into(),
+        image_asset_id: None,
+        episode_titles: Vec::new(),
+    })?
+    .len();
+    let mut bytes = overhead;
+    let mut batch = Vec::new();
+    for title in titles {
+        let size = serde_json::to_vec(&title)?.len();
+        ensure!(
+            overhead + size <= METADATA_REQUEST_BYTES,
+            "Episode title exceeds the metadata request budget"
+        );
+        let separator = usize::from(!batch.is_empty());
+        if bytes + size + separator > METADATA_REQUEST_BYTES {
+            update_metadata(api, slug, collection, None, std::mem::take(&mut batch)).await?;
+            bytes = overhead;
+        }
+        bytes += size + usize::from(!batch.is_empty());
+        batch.push(title);
+    }
+    if !batch.is_empty() {
+        update_metadata(api, slug, collection, None, batch).await?;
+    }
+    Ok(())
+}
+
+async fn update_metadata(
+    api: &Api,
+    slug: &str,
+    collection: &str,
+    image_asset_id: Option<String>,
+    episode_titles: Vec<p::SyncEpisodeTitle>,
+) -> Result<()> {
+    match api
+        .client()
+        .update_sync_metadata(p::UpdateSyncMetadataParams {
+            show_slug: slug.into(),
+            body: p::UpdateSyncMetadata {
+                youtube_url: collection.into(),
+                image_asset_id,
+                episode_titles,
+            },
+        })
+        .await?
+    {
+        p::UpdateSyncMetadataResponse::Status204(()) => Ok(()),
+        response => Err(api.response_error(response).await),
     }
 }
 

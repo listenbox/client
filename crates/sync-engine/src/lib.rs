@@ -1,6 +1,7 @@
 //! Shared Listenbox client operations.
 use anyhow::Result;
 pub mod api;
+pub mod artwork;
 mod audio;
 pub mod auth;
 #[rustfmt::skip]
