@@ -505,6 +505,23 @@ impl Workspace {
                                 cx.notify();
                             })),
                     )
+                })
+                .when(showing_issues && missing > 0, |tabs| {
+                    tabs.child(
+                        Button::new("retry-not-imported")
+                            .outline()
+                            .icon(assets::IconName::RefreshCw)
+                            .label("Retry imports")
+                            .disabled(
+                                self.stopping.is_some()
+                                    || self
+                                        .selected
+                                        .as_ref()
+                                        .is_some_and(|slug| self.jobs.contains_key(slug))
+                                    || self.show().is_none_or(|show| !show.has_active_subscription),
+                            )
+                            .on_click(cx.listener(|view, _, _, cx| view.sync(cx))),
+                    )
                 }),
         )
         .into_any_element()

@@ -36,6 +36,19 @@ impl std::fmt::Display for SyncStopped {
 }
 impl std::error::Error for SyncStopped {}
 
+#[derive(Debug)]
+pub(crate) struct HttpFailure {
+    pub status: u16,
+    message: String,
+}
+
+impl std::fmt::Display for HttpFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "HTTP {}: {}", self.status, self.message)
+    }
+}
+impl std::error::Error for HttpFailure {}
+
 #[derive(Clone)]
 pub struct Api {
     pub config: Config,
@@ -162,7 +175,10 @@ impl Api {
             Err(error) => return error,
         };
         let p::Error::Http { body: raw, .. } = error else {
-            return error.into();
+            return anyhow::Error::new(error).context(HttpFailure {
+                status,
+                message: "Could not read error response".into(),
+            });
         };
         let message = serde_json::from_slice::<Value>(&raw)
             .ok()
@@ -179,7 +195,11 @@ impl Api {
             403 => "permission denied",
             _ => &message,
         };
-        anyhow::anyhow!("HTTP {status}: {hint}")
+        HttpFailure {
+            status,
+            message: hint.to_owned(),
+        }
+        .into()
     }
 }
 

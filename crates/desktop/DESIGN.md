@@ -241,7 +241,10 @@ rows show their full YouTube explanation in the danger color; `Skipped` uses
 muted gray. The video title is an underlined, keyboard-focusable link that opens
 YouTube in the browser, without a separate handoff button. The
 `Not imported` filter is conditional on those rows and disappears when none
-remain. Downloads show a horizontal progress bar, received/total bytes and
+remain. Its Retry imports action starts another sync through the engine's saved
+work, including failures whose automatic attempts were exhausted. Disable it
+while the selected podcast is syncing or stopping, or lacks an active plan.
+Downloads show a horizontal progress bar, received/total bytes and
 measured throughput. There is no queue or upload pause/resume control.
 Checkpoints recover crashes and unexpected interruptions. Empty states describe
 real next steps and never invent activity or podcast content.

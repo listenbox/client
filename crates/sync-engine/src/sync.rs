@@ -303,10 +303,12 @@ impl Engine {
                     }
                     attempt += 1;
                 };
-                // A non-retryable episode error or a spent retry budget skips
-                // this run. Its journal remains available for a later sync.
+                // Only non-retryable episode errors are skips. Exhausted
+                // transient failures remain failed, with their resumable journal.
                 let result = match result {
-                    Err(error) if !api.cancel.is_cancelled() => {
+                    Err(error)
+                        if !api.cancel.is_cancelled() && classify(&error) == Category::Skip =>
+                    {
                         Ok(ImportOutcome::Skipped(crate::redact(&format!("{error:#}"))))
                     }
                     result => result,
@@ -317,7 +319,11 @@ impl Engine {
                 if api.cancel.is_cancelled() && result.is_err() {
                     active.cancelled();
                 } else {
-                    active.finish(&Ok(()));
+                    let outcome = result
+                        .as_ref()
+                        .map(|_| ())
+                        .map_err(|error| anyhow::anyhow!("{error:#}"));
+                    active.finish(&outcome);
                 }
                 journal.outcome(&api.config.api_origin, slug, &transfer.item())?;
                 result

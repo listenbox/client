@@ -262,10 +262,10 @@ The sync engine owns two episode error categories:
 
 | Category | Sync behavior |
 | --- | --- |
-| Retryable | DNS, connection, timeout and interrupted HTTP body failures retry up to four times after the initial attempt, with cancellable delays of 1, 2, 4 and 8 seconds. Saved download ranges and prepared uploads are reused. After exhaustion the episode is skipped for this run, preserving its reason and saved work for the next sync. |
+| Retryable | API HTTP 5xx, DNS, connection, timeout and interrupted HTTP body failures retry up to four times after the initial attempt, with cancellable delays of 1, 2, 4 and 8 seconds. Saved download ranges and prepared uploads are reused. After exhaustion the episode is marked Failed under Not imported, preserving its error and saved work. Retry imports starts a fresh sync with a new attempt budget. |
 | Skip | Unavailable playback, sign-in requirements, API rejections, invalid responses and local processing errors skip the episode for this run. The desktop lists it under Not imported with its reason. Other episodes continue syncing. |
 
-Stop interrupts the synchronization and its retry delays, preserving unfinished work as queued. It is control flow, independent of the episode error categories. Errors reading the playlist, reading the backend inventory or recording durable outcomes stop the whole run.
+Stop interrupts the synchronization and its retry delays, preserving unfinished work as queued. It is control flow, independent of the episode error categories. Errors reading the playlist, reading the backend inventory or recording durable outcomes stop the whole run. Exhausted episode failures allow admitted sibling transfers to finish before failing the run; reconciliation resumes on the next successful sync.
 
 For creator-managed podcasts, read or change order through the same ordering API:
 

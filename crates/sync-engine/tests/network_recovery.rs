@@ -405,7 +405,7 @@ async fn live_network_recovery() {
     let mode = fixture["mode"].as_str().unwrap();
     let fail_import = match mode {
         "dns" => true,
-        "completion" | "resume" | "player" | "published" => false,
+        "completion" | "resume" | "player" | "published" | "server" | "api" => false,
         _ => panic!("Unknown network scenario: {mode}"),
     };
     let cancel = CancellationToken::new();
@@ -418,7 +418,9 @@ async fn live_network_recovery() {
         fail_import,
         calls: AtomicUsize::new(0),
     });
-    origin.set_host(Some("sync.test.invalid")).unwrap();
+    if mode != "api" {
+        origin.set_host(Some("sync.test.invalid")).unwrap();
+    }
     let test_config = api.config.directory.join("test-network-config.yaml");
     std::fs::write(
         &test_config,
@@ -462,6 +464,9 @@ async fn live_network_recovery() {
                     if mode == "dns" {
                         assert!(item.error.as_ref().unwrap().contains("dns error"));
                     }
+                    if mode == "server" {
+                        assert!(item.error.as_ref().unwrap().contains("HTTP 5"));
+                    }
                     // Prove admission to retry policy, then Stop before another
                     // attempt. CI never exercises automatic retries or backoffs.
                     stopped_during_retry = true;
@@ -504,7 +509,7 @@ async fn live_network_recovery() {
             assert!(item.error.is_none());
             assert_eq!(saved.phase, Phase::Complete);
         }
-        "dns" | "player" | "completion" => {
+        "dns" | "player" | "completion" | "server" | "api" => {
             assert!(result.is_err());
             assert!(stopped_during_retry, "Stop never reached the retry state");
             assert_eq!(item.attempt, 1);

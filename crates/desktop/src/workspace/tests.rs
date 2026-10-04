@@ -353,8 +353,7 @@ async fn live_not_imported(cx: &mut TestAppContext) {
             );
             assert_eq!(view.source_items.len(), 1);
             if fixture["mode"].as_str() == Some("lost") {
-                assert_eq!(view.source_items[0].phase, Phase::Skipped);
-                assert!(view.source_items[0].reason.is_some());
+                assert_eq!(view.source_items[0].phase, Phase::Queued);
             } else {
                 assert_eq!(view.source_items[0].phase, Phase::Complete);
             }
@@ -394,6 +393,7 @@ async fn live_not_imported(cx: &mut TestAppContext) {
             window.try_find("filter-not-imported").is_some(),
             "YouTube failures have no Not imported tab"
         );
+        assert!(window.try_find("retry-not-imported").is_none());
         window.click("filter-not-imported", cx);
         window.render_frame(cx);
         assert_eq!(
@@ -521,11 +521,19 @@ async fn live_not_imported(cx: &mut TestAppContext) {
     if fixture["mode"].as_str() == Some("recover") {
         cx.update_window(handle.into(), |_, window, cx| {
             window.click("filter-not-imported", cx);
-            window.click("sync-now", cx);
+            window.render_frame(cx);
+            window.click("retry-not-imported", cx);
             assert_eq!(
                 workspace.read(cx).jobs.len(),
                 1,
                 "recovery sync was not admitted"
+            );
+            window.render_frame(cx);
+            window.click("retry-not-imported", cx);
+            assert_eq!(
+                workspace.read(cx).jobs.len(),
+                1,
+                "retry admitted a duplicate sync"
             );
         })
         .unwrap();

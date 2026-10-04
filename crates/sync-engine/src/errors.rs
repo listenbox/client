@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Category {
-    /// DNS, connections, timeouts and interrupted HTTP bodies.
+    /// HTTP server failures, DNS, connections, timeouts and interrupted bodies.
     Retryable,
     /// Skip this episode for this run, retaining the reason for the next sync.
     Skip,
@@ -13,6 +13,12 @@ pub(crate) enum Category {
 const CATEGORY_INFO: &str = "listenbox_error_category";
 
 pub(crate) fn classify(error: &anyhow::Error) -> Category {
+    if error
+        .downcast_ref::<crate::api::HttpFailure>()
+        .is_some_and(|error| (500..600).contains(&error.status))
+    {
+        return Category::Retryable;
+    }
     for cause in error.chain() {
         if cause.is::<crate::download::MediaUnavailable>() {
             return Category::Skip;
@@ -36,7 +42,10 @@ pub(crate) fn classify(error: &anyhow::Error) -> Category {
                 || error.is_timeout()
                 || error.is_request()
                 || error.is_body()
-                || error.is_decode())
+                || error.is_decode()
+                || error
+                    .status()
+                    .is_some_and(|status| status.is_server_error()))
         {
             return Category::Retryable;
         }
