@@ -33,7 +33,7 @@ impl Drop for InstallationLock {
     }
 }
 
-fn hwnd(window: &Window) -> isize {
+pub(super) fn hwnd(window: &Window) -> isize {
     let handle = HasWindowHandle::window_handle(window).expect("Listenbox window handle");
     let RawWindowHandle::Win32(handle) = handle.as_raw() else {
         unreachable!("Listenbox must have a Win32 window on Windows");

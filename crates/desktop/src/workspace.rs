@@ -12,7 +12,7 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use listenbox_sync_engine::{
     api::PaymentRequired,
-    client::{Catalog, Client},
+    client::{Catalog, Client, SyncState},
     downloads::{Phase, Snapshot},
     publicapi::{Show, ShowSourceKind},
     sync::Report,
@@ -36,6 +36,7 @@ pub struct Workspace {
     episode_request: u64,
     episode_cancel: Option<CancellationToken>,
     source_items: Vec<listenbox_sync_engine::downloads::Download>,
+    last_synced: Option<std::time::SystemTime>,
     source_loading: bool,
     source_error: Option<String>,
     show_issues: bool,
@@ -71,9 +72,15 @@ pub struct Workspace {
     cookie_message: Option<String>,
     cookie_error: Option<String>,
     jobs: HashMap<String, CancellationToken>,
-    reports: HashMap<String, String>,
+    reports: HashMap<String, SyncReport>,
     error: Option<ErrorNotice>,
     progress: Snapshot,
+}
+
+#[derive(Debug)]
+enum SyncReport {
+    Summary(Report),
+    Notice(String),
 }
 
 #[derive(Clone, Debug)]
@@ -167,10 +174,7 @@ enum Message {
         u64,
         anyhow::Result<Vec<listenbox_sync_engine::publicapi::EpisodeListItem>>,
     ),
-    SourceItems(
-        u64,
-        anyhow::Result<Vec<listenbox_sync_engine::downloads::Download>>,
-    ),
+    SyncState(u64, anyhow::Result<SyncState>),
 }
 
 impl Workspace {
@@ -222,6 +226,7 @@ impl Workspace {
             episode_request: 0,
             episode_cancel: None,
             source_items: vec![],
+            last_synced: None,
             source_loading: false,
             source_error: None,
             show_issues: false,
@@ -412,14 +417,17 @@ impl Workspace {
                 self.cookies_received(saved, result, window, cx)
             }
             Message::Episodes(request, result) => self.episodes_received(request, result),
-            Message::SourceItems(request, result) => {
+            Message::SyncState(request, result) => {
                 if request == self.episode_request {
                     self.source_loading = false;
                     match result {
-                        Ok(items) => self.source_items = items,
+                        Ok(state) => {
+                            self.source_items = state.items;
+                            self.last_synced = state.last_synced;
+                        }
                         Err(error) => {
                             self.source_error =
-                                Some(format!("Could not load saved imports. {error:#}"))
+                                Some(format!("Could not load saved sync status. {error:#}"))
                         }
                     }
                 }
@@ -541,8 +549,10 @@ impl Workspace {
                 self.catalog.shows.push(show);
                 self.import_open = false;
                 self.select(Some(slug.clone()), window, cx);
-                self.reports
-                    .insert(slug, "Importing the first episodes…".into());
+                self.reports.insert(
+                    slug,
+                    SyncReport::Notice("Importing the first episodes…".into()),
+                );
             }
             Message::Imported { slug, kind, result } => {
                 if slug.is_none() {
@@ -564,7 +574,9 @@ impl Workspace {
                             }
                             self.reports.insert(
                                 slug,
-                                "Stopped. Progress is saved for the next sync.".into(),
+                                SyncReport::Notice(
+                                    "Stopped. Progress is saved for the next sync.".into(),
+                                ),
                             );
                         }
                     }
@@ -572,7 +584,9 @@ impl Workspace {
                         if let Some(slug) = &slug {
                             self.reports.insert(
                                 slug.clone(),
-                                "Import stopped. Use Sync now to continue.".into(),
+                                SyncReport::Notice(
+                                    "Import stopped. Use Sync now to continue.".into(),
+                                ),
                             );
                         }
                         self.error = Some(ErrorNotice::import(
@@ -605,21 +619,7 @@ impl Workspace {
                 if self.selected.as_ref() == Some(&slug) {
                     self.load_episodes(cx);
                 }
-                self.reports.insert(
-                    slug,
-                    format!(
-                        "{} added · {} removed · {} unchanged · {} skipped{}",
-                        report.added,
-                        report.removed,
-                        report.unchanged,
-                        report.skipped,
-                        if report.reordered {
-                            " · Order updated"
-                        } else {
-                            ""
-                        }
-                    ),
-                );
+                self.reports.insert(slug, SyncReport::Summary(report));
             }
             Message::Finished(slug, result) => {
                 if result.is_err() && self.selected.as_ref() == Some(&slug) {
@@ -630,17 +630,23 @@ impl Workspace {
                     .remove(&slug)
                     .is_some_and(|cancel| cancel.is_cancelled());
                 if stopped {
-                    self.reports
-                        .insert(slug, "Stopped. Progress is saved for the next sync.".into());
+                    self.reports.insert(
+                        slug,
+                        SyncReport::Notice("Stopped. Progress is saved for the next sync.".into()),
+                    );
                 } else if let Err(error) = result {
                     if error.is::<listenbox_sync_engine::cookies::SignInRequired>() {
                         self.error = Some(ErrorNotice::youtube_sign_in());
                         self.reports.insert(
                             slug,
-                            "YouTube sign-in required. Open Settings to add fresh cookies.".into(),
+                            SyncReport::Notice(
+                                "YouTube sign-in required. Open Settings to add fresh cookies."
+                                    .into(),
+                            ),
                         );
                     } else {
-                        self.reports.insert(slug, format!("Sync failed. {error:#}"));
+                        self.reports
+                            .insert(slug, SyncReport::Notice(format!("Sync failed. {error:#}")));
                     }
                 }
             }
@@ -791,8 +797,10 @@ impl Workspace {
         let downloads = self.client.downloads();
         downloads.remove_source(&slug);
         self.progress = downloads.snapshot();
-        self.reports
-            .insert(slug.clone(), "Reading YouTube and Listenbox…".into());
+        self.reports.insert(
+            slug.clone(),
+            SyncReport::Notice("Reading YouTube and Listenbox…".into()),
+        );
         let (client, sender) = (self.client.clone(), self.sender.clone());
         self.tasks.spawn_on(
             async move {
@@ -826,19 +834,7 @@ impl Workspace {
             .flex_shrink_0()
             .bg(t.rail)
             .border_r_1()
-            .border_color(t.divider)
-            .child(
-                div()
-                    .h(px(tokens::TOOLBAR_HEIGHT))
-                    .flex_shrink_0()
-                    .flex()
-                    .items_center()
-                    .px(px(tokens::SIDEBAR_INSET))
-                    .border_b_1()
-                    .border_color(t.divider)
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child("Listenbox"),
-            );
+            .border_color(t.divider);
         let mut navigation = div()
             .flex()
             .flex_col()
@@ -1065,9 +1061,17 @@ impl Workspace {
             .child(
                 div()
                     .p(px(tokens::SIDEBAR_INSET))
+                    .flex()
+                    .items_center()
+                    .justify_between()
                     .text_size(px(12.))
                     .text_color(t.muted)
-                    .child("YouTube → Listenbox"),
+                    .child("YouTube → Listenbox")
+                    .map(|footer| {
+                        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+                        let footer = footer.child(crate::platform::application_menu_button());
+                        footer
+                    }),
             )
             .into_any_element()
     }
@@ -1193,31 +1197,122 @@ impl Workspace {
         let show = self.show().unwrap();
         let source = show.youtube_linkage().unwrap_or_default().to_owned();
         let source_link = source.clone();
-        let is_playlist = source.contains("/playlist?");
-        let is_channel = source.contains("/channel/");
         let format = if show.source_kind == ShowSourceKind::Audio {
             "Audio podcast"
         } else {
             "Video podcast"
         };
-        let mut pane = div().flex().flex_col().gap(px(tokens::SPACE)).max_w(px(900.))
-            .child(div().flex().items_center().gap(px(tokens::SPACE)).py_2()
-                .child(artwork(show.image_url.as_deref(), 120., t))
-                .child(div().flex_1().min_w_0().flex().flex_col().items_start().gap_3()
-                    .child(div().text_size(px(tokens::PAGE_TITLE)).font_weight(FontWeight::BOLD).child(show.title.clone()))
-                    .child(div().text_color(t.muted).child(format))
-                    .child(Button::new("open-show").ghost().small().icon(assets::IconName::ExternalLink).label("Open in Listenbox")
-                        .on_click(cx.listener(|view, _, _, cx| { if let Some(url) = view.show().and_then(|show| view.client.show_url(show).ok()) { cx.open_url(&url); } })))))
-            .child(self.import_status(show, cx))
-            .child(div().border_t_1().border_color(t.divider).pt(px(tokens::SPACE)).flex().flex_col().gap_2()
-                .child(div().font_weight(FontWeight::SEMIBOLD).child("YouTube source"))
-                .child(Button::new("open-playlist").ghost().w_full().min_w_0()
-                    .accessibility_label(format!("Open YouTube source: {source}"))
-                    .child(div().w_full().flex().items_center().gap_2()
-                        .child(Icon::new(assets::IconName::ExternalLink))
-                        .child(div().flex_1().min_w_0().truncate().child(source)))
-                    .on_click(move |_, _, cx| cx.open_url(&source_link)))
-                .child(div().text_size(px(12.)).text_color(t.muted).child(if is_playlist { "Episodes follow the playlist’s order. Removed videos leave this podcast on the next sync." } else if is_channel { "Episodes follow upload dates, newest first. Removed videos leave this podcast on the next complete sync." } else { "This podcast imports a YouTube video. Sync again to resume unfinished transfers." })));
+        let mut pane = div()
+            .flex()
+            .flex_col()
+            .gap(px(tokens::SPACE))
+            .max_w(px(900.))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(tokens::SPACE))
+                    .py_2()
+                    .child(artwork(show.image_url.as_deref(), 120., t))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .items_start()
+                            .gap_3()
+                            .child(
+                                div()
+                                    .text_size(px(tokens::PAGE_TITLE))
+                                    .font_weight(FontWeight::BOLD)
+                                    .child(show.title.clone()),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_wrap()
+                                    .gap_2()
+                                    .text_color(t.muted)
+                                    .child(format)
+                                    .when(
+                                        !self.episode_loading && self.episode_error.is_none(),
+                                        |row| {
+                                            let count = self.episodes.len();
+                                            let label = format!(
+                                                "{count} {}",
+                                                if count == 1 { "episode" } else { "episodes" }
+                                            );
+                                            row.child("·").child(
+                                                div()
+                                                    .id("episode-count")
+                                                    .role(Role::Label)
+                                                    .aria_label(label.clone())
+                                                    .child(label)
+                                                    .test_support(),
+                                            )
+                                        },
+                                    ),
+                            )
+                            .when(
+                                !self.source_loading && self.source_error.is_none(),
+                                |header| {
+                                    let label = self
+                                        .last_synced
+                                        .map(|time| {
+                                            format!(
+                                                "Last synced {}",
+                                                chrono::DateTime::<chrono::Local>::from(time)
+                                                    .format("%b %-d, %Y at %H:%M")
+                                            )
+                                        })
+                                        .unwrap_or_else(|| "Not synced on this device yet".into());
+                                    header.child(
+                                        div()
+                                            .id("last-synced")
+                                            .role(Role::Label)
+                                            .aria_label(label.clone())
+                                            .text_size(px(12.))
+                                            .text_color(t.muted)
+                                            .child(label)
+                                            .test_support(),
+                                    )
+                                },
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_wrap()
+                                    .gap_2()
+                                    .child(
+                                        Button::new("open-show")
+                                            .ghost()
+                                            .small()
+                                            .icon(assets::IconName::ExternalLink)
+                                            .label("Open in Listenbox")
+                                            .on_click(cx.listener(|view, _, _, cx| {
+                                                if let Some(url) = view.show().and_then(|show| {
+                                                    view.client.show_url(show).ok()
+                                                }) {
+                                                    cx.open_url(&url);
+                                                }
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new("open-playlist")
+                                            .ghost()
+                                            .small()
+                                            .icon(assets::IconName::ExternalLink)
+                                            .label("Open in YouTube")
+                                            .accessibility_label(format!(
+                                                "Open YouTube source: {source}"
+                                            ))
+                                            .on_click(move |_, _, cx| cx.open_url(&source_link)),
+                                    ),
+                            ),
+                    ),
+            )
+            .child(self.import_status(show, cx));
         if !show.has_active_subscription {
             pane = pane.child(
                 div()
@@ -1357,6 +1452,16 @@ impl Workspace {
                     view.open_settings(window, cx)
                 }),
             )
+            .on_action(
+                cx.listener(|view, _: &crate::platform::Reload, window, cx| {
+                    if view.loading || view.stopping.is_some() {
+                        return;
+                    }
+                    view.artwork_cache
+                        .update(cx, |cache, cx| cache.clear(window, cx));
+                    view.reload(cx);
+                }),
+            )
             .capture_key_down(cx.listener(|view, event: &KeyDownEvent, _, cx| {
                 if event.keystroke.modifiers.platform && event.keystroke.key == "q" {
                     cx.stop_propagation();
@@ -1389,72 +1494,6 @@ impl Workspace {
                     .flex_col()
                     .flex_1()
                     .min_w_0()
-                    .child(
-                        div()
-                            .h(px(tokens::TOOLBAR_HEIGHT))
-                            .px(px(tokens::SPACE))
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .border_b_1()
-                            .border_color(t.divider)
-                            .child(div().text_color(t.muted).child("YouTube imports"))
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap_2()
-                                    .when(self.loading || self.authenticating, |row| {
-                                        row.child(Spinner::new().small())
-                                    })
-                                    .child(
-                                        Button::new("open-settings")
-                                            .ghost()
-                                            .label("Settings")
-                                            .disabled(self.stopping.is_some())
-                                            .on_click(cx.listener(|view, _, window, cx| {
-                                                view.open_settings(window, cx)
-                                            })),
-                                    )
-                                    .child(
-                                        Button::new("reload")
-                                            .ghost()
-                                            .label("Reload")
-                                            .disabled(self.loading || self.stopping.is_some())
-                                            .on_click(cx.listener(|view, _, window, cx| {
-                                                view.artwork_cache.update(cx, |cache, cx| {
-                                                    cache.clear(window, cx)
-                                                });
-                                                view.reload(cx);
-                                            })),
-                                    )
-                                    .child(
-                                        Button::new("sign-in")
-                                            .ghost()
-                                            .label(if self.authenticating {
-                                                "Finish in your browser…"
-                                            } else if self.loading && !self.loaded {
-                                                "Loading…"
-                                            } else if self.loaded {
-                                                "Log out"
-                                            } else {
-                                                "Sign in"
-                                            })
-                                            .disabled(
-                                                self.authenticating
-                                                    || (self.loading && !self.loaded)
-                                                    || self.stopping.is_some(),
-                                            )
-                                            .on_click(cx.listener(|view, _, _, cx| {
-                                                if view.loaded {
-                                                    view.shutdown(Shutdown::Logout, cx);
-                                                } else {
-                                                    view.login(cx);
-                                                }
-                                            })),
-                                    ),
-                            ),
-                    )
                     .child(self.content(window, cx)),
             )
             .when_some(quit_notice, |workspace, (instruction, opacity)| {

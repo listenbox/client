@@ -50,7 +50,6 @@ spacing:
   rail: "240px"
   rail-inset: "16px"
   navigation-inset: "8px"
-  toolbar-height: "56px"
   control-height: "36px"
   content: "24px"
   control-gap: "12px"
@@ -123,10 +122,12 @@ sequence. The `Not imported` filter appears only when failed or skipped source
 items exist, shows each item's reason or error and links its title to YouTube,
 and is hidden when the issue count reaches zero.
 
-The 240px sidebar and the working pane have aligned 56px toolbars. Listenbox is
-a quiet 14px semibold application label; account and Reload actions occupy the
-opposite toolbar. The selected team is the strongest text in the sidebar: 18px
-bold, left aligned, with its chevron at the far right. No centered navigation
+The 240px sidebar starts directly with the team picker. The native window title
+owns the app name. One menu definition is rendered by muda as the macOS app menu
+and Windows menu bar. Settings and Log out live in Listenbox; Reload lives under
+View, with ⌘R on macOS and Ctrl+R elsewhere. Linux exposes the same commands from
+a compact Menu button in the sidebar footer. The selected team is the strongest
+text in the sidebar: 18px bold, left aligned, with its chevron at the far right. No centered navigation
 labels and no icon preceding the team name.
 
 Import playlist is a full-width charcoal action beneath the team picker. Its
@@ -136,7 +137,12 @@ team in which the new podcast will be created.
 
 Only `youtube.kind = import` podcasts belong in the library. Ordinary shows and
 YouTube destinations remain in the web workspace. Import creates a new podcast;
-a source is fixed at creation. Detail screens have a read-only source link.
+a source is fixed at creation. The podcast header places Open in YouTube beside
+Open in Listenbox, with wrapping at narrow widths. Podcast format, the loaded
+episode count, and the last successful sync time sit below the title. The sync
+time uses the local timezone and persists in the shared journal on this device;
+failed and cancelled passes do not advance it. Loading or failed episode lists
+do not claim a zero count.
 There are no Save playlist, Disconnect or Keep syncing controls.
 
 ## Geometry and rhythm
@@ -146,13 +152,12 @@ Use the named constants in `src/tokens.rs`, with a 4px spacing base.
 | Role | Size | Rule |
 | --- | --- | --- |
 | Sidebar | 240px | Fixed; the working pane takes remaining width. |
-| Toolbar | 56px | Both panes share the same horizontal divider. |
-| Sidebar content inset | 16px | Brand, team text, artwork, empty copy and footer share this left edge. |
+| Sidebar content inset | 16px | Team text, artwork, empty copy and footer share this left edge. |
 | Navigation row inset | 8px | Row hit areas extend 8px beyond their content. |
 | Sidebar action height | 36px | Stable through normal, disabled and loading states. |
 | Control padding | 12px | Action text sits inside its visible button boundary. |
 | Related control gap | 12px | Team picker and import button form one group. |
-| Main pane inset / section gap | 24px | Separate source, status and episode-list regions. |
+| Main pane inset / section gap | 24px | Separate podcast header, status and episode-list regions. |
 | List row gap | 4px | Compact, continuous library, without individual cards. |
 | Artwork-to-text gap | 12px | Shared by all podcast rows. |
 | Control radius | 10px | Rounded rectangles, not capsules. |
@@ -196,8 +201,8 @@ Measure the composed result, including hover and focus.
 
 Use GPUI Kit for focus, keyboard activation, disabled state and pointer state.
 Use `.primary()` explicitly for Import playlist, creation, sign-in and Sync now.
-Stop uses an outline; Reload, account, source links and browser handoffs use
-ghost buttons. Not-imported video titles use underlined, keyboard-focusable links
+Stop uses an outline; source links and browser handoffs use ghost buttons.
+Not-imported video titles use underlined, keyboard-focusable links
 to YouTube. White default buttons are not primary actions.
 
 **Navigation content must own its alignment.** GPUI Kit centers its internal
@@ -228,7 +233,9 @@ are synthetic fixtures with provenance in `tests/fixtures/README.md`.
 Existing imports sync on startup and hourly while Listenbox is running. Sync
 now requests another immediate pass. Stop cancels the current work and saves
 progress; it does not permanently disable automatic sync. There is no opt-in
-button for the app’s main purpose.
+button for the app’s main purpose. Progress and added/removed/unchanged/skipped
+totals render only during an active sync; idle state retains failure and stopped
+notices when recovery is needed.
 
 The engine owns checkpoints, transfers and the scan cadence for CLI and desktop.
 Import failure after creation keeps the podcast available to resume by slug.
@@ -252,7 +259,8 @@ real next steps and never invent activity or podcast content.
 ## Window behavior
 
 Honor system light/dark appearance and Reduce Motion. The app retains its
-native titlebar, menu, status item and close-to-hide behavior. The first ⌘Q
+native titlebar, menu, status item and close-to-hide behavior. The status menu
+contains only Show Listenbox and Quit on both macOS and Windows. The first ⌘Q
 press shows a centered, nonblocking shortcut HUD: 280px width, 24px padding,
 20px radius and a 56px shortcut. It lasts two seconds, fading for 200ms unless
 Reduce Motion is enabled. Shutdown reports draining work in the same position.

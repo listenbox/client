@@ -202,6 +202,33 @@ impl Database {
         })
     }
 
+    pub fn complete_sync(&self, origin: &str, show: &str) -> Result<()> {
+        let completed_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_millis();
+        self.connections.writer.lock().execute(
+            "INSERT INTO sync_completions (origin, show_slug, completed_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT(origin, show_slug) DO UPDATE SET completed_at=excluded.completed_at",
+            params![origin, show, i64::try_from(completed_at)?],
+        )?;
+        Ok(())
+    }
+
+    pub fn last_synced(&self, origin: &str, show: &str) -> Result<Option<std::time::SystemTime>> {
+        self.read(|connection| {
+            let completed_at: Option<i64> = connection
+                .query_row(
+                    "SELECT completed_at FROM sync_completions WHERE origin IS ?1 AND show_slug IS ?2",
+                    params![origin, show],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            Ok(completed_at.map(|millis| {
+                std::time::UNIX_EPOCH + std::time::Duration::from_millis(millis as u64)
+            }))
+        })
+    }
+
     pub fn download(&self, operation: &str, name: &str, identity: &str) -> Result<()> {
         let mut connection = self.connections.writer.lock();
         let tx = connection.transaction()?;

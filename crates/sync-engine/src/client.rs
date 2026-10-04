@@ -18,6 +18,12 @@ pub struct Catalog {
     pub shows: Vec<p::Show>,
 }
 
+#[derive(Default)]
+pub struct SyncState {
+    pub items: Vec<crate::downloads::Download>,
+    pub last_synced: Option<std::time::SystemTime>,
+}
+
 #[derive(Clone)]
 pub struct Client {
     config: Config,
@@ -37,13 +43,17 @@ impl Client {
     pub fn downloads(&self) -> DownloadManager {
         self.engine.downloads.clone()
     }
-    pub async fn sync_items(&self, slug: String) -> Result<Vec<crate::downloads::Download>> {
+    pub async fn sync_state(&self, slug: String) -> Result<SyncState> {
         if !self.has_credentials() {
             return Err(crate::api::AuthenticationRequired.into());
         }
         let (engine, config) = (self.engine.clone(), self.config.clone());
         tokio::task::spawn_blocking(move || {
-            engine.database(&config)?.items(&config.api_origin, &slug)
+            let database = engine.database(&config)?;
+            Ok(SyncState {
+                items: database.items(&config.api_origin, &slug)?,
+                last_synced: database.last_synced(&config.api_origin, &slug)?,
+            })
         })
         .await?
     }

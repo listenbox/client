@@ -2,7 +2,11 @@ use crate::{
     APP_NAME,
     workspace::{Shutdown, Workspace},
 };
-use gpui_kit::{App, Entity, Menu, MenuItem, Window, actions};
+use gpui_kit::{App, Entity, Menu, MenuItem, OwnedMenu, Window, actions};
+
+#[cfg(any(target_os = "macos", target_os = "windows", test))]
+#[path = "platform/native_menu.rs"]
+pub(crate) mod native_menu;
 
 #[cfg(target_os = "windows")]
 #[path = "platform/windows.rs"]
@@ -17,6 +21,7 @@ actions!(
         Logout,
         Quit,
         OpenSettings,
+        Reload,
         CheckUpdates,
         AutomaticUpdates,
         AutomaticDownloads
@@ -51,7 +56,10 @@ pub fn install(view: &Entity<Workspace>, window: &mut Window, cx: &mut App) {
     crate::updater::install(view, cx);
     install_actions(view, cx);
     #[cfg(any(target_os = "macos", target_os = "windows"))]
-    status_item::install(view, cx);
+    {
+        let sender = native_menu::install(window, cx);
+        status_item::install(cx, sender);
+    }
     window.on_window_should_close(cx, |window, cx| {
         hide_window(window, cx);
         false
@@ -74,6 +82,15 @@ pub fn install_actions(view: &Entity<Workspace>, cx: &mut App) {
         OpenSettings,
         None,
     )]);
+    cx.bind_keys([gpui_kit::KeyBinding::new(
+        if cfg!(target_os = "macos") {
+            "cmd-r"
+        } else {
+            "ctrl-r"
+        },
+        Reload,
+        None,
+    )]);
     cx.on_action(|_: &CheckUpdates, cx| {
         show_window(cx);
         crate::updater::check();
@@ -91,7 +108,7 @@ pub fn install_actions(view: &Entity<Workspace>, cx: &mut App) {
     refresh_menus(cx);
 }
 
-pub fn refresh_menus(cx: &mut App) {
+fn application_menus() -> Vec<OwnedMenu> {
     let items = vec![
         MenuItem::action("Settings…", OpenSettings),
         MenuItem::action("Check for Updates…", CheckUpdates).disabled(!crate::updater::can_check()),
@@ -100,9 +117,58 @@ pub fn refresh_menus(cx: &mut App) {
         MenuItem::separator(),
         MenuItem::action(format!("Quit {APP_NAME}"), Quit),
     ];
-    cx.set_menus(vec![Menu::new(APP_NAME).items(items)]);
-    #[cfg(target_os = "macos")]
-    macos::configure_app_menu();
+    vec![
+        Menu::new(APP_NAME).items(items),
+        Menu::new("View").items(vec![MenuItem::action("Reload", Reload)]),
+    ]
+    .into_iter()
+    .map(|menu| menu.owned())
+    .collect()
+}
+
+pub fn refresh_menus(cx: &mut App) {
+    #[cfg(any(target_os = "macos", target_os = "windows", test))]
+    native_menu::refresh(cx);
+    cx.refresh_windows();
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+pub fn application_menu_button() -> impl gpui_kit::IntoElement {
+    use gpui_kit::component::{
+        Sizable,
+        button::{Button, ButtonVariants},
+        menu::DropdownMenu,
+    };
+    Button::new("application-menu")
+        .ghost()
+        .small()
+        .label("Menu")
+        .accessibility_label("Application menu")
+        .dropdown_menu_with_anchor(gpui_kit::Anchor::BottomLeft, |mut popup, window, cx| {
+            for menu in application_menus() {
+                popup = popup.submenu(menu.name, window, cx, move |popup, _, _| {
+                    menu.items.iter().fold(popup, |popup, item| match item {
+                        gpui_kit::OwnedMenuItem::Separator => popup.separator(),
+                        gpui_kit::OwnedMenuItem::Action {
+                            name,
+                            action,
+                            checked,
+                            disabled,
+                            ..
+                        } => popup.menu_with_check_and_disabled(
+                            name.clone(),
+                            *checked,
+                            action.boxed_clone(),
+                            *disabled,
+                        ),
+                        _ => unreachable!(
+                            "Listenbox application menus contain actions and separators"
+                        ),
+                    })
+                });
+            }
+            popup
+        })
 }
 
 pub fn show_window(cx: &mut App) {
@@ -129,7 +195,7 @@ mod status_item {
     use gpui_kit::Global;
     use tray_icon::{
         Icon, TrayIcon, TrayIconBuilder,
-        menu::{Menu as TrayMenu, MenuEvent, MenuItem as TrayMenuItem},
+        menu::{Menu as TrayMenu, MenuItem as TrayMenuItem},
     };
 
     struct StatusItem {
@@ -137,18 +203,21 @@ mod status_item {
     }
     impl Global for StatusItem {}
 
-    pub(super) fn install(view: &Entity<Workspace>, cx: &mut App) {
+    pub(super) fn install(cx: &mut App, sender: tokio::sync::mpsc::UnboundedSender<muda::MenuId>) {
         let menu = TrayMenu::new();
-        let open = TrayMenuItem::new(format!("Open {APP_NAME}"), true, None);
-        let quit = TrayMenuItem::new(format!("Quit {APP_NAME}"), true, None);
+        let open = TrayMenuItem::with_id(
+            native_menu::OPEN_WINDOW,
+            format!("Show {APP_NAME}"),
+            true,
+            None,
+        );
+        let quit = TrayMenuItem::with_id(native_menu::QUIT, "Quit", true, None);
         menu.append_items(&[&open, &quit]).expect("status menu");
-        let (open, quit) = (open.id().clone(), quit.id().clone());
-        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
         #[cfg(target_os = "windows")]
         {
             use tray_icon::{MouseButton, MouseButtonState, TrayIconEvent};
             let sender = sender.clone();
-            let open = open.clone();
+            let open = open.id().clone();
             TrayIconEvent::set_event_handler(Some(move |event: TrayIconEvent| {
                 if matches!(
                     event,
@@ -162,22 +231,7 @@ mod status_item {
                 }
             }));
         }
-        MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
-            let _ = sender.send(event.id);
-        }));
-        let view = view.clone();
-        cx.spawn(async move |cx| {
-            while let Some(id) = receiver.recv().await {
-                cx.update(|cx| {
-                    if id == open {
-                        super::show_window(cx);
-                    } else if id == quit {
-                        view.update(cx, |view, cx| view.shutdown(Shutdown::Quit, cx));
-                    }
-                });
-            }
-        })
-        .detach();
+        let _ = sender;
         #[cfg(target_os = "macos")]
         let (pixels, size) = (
             include_bytes!(concat!(env!("OUT_DIR"), "/tray-macos.rgba")).as_slice(),
@@ -205,23 +259,6 @@ mod status_item {
 mod macos {
     use crate::APP_NAME;
     use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
-    pub(super) fn configure_app_menu() {
-        let Some(main_thread) = objc2::MainThreadMarker::new() else {
-            return;
-        };
-        let app = NSApplication::sharedApplication(main_thread);
-        if let Some(menu) = app
-            .mainMenu()
-            .and_then(|menu| menu.itemAtIndex(0))
-            .and_then(|item| item.submenu())
-        {
-            // GPUI's native validation only checks whether an action has a
-            // handler. Preserve our explicit enabled states, including Sparkle's
-            // canCheckForUpdates and development builds without an updater.
-            menu.setAutoenablesItems(false);
-        }
-    }
-
     pub(super) fn hide_window() {
         let app = NSApplication::sharedApplication(
             objc2::MainThreadMarker::new().expect("macOS main thread"),

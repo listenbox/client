@@ -438,6 +438,11 @@ impl Engine {
             .await?;
             report.reordered = true;
         }
+        // Completion belongs to the engine, after every transfer and metadata
+        // effect has been acknowledged. Failed and cancelled passes leave the
+        // previous successful completion intact, including across restarts.
+        api.wait(async { journal.complete_sync(&api.config.api_origin, slug) })
+            .await?;
         Ok(report)
     }
 

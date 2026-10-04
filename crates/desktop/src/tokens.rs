@@ -6,7 +6,6 @@ use gpui_kit::{App, Hsla, Window, px, rgb};
 pub const SIDEBAR: f32 = 240.;
 pub const SIDEBAR_INSET: f32 = 16.;
 pub const NAV_ROW_INSET: f32 = 8.;
-pub const TOOLBAR_HEIGHT: f32 = 56.;
 pub const CONTROL_HEIGHT: f32 = 36.;
 pub const PAGE_TITLE: f32 = 30.;
 pub const TITLE: f32 = 18.;

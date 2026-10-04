@@ -129,6 +129,7 @@ impl Workspace {
         self.episode_error = None;
         self.episodes.clear();
         self.source_items.clear();
+        self.last_synced = None;
         self.source_error = None;
         self.source_loading = false;
         let Some(slug) = self
@@ -144,9 +145,9 @@ impl Workspace {
         let (client, sender, slug_items) = (self.client.clone(), self.sender.clone(), slug.clone());
         self.tasks.spawn_on(
             async move {
-                let _ = sender.send(Message::SourceItems(
+                let _ = sender.send(Message::SyncState(
                     request,
-                    client.sync_items(slug_items).await,
+                    client.sync_state(slug_items).await,
                 ));
             },
             self.runtime.handle(),

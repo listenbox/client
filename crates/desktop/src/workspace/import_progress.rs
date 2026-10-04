@@ -298,12 +298,31 @@ impl Workspace {
                         progress.not_imported
                     )))
                 });
-        } else {
-            status = status.child(div().text_color(t.muted).child(
-                self.reports.get(&show.slug).cloned().unwrap_or_else(|| {
-                    "Syncs automatically every hour while Listenbox is running.".into()
-                }),
-            ));
+            if let Some(SyncReport::Summary(report)) = self.reports.get(&show.slug) {
+                let summary = format!(
+                    "{} added · {} removed · {} unchanged · {} skipped{}",
+                    report.added,
+                    report.removed,
+                    report.unchanged,
+                    report.skipped,
+                    if report.reordered {
+                        " · Order updated"
+                    } else {
+                        ""
+                    }
+                );
+                status = status.child(
+                    div()
+                        .id("sync-summary")
+                        .role(Role::Label)
+                        .aria_label(summary.clone())
+                        .text_color(t.muted)
+                        .child(summary)
+                        .test_support(),
+                );
+            }
+        } else if let Some(SyncReport::Notice(notice)) = self.reports.get(&show.slug) {
+            status = status.child(div().text_color(t.muted).child(notice.clone()));
         }
         status.into_any_element()
     }

@@ -50,7 +50,7 @@ async fn live_server_direction(cx: &mut TestAppContext) {
                 .try_find(SharedString::from(format!("show-{slug}")))
                 .is_none()
         );
-        window.click("reload", cx);
+        window.dispatch_action(Box::new(crate::platform::Reload), cx);
     })
     .unwrap();
     wait_for(cx, &workspace, |view| {
@@ -102,8 +102,10 @@ async fn live_episode_scrolling(cx: &mut TestAppContext) {
                 cx,
             );
             for show in &catalog.shows {
-                view.reports
-                    .insert(show.slug.clone(), "Previous sync saved".into());
+                view.reports.insert(
+                    show.slug.clone(),
+                    SyncReport::Notice("Previous sync saved".into()),
+                );
             }
             view.selected = Some(slug);
             view
@@ -145,6 +147,11 @@ async fn live_episode_scrolling(cx: &mut TestAppContext) {
             for _ in 0..8 {
                 window.render_frame(cx);
             }
+            assert_podcast_header(window, 520);
+            assert_eq!(
+                window.find("last-synced").label(),
+                Some("Not synced on this device yet")
+            );
             eprintln!("episode scroll: eight initial frames {:?}", start.elapsed());
             let rendered = all_episodes
                 .iter()
@@ -315,8 +322,10 @@ async fn live_not_imported(cx: &mut TestAppContext) {
             );
             // Gate the startup scan until the saved results have been inspected.
             for show in &catalog.shows {
-                view.reports
-                    .insert(show.slug.clone(), "Previous sync saved".into());
+                view.reports.insert(
+                    show.slug.clone(),
+                    SyncReport::Notice("Previous sync saved".into()),
+                );
             }
             view.selected = Some(slug.clone());
             view
@@ -333,7 +342,7 @@ async fn live_not_imported(cx: &mut TestAppContext) {
         );
         window.render_frame(cx);
         assert!(window.try_find("welcome-action").is_none());
-        window.click("sign-in", cx);
+        assert!(window.try_find("sign-in").is_none());
         assert!(
             !workspace.read(cx).authenticating,
             "startup opened a second sign-in flow"
@@ -344,7 +353,60 @@ async fn live_not_imported(cx: &mut TestAppContext) {
         view.loaded && !view.episode_loading && !view.source_loading
     })
     .await;
-    if matches!(fixture["mode"].as_str(), Some("lost" | "success")) {
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let view = workspace.read(cx);
+        assert_podcast_header(window, 1);
+        if fixture["mode"].as_str() == Some("lost") {
+            assert!(
+                view.last_synced.is_none(),
+                "failed pass recorded a successful sync"
+            );
+            assert_eq!(
+                window.find("last-synced").label(),
+                Some("Not synced on this device yet")
+            );
+        } else {
+            assert!(
+                view.last_synced.is_some(),
+                "successful CLI sync did not survive desktop restart"
+            );
+            assert!(
+                window
+                    .find("last-synced")
+                    .label()
+                    .unwrap()
+                    .starts_with("Last synced ")
+            );
+        }
+        if matches!(fixture["mode"].as_str(), Some("checkpoint" | "failed_scan")) {
+            let timestamp = view
+                .last_synced
+                .unwrap()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis()
+                .to_string();
+            let path = Config::load(None)
+                .unwrap()
+                .directory
+                .join("test-last-synced");
+            if fixture["mode"].as_str() == Some("checkpoint") {
+                std::fs::write(path, timestamp).unwrap();
+            } else {
+                assert_eq!(
+                    timestamp,
+                    std::fs::read_to_string(path).unwrap(),
+                    "failed scan advanced last successful sync"
+                );
+            }
+        }
+    })
+    .unwrap();
+    if matches!(
+        fixture["mode"].as_str(),
+        Some("lost" | "success" | "checkpoint" | "failed_scan")
+    ) {
         cx.update_window(handle.into(), |_, window, cx| {
             let view = workspace.read(cx);
             assert!(
@@ -500,6 +562,11 @@ async fn live_not_imported(cx: &mut TestAppContext) {
             window.try_find("filter-not-imported").is_none(),
             "empty podcast has a Not imported tab"
         );
+        assert_eq!(window.find("episode-count").label(), Some("0 episodes"));
+        assert_eq!(
+            window.find("last-synced").label(),
+            Some("Not synced on this device yet")
+        );
         window.click(SharedString::from(format!("show-{slug}")), cx);
     })
     .unwrap();
@@ -570,6 +637,8 @@ async fn live_not_imported(cx: &mut TestAppContext) {
                 "successful sync retained the Not imported tab"
             );
             assert!(window.try_find("filter-episodes").is_some());
+            assert_podcast_header(window, 2);
+            assert!(workspace.read(cx).last_synced.is_some());
         })
         .unwrap();
     }
@@ -584,6 +653,8 @@ async fn live_backend(cx: &mut TestAppContext) {
     let cancel = CancellationToken::new();
     cx.update(gpui_kit::init);
     cx.executor().allow_parking();
+    let menu_events =
+        std::cell::RefCell::new(None::<tokio::sync::mpsc::UnboundedSender<muda::MenuId>>);
     let mut workspace = None;
     let handle = cx.open_window(size(px(1080.), px(760.)), |window, cx| {
         tokens::apply(window, cx);
@@ -599,6 +670,8 @@ async fn live_backend(cx: &mut TestAppContext) {
         });
         workspace = Some(view.clone());
         crate::platform::install_actions(&view, cx);
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        menu_events.replace(Some(crate::platform::native_menu::install(window, cx)));
         Root::new(view, window, cx)
     });
     let workspace = workspace.unwrap();
@@ -609,7 +682,7 @@ async fn live_backend(cx: &mut TestAppContext) {
     })
     .await;
     wait_for(cx, &workspace, |view| {
-        !view.episode_loading && !view.episodes.is_empty()
+        !view.episode_loading && !view.source_loading && !view.episodes.is_empty()
     })
     .await;
     cx.update(|cx| {
@@ -631,14 +704,23 @@ async fn live_backend(cx: &mut TestAppContext) {
             .read(cx)
             .reports
             .values()
-            .any(|report| report.starts_with("1 added"))
+            .any(|report| matches!(report, SyncReport::Summary(summary) if summary.added == 1))
     }));
     cx.update_window(handle.into(), |_, window, cx| {
         let view = workspace.read(cx);
         assert!(view.loaded, "catalog failed: {:?}", view.error);
         assert!(!view.catalog.teams.is_empty());
         assert_eq!(view.catalog.shows.len(), 1);
+        assert!(view.last_synced.is_some());
         window.render_frame(cx);
+        assert_podcast_header(window, 1);
+        assert!(
+            window
+                .find("last-synced")
+                .label()
+                .unwrap()
+                .starts_with("Last synced ")
+        );
         assert_ne!(window.find("sync-now").disabled(), Some(true));
         assert!(window.try_find("keep-syncing").is_none());
         window.click("team-picker", cx);
@@ -646,18 +728,30 @@ async fn live_backend(cx: &mut TestAppContext) {
         window.click(SharedString::from(format!("team-{team_id}")), cx);
         assert_eq!(workspace.read(cx).team.as_ref(), Some(&team_id));
         window.click("open-show", cx);
+        window.click("open-playlist", cx);
         window.click("sync-now", cx);
         assert_eq!(workspace.read(cx).jobs.len(), 1);
     })
     .unwrap();
-    assert!(cx.opened_url().is_some());
-    wait_for(cx, &workspace, |view| view.jobs.is_empty()).await;
+    assert_eq!(
+        cx.opened_url(),
+        cx.update(|cx| workspace
+            .read(cx)
+            .show()
+            .unwrap()
+            .youtube_linkage()
+            .map(str::to_owned))
+    );
+    wait_for(cx, &workspace, |view| {
+        view.jobs.is_empty() && !view.episode_loading && !view.source_loading
+    })
+    .await;
     cx.update_window(handle.into(), |_, window, cx| {
         let view = workspace.read(cx);
         assert!(
             view.reports
                 .values()
-                .any(|report| report.starts_with("0 added")),
+                .any(|report| matches!(report, SyncReport::Summary(summary) if summary.added == 0)),
             "reports: {:?}",
             view.reports
         );
@@ -665,15 +759,109 @@ async fn live_backend(cx: &mut TestAppContext) {
         assert_ne!(window.find("sync-now").disabled(), Some(true));
         assert!(window.try_find("stop-sync").is_none());
         assert!(window.try_find("pause-transfers").is_none());
+        assert_podcast_header(window, 1);
+        window.dispatch_action(native_menu_action("Settings…", cx), cx);
     })
     .unwrap();
-    cx.update(|cx| cx.dispatch_action(&crate::platform::Logout));
+    wait_for(cx, &workspace, |view| {
+        view.settings_open && !view.cookie_busy
+    })
+    .await;
+    let request = cx.update(|cx| workspace.read(cx).episode_request);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.click("close-settings", cx);
+        assert!(!workspace.read(cx).settings_open);
+        window.dispatch_action(native_menu_action("Reload", cx), cx);
+    })
+    .unwrap();
+    wait_for(cx, &workspace, |view| {
+        !view.loading && view.episode_request > request
+    })
+    .await;
+    let request = cx.update(|cx| workspace.read(cx).episode_request);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.press(
+            if cfg!(target_os = "macos") {
+                "cmd-r"
+            } else {
+                "ctrl-r"
+            },
+            cx,
+        );
+    })
+    .unwrap();
+    wait_for(cx, &workspace, |view| {
+        !view.loading && view.episode_request > request
+    })
+    .await;
+    cx.update(|cx| {
+        let (id, action) = native_menu_command("Log out", cx);
+        if let Some(sender) = menu_events.borrow().as_ref() {
+            sender.send(id).unwrap();
+        } else {
+            cx.dispatch_action(action.as_ref());
+        }
+    });
     wait_for(cx, &workspace, |view| {
         view.stopping.is_none() && !view.loaded
     })
     .await;
     assert!(!cx.update(|cx| workspace.read(cx).client.has_credentials()));
     cancel.cancel();
+}
+
+fn native_menu_action(label: &str, cx: &App) -> Box<dyn Action> {
+    native_menu_command(label, cx).1
+}
+
+fn native_menu_command(label: &str, cx: &App) -> (muda::MenuId, Box<dyn Action>) {
+    let native = crate::platform::native_menu::NativeMenu::new(cx).unwrap();
+    let item = native
+        .menu
+        .items()
+        .into_iter()
+        .filter_map(|item| match item {
+            muda::MenuItemKind::Submenu(submenu) => Some(submenu.items()),
+            _ => None,
+        })
+        .flatten()
+        .find(|item| match item {
+            muda::MenuItemKind::MenuItem(item) => item.text() == label,
+            _ => false,
+        })
+        .unwrap_or_else(|| panic!("missing native menu command: {label}"));
+    let action = native
+        .action(item.id())
+        .unwrap_or_else(|| panic!("native menu command is disabled: {label}"));
+    (item.id().clone(), action)
+}
+
+fn assert_podcast_header(window: &mut Window, count: usize) {
+    assert!(window.try_find("open-settings").is_none());
+    assert!(window.try_find("reload").is_none());
+    assert!(window.try_find("sign-in").is_none());
+    assert!(
+        window.try_find("sync-summary").is_none(),
+        "idle sync retained its totals"
+    );
+    let label = if count == 1 {
+        "1 episode".into()
+    } else {
+        format!("{count} episodes")
+    };
+    assert_eq!(window.find("episode-count").label(), Some(label.as_str()));
+    assert!(window.find("episode-count").visible());
+    assert!(window.find("last-synced").visible());
+    let listenbox = window.find("open-show").bounds();
+    let youtube = window.find("open-playlist").bounds();
+    assert_eq!(
+        listenbox.origin.y, youtube.origin.y,
+        "source link was not placed beside Listenbox"
+    );
+    assert!(
+        youtube.right() <= window.find("workspace-content").bounds().right(),
+        "header links overflow the minimum window"
+    );
 }
 
 #[gpui_kit::test]
@@ -755,7 +943,7 @@ async fn live_concurrent_imports(cx: &mut TestAppContext) {
         let state = view.read(cx);
         assert!(state.error.is_none(), "{:?}", state.error);
         assert!(
-            state.reports[&first].starts_with("1 added"),
+            matches!(state.reports[&first], SyncReport::Summary(ref report) if report.added == 1),
             "{:?}",
             state.reports
         );
@@ -779,7 +967,7 @@ async fn live_concurrent_imports(cx: &mut TestAppContext) {
     wait_for(cx, &view, |view| view.jobs.is_empty()).await;
     cx.update_window(handle.into(), |_, window, cx| {
         assert!(view.read(cx).error.is_none(), "{:?}", view.read(cx).error);
-        assert!(view.read(cx).reports[&first].starts_with("1 added"));
+        assert!(matches!(view.read(cx).reports[&first], SyncReport::Summary(ref report) if report.added == 1));
         window.render_frame(cx);
         assert!(window.try_find("stop-sync").is_none());
         window.click("new-import", cx);
@@ -1023,7 +1211,7 @@ async fn live_video_creation_progress(cx: &mut TestAppContext) {
             state
                 .reports
                 .values()
-                .any(|report| report.starts_with("1 added")),
+                .any(|report| matches!(report, SyncReport::Summary(summary) if summary.added == 1)),
             "{:?}",
             state.reports
         );
@@ -1111,10 +1299,9 @@ async fn live_import(cx: &mut TestAppContext) {
         );
         if !recover_scan {
             assert!(
-                state
-                    .reports
-                    .values()
-                    .any(|report| report.starts_with("1 added")),
+                state.reports.values().any(
+                    |report| matches!(report, SyncReport::Summary(summary) if summary.added == 1)
+                ),
                 "{:?}",
                 state.reports
             );
@@ -1130,7 +1317,7 @@ async fn live_import(cx: &mut TestAppContext) {
         view.read(cx)
             .reports
             .values()
-            .any(|report| report.starts_with(if recover_scan { "1 added" } else { "0 added" }))
+            .any(|report| matches!(report, SyncReport::Summary(summary) if summary.added == usize::from(recover_scan)))
     }));
     cancel.cancel();
 }
@@ -1632,7 +1819,7 @@ async fn youtube_settings_validate_save_forget_and_link_to_guide(cx: &mut TestAp
         );
         window.click("close-settings", cx);
         window.render_frame(cx);
-        window.click("open-settings", cx);
+        window.dispatch_action(Box::new(crate::platform::OpenSettings), cx);
     })
     .unwrap();
     wait_for(cx, &view, |view| !view.cookie_busy).await;

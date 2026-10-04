@@ -477,7 +477,13 @@ async fn live_network_recovery() {
     };
     let items = engine.downloads.snapshot().items;
     let client = Client::desktop(api.config.clone()).unwrap();
-    let saved = client.sync_items(slug.to_owned()).await.unwrap();
+    let state = client.sync_state(slug.to_owned()).await.unwrap();
+    assert_eq!(
+        state.last_synced.is_some(),
+        result.is_ok(),
+        "interrupted work must not record successful sync completion"
+    );
+    let saved = state.items;
     if mode == "published" {
         let report = result.unwrap();
         assert_eq!(report.unchanged, 1);
