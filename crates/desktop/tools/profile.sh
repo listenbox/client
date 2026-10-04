@@ -20,13 +20,14 @@ case "$mode" in
   build)
     [[ $# == 0 ]] || fail 'build takes no arguments'
     cd "$client_root"
-    # dSYM packing needs the original object paths, without compiler-cache remapping.
-    CARGO_TARGET_DIR="$client_root/target/profiled" RUSTC_WRAPPER='' \
-      cargo build --locked --profile profiling -p listenbox-desktop --features profiling
+    # Cache libraries with real source paths. Executable caching rewrites macOS
+    # object paths, which prevents rustc from packing this build's dSYM.
+    KACHE_RUSTC_PATH_NORMALIZE=0 KACHE_CACHE_EXECUTABLES=0 \
+      kache cargo -- build --locked --profile profiling -p listenbox-desktop --features profiling
     mkdir -p "$desktop_root/dist/profiled"
-    cp target/profiled/profiling/listenbox-desktop "$binary"
+    cp target/profiling/listenbox-desktop "$binary"
     rm -rf "$binary.dSYM"
-    ditto target/profiled/profiling/listenbox-desktop.dSYM "$binary.dSYM"
+    ditto target/profiling/listenbox-desktop.dSYM "$binary.dSYM"
     exit 0
     ;;
   launch)

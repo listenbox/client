@@ -234,21 +234,15 @@ jobs:
       - run: rustup toolchain install 1.98.1 --profile minimal --component clippy,rustfmt --target ${{ matrix.target }}
       - name: Bundle pinned YouTube.js source
         run: moon exec --ignore-ci-checks youtubejs:bundle
-      - name: Resolve desktop release version
-        id: version
+      - name: Resolve native toolchain version
+        id: native-toolchain
         shell: pwsh
         run: |
-          $metadata = cargo metadata --locked --no-deps --format-version 1 | ConvertFrom-Json
-          if ($LASTEXITCODE -ne 0) { throw 'Cargo metadata failed.' }
-          $desktop = @($metadata.packages | Where-Object { $_.name -eq 'listenbox-desktop' })
-          if ($desktop.Count -ne 1) { throw 'Expected exactly one listenbox-desktop package.' }
-          $version = $desktop[0].version
-          "version=$version" >> $env:GITHUB_OUTPUT
           $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
           $component = if ('${{ matrix.architecture }}' -eq 'arm64') { 'ARM64' } else { 'x86.x64' }
           $vsVersion = & $vswhere -latest -products '*' -requires "Microsoft.VisualStudio.Component.VC.Tools.$component" -property installationVersion
           if ($LASTEXITCODE -ne 0 -or -not $vsVersion) { throw 'Visual Studio build tools are missing.' }
-          "native-toolchain=$vsVersion" >> $env:GITHUB_OUTPUT
+          "version=$vsVersion" >> $env:GITHUB_OUTPUT
       - name: Cache Cargo sources and kache
         uses: actions/cache@v6
         with:
@@ -257,10 +251,10 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             ${{ runner.temp }}/kache
-          key: windows-rust-kache-v1-0.27.0-${{ matrix.target }}-${{ steps.version.outputs.native-toolchain }}-llvm-${{ env.LLVM_VERSION }}-${{ hashFiles('.kache.toml', 'rust-toolchain.toml', '.cargo/config.toml', 'tools/native-ffmpeg.rs', 'tools/build-windows.ps1') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}-${{ github.sha }}
+          key: windows-rust-kache-v1-0.27.0-${{ matrix.target }}-${{ steps.native-toolchain.outputs.version }}-llvm-${{ env.LLVM_VERSION }}-${{ hashFiles('.kache.toml', 'rust-toolchain.toml', '.cargo/config.toml', 'tools/native-ffmpeg.rs', 'tools/build-windows.ps1') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}-${{ github.sha }}
           restore-keys: |
-            windows-rust-kache-v1-0.27.0-${{ matrix.target }}-${{ steps.version.outputs.native-toolchain }}-llvm-${{ env.LLVM_VERSION }}-${{ hashFiles('.kache.toml', 'rust-toolchain.toml', '.cargo/config.toml', 'tools/native-ffmpeg.rs', 'tools/build-windows.ps1') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}-
-            windows-rust-kache-v1-0.27.0-${{ matrix.target }}-${{ steps.version.outputs.native-toolchain }}-llvm-${{ env.LLVM_VERSION }}-${{ hashFiles('.kache.toml', 'rust-toolchain.toml', '.cargo/config.toml', 'tools/native-ffmpeg.rs', 'tools/build-windows.ps1') }}-
+            windows-rust-kache-v1-0.27.0-${{ matrix.target }}-${{ steps.native-toolchain.outputs.version }}-llvm-${{ env.LLVM_VERSION }}-${{ hashFiles('.kache.toml', 'rust-toolchain.toml', '.cargo/config.toml', 'tools/native-ffmpeg.rs', 'tools/build-windows.ps1') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}-
+            windows-rust-kache-v1-0.27.0-${{ matrix.target }}-${{ steps.native-toolchain.outputs.version }}-llvm-${{ env.LLVM_VERSION }}-${{ hashFiles('.kache.toml', 'rust-toolchain.toml', '.cargo/config.toml', 'tools/native-ffmpeg.rs', 'tools/build-windows.ps1') }}-
       - name: Set up kache
         uses: kunobi-ninja/kache-action@ad7317540dcdd71c904f7a60a87b620a0c0e67ed # v1
         with:
@@ -269,12 +263,21 @@ jobs:
           # The cache above refreshes on every commit, including source-only edits.
           github-cache: false
           pr-comment: false
+      - name: Resolve desktop release version
+        id: version
+        shell: pwsh
+        run: |
+          $metadata = kache cargo -- metadata --locked --no-deps --format-version 1 | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Cargo metadata failed.' }
+          $desktop = @($metadata.packages | Where-Object { $_.name -eq 'listenbox-desktop' })
+          if ($desktop.Count -ne 1) { throw 'Expected exactly one listenbox-desktop package.' }
+          "version=$($desktop[0].version)" >> $env:GITHUB_OUTPUT
       - name: Restore FFmpeg
         id: ffmpeg-cache
         uses: actions/cache/restore@v6
         with:
           path: .cache/ffmpeg-${{ matrix.target }}
-          key: windows-ffmpeg-${{ matrix.target }}-${{ steps.version.outputs.native-toolchain }}-${{ hashFiles('rust-toolchain.toml', 'tools/native-ffmpeg.rs', 'tools/build-windows.ps1') }}
+          key: windows-ffmpeg-${{ matrix.target }}-${{ steps.native-toolchain.outputs.version }}-${{ hashFiles('rust-toolchain.toml', 'tools/native-ffmpeg.rs', 'tools/build-windows.ps1') }}
       - name: Build FFmpeg
         if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
         env:

@@ -8,6 +8,15 @@
 - Write client command and build automation as simple Bash scripts checked by
   ShellCheck, never TypeScript or zx scripts. This does not apply to application
   code in the YouTube.js submodule.
+- Run Cargo commands as `kache cargo -- ...` and standalone Rust compilation as
+  `kache rustc --crate-name ... --out-dir ...`. Keep `.cargo/config.toml`'s
+  wrapper enabled for tools that invoke Cargo internally. Registry installs
+  must explicitly set `RUSTC_WRAPPER=kache`, `CARGO_INCREMENTAL=0`, and
+  `KACHE_CONFIG` because Cargo ignores project configuration for those installs.
+- Keep Cargo build directories independent per worktree, with compatible
+  artifacts in kache's shared OS cache on the same filesystem. Install the
+  pinned Dioxus CLI through `tools/dev-tools.sh`; its versioned installation
+  is shared across worktrees and its temporary build artifacts are removed.
 
 - CLI and desktop share `crates/sync-engine`; put HTTP, format selection,
   configuration, and sync behavior there.
@@ -33,7 +42,7 @@
 
 ## Releases
 
-- Manually bump `[workspace.package].version` in `Cargo.toml`, run `cargo update --workspace`,
+- Manually bump `[workspace.package].version` in `Cargo.toml`, run `kache cargo -- update --workspace`,
   commit/merge, then tag that client commit `vX.Y.Z` and push that specific tag.
 - Approve `desktop-release` jobs; Actions publishes all desktop installers and
   update feeds together. Branch/PR builds never publish releases.

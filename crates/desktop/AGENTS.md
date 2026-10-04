@@ -24,8 +24,11 @@
   an explicit `LISTENBOX_PROFILE_DIR` override. It uses the optimized Cargo
   `profiling` profile, dSYM symbols, GPUI instrumentation, and a frame-time
   overlay. It does not hotpatch. Local services must already be running.
-  The profiling build bypasses `kache` and uses `target/profiled/` so dSYM
-  packing retains usable application and dependency source paths.
+  The profiling build uses `kache cargo -- build` and `target/profiling/`.
+  `KACHE_RUSTC_PATH_NORMALIZE=0` keeps usable application and dependency source
+  paths; these library cache entries are specific to this checkout.
+  `KACHE_CACHE_EXECUTABLES=0` preserves the macOS object paths rustc needs to
+  pack the final dSYM. Compiler calls still go through kache.
   The recorder has an application-lifetime task tracker, separate from sync
   work. Quit drains sync work, cancels the recorder, and flushes it before
   process exit; logout drains sync work while recording continues.

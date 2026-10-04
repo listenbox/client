@@ -9,6 +9,7 @@ fileGroups:
   rust-toolchain: [rust-toolchain.toml]
   cargo-config: [Cargo.toml, Cargo.lock, rust-toolchain.toml, .cargo/config.toml, .kache.toml]
   desktop-dev-config: [Cargo.toml, Cargo.lock, Dioxus.toml]
+  desktop-dev-tools: [tools/dev-tools.sh]
   notices: [LICENSE, THIRD-PARTY-NOTICES.txt]
   macos-install-tools: [tools/reinstall-macos.swift]
   sources:
@@ -17,6 +18,7 @@ fileGroups:
     - crates/**/Cargo.toml
     - crates/**/tests/**/*
     - tools/**/*.rs
+    - tools/**/*.sh
     - tools/**/*.ps1
     - tools/**/*.mjs
     - tools/**/*.iss
@@ -63,12 +65,12 @@ tasks:
       cache: false
       runInCI: false
   native-ffmpeg:
-    inputs: [tools/native-ffmpeg.rs, rust-toolchain.toml]
+    inputs: [tools/native-ffmpeg.rs, rust-toolchain.toml, .kache.toml]
     script: |-
       set -euo pipefail
       mkdir -p .cache
-      rustc --edition 2024 tools/native-ffmpeg.rs -o .cache/native-ffmpeg
-      .cache/native-ffmpeg
+      kache rustc --crate-name native_ffmpeg --edition 2024 --out-dir .cache tools/native-ffmpeg.rs
+      .cache/native_ffmpeg
     outputs: [.cache/ffmpeg/**/*]
   prerequisites:
     deps: [~:native-ffmpeg, ~:codegen, youtubejs:bundle]
@@ -81,14 +83,14 @@ tasks:
       internal: true
   native-ffmpeg-windows-x64:
     command: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/build-windows.ps1 -Architecture x64 -Stage FFmpeg
-    inputs: [tools/native-ffmpeg.rs, tools/build-windows.ps1, rust-toolchain.toml]
+    inputs: [tools/native-ffmpeg.rs, tools/build-windows.ps1, rust-toolchain.toml, .kache.toml]
     outputs: [.cache/ffmpeg-x86_64-pc-windows-msvc/**/*]
     options:
       os: windows
       runInCI: false
   native-ffmpeg-windows-arm64:
     command: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/build-windows.ps1 -Architecture arm64 -Stage FFmpeg
-    inputs: [tools/native-ffmpeg.rs, tools/build-windows.ps1, rust-toolchain.toml]
+    inputs: [tools/native-ffmpeg.rs, tools/build-windows.ps1, rust-toolchain.toml, .kache.toml]
     outputs: [.cache/ffmpeg-aarch64-pc-windows-msvc/**/*]
     options:
       os: windows
@@ -123,7 +125,7 @@ tasks:
     inputs: ['@group(sources)']
     script: |-
       set -euo pipefail
-      cargo build --locked --release -p listenbox
+      kache cargo -- build --locked --release -p listenbox
       mkdir -p dist/release
       cp target/release/listenbox dist/release/
       cp crates/desktop/dist/release/listenbox-desktop dist/release/listenbox-desktop
@@ -131,6 +133,6 @@ tasks:
     options:
       runInCI: false
   outdated:
-    command: cargo update --dry-run
+    command: kache cargo -- update --dry-run
     options:
       runInCI: false

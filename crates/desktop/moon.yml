@@ -49,12 +49,10 @@ tasks:
       os: macos
   dev-tools:
     description: Install the pinned Subsecond build and watch driver.
-    command: cargo install --locked --root dist/dev-tools dioxus-cli --version 0.7.10
-    toolchains: [system]
-    inputs: ['project://client?group=rust-toolchain']
-    outputs: [dist/dev-tools/**/*]
+    command: bash ../../tools/dev-tools.sh
+    inputs: ['project://client?group=desktop-dev-tools', 'project://client?group=cargo-config']
     options:
-      cache: local
+      cache: false
       os: macos
       outputStyle: buffer-only-failure
       runInCI: false
@@ -89,7 +87,7 @@ tasks:
     inputs: ['@group(sources)', 'project://client?group=sources']
     script: |-
       set -euo pipefail
-      cargo build --locked -p listenbox-desktop
+      kache cargo -- build --locked -p listenbox-desktop
       mkdir -p dist
       cp ../../target/debug/listenbox-desktop dist/listenbox-desktop
     outputs: [dist/listenbox-desktop]
@@ -101,9 +99,9 @@ tasks:
       set -euo pipefail
       cd ../..
       if [[ "${LISTENBOX_PRODUCTION_RELEASE:-0}" == 1 ]]; then
-        cargo build --locked --release -p listenbox-desktop --features native-updater
+        kache cargo -- build --locked --release -p listenbox-desktop --features native-updater
       else
-        cargo build --locked --release -p listenbox-desktop
+        kache cargo -- build --locked --release -p listenbox-desktop
       fi
       mkdir -p crates/desktop/dist/release
       cp target/release/listenbox-desktop crates/desktop/dist/release/listenbox-desktop
@@ -125,8 +123,8 @@ tasks:
       set -euo pipefail
       cd ../..
       mkdir -p .cache
-      rustc --edition 2024 tools/package-macos.rs -o .cache/package-macos
-      .cache/package-macos
+      kache rustc --crate-name package_macos --edition 2024 --out-dir .cache tools/package-macos.rs
+      .cache/package_macos
     outputs: [dist/macos/*.dmg, dist/macos/image/Listenbox.app/**/*]
     options:
       os: macos
@@ -169,14 +167,14 @@ tasks:
   test:
     deps: [client:prerequisites]
     inputs: ['@group(sources)', 'project://client?group=sources']
-    command: cargo test --locked -p listenbox-desktop --features hot-reload
+    command: kache cargo -- test --locked -p listenbox-desktop --features hot-reload
   build-e2e:
     deps: [client:prerequisites]
     inputs: ['@group(sources)', 'project://client?group=sources']
     script: |-
       set -euo pipefail
       mkdir -p dist
-      cargo test --locked -p listenbox-desktop --no-run --message-format=json > dist/test-build.json
+      kache cargo -- test --locked -p listenbox-desktop --no-run --message-format=json > dist/test-build.json
       executable="$(jq -r 'select(.reason == "compiler-artifact" and .profile.test and .executable != null) | .executable' dist/test-build.json)"
       test -n "$executable"
       cp "$executable" dist/listenbox-desktop-e2e

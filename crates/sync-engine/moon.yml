@@ -18,11 +18,11 @@ tasks:
     inputs: ['@group(sources)', 'project://client?group=sources']
     script: |-
       set -euo pipefail
-      cargo build --locked -p listenbox-sync-engine
+      kache cargo -- build --locked -p listenbox-sync-engine
   test:
     deps: [client:prerequisites]
     inputs: ['@group(sources)', 'project://client?group=sources']
-    command: cargo nextest run --locked -p listenbox-sync-engine
+    command: kache cargo -- nextest run --locked -p listenbox-sync-engine
   build-e2e:
     description: Build sync fixtures used by the parent API's integrated recovery proofs.
     deps: [client:prerequisites]
@@ -30,7 +30,7 @@ tasks:
     script: |-
       set -euo pipefail
       mkdir -p dist
-      cargo test --locked -p listenbox-sync-engine --test v1_journal --test network_recovery --no-run --message-format=json > dist/test-build.json
+      kache cargo -- test --locked -p listenbox-sync-engine --test v1_journal --test network_recovery --no-run --message-format=json > dist/test-build.json
       for fixture in v1_journal network_recovery; do
         executable="$(jq -r --arg fixture "$fixture" 'select(.reason == "compiler-artifact" and .profile.test and .target.name == $fixture and .executable != null) | .executable' dist/test-build.json)"
         test -n "$executable"
@@ -45,7 +45,7 @@ tasks:
     description: Decode real AAC/Opus/AVC fixtures through the release-linked media preparation code.
     deps: [client:prerequisites]
     inputs: ['@group(sources)', 'project://client?group=sources']
-    command: cargo nextest run --locked --release --profile ci --success-output immediate -p listenbox-sync-engine -E 'test(native_media_tests::) or binary(native_build)'
+    command: kache cargo -- nextest run --locked --release --profile ci --success-output immediate -p listenbox-sync-engine -E 'test(native_media_tests::) or binary(native_build)'
     options:
       runInCI: false
       cache: false

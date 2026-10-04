@@ -18,11 +18,11 @@ tasks:
     inputs: ['@group(sources)', 'project://client?group=sources']
     script: |-
       set -euo pipefail
-      cargo build --locked -p listenbox
+      kache cargo -- build --locked -p listenbox
       mkdir -p dist
       cp ../../target/debug/listenbox dist/listenbox
     outputs: [dist/listenbox]
   test:
     deps: [client:prerequisites]
     inputs: ['@group(sources)', 'project://client?group=sources']
-    command: cargo test --locked -p listenbox
+    command: kache cargo -- test --locked -p listenbox

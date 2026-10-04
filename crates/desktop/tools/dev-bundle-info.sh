@@ -5,7 +5,7 @@ desktop_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 client_root="$(cd -- "$desktop_dir/../.." && pwd)"
 cd "$client_root"
 
-version="$(cargo metadata --locked --offline --no-deps --format-version 1 |
+version="$(kache cargo -- metadata --locked --offline --no-deps --format-version 1 |
   jq -er '.packages[] | select(.name == "listenbox-desktop") | .version')"
 bundle_dir="$desktop_dir/dist/dev-bundle"
 mkdir -p "$bundle_dir"

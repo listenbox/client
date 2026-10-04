@@ -25,13 +25,12 @@ On Ubuntu 24.04, install the build dependencies with APT:
 sudo apt-get install build-essential cmake clang libclang-dev pkg-config jq shellcheck libasound2-dev libfontconfig1-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev libxcb1-dev libx11-xcb-dev libx11-dev libegl1-mesa-dev libvulkan-dev libssl-dev
 ```
 
-CMake builds the bundled `zlib-ng` dependency; libclang generates the FFmpeg and GPUI bindings. Moon invokes Cargo and the installed tools directly. The devbox Ansible setup provisions Rust 1.98.1, kache 0.27.0, cargo-nextest 0.9.146, ShellCheck, and the Ubuntu build dependencies.
+CMake builds the bundled `zlib-ng` dependency; libclang generates the FFmpeg and GPUI bindings. Moon invokes Cargo through `kache cargo --` and standalone Rust tools through `kache rustc`. The devbox Ansible setup provisions Rust 1.98.1, kache 0.27.0, cargo-nextest 0.9.146, ShellCheck, and the Ubuntu build dependencies.
 
 ```sh
-# Install once per machine, outside a checkout (or use the prebuilt release).
-cargo install --locked kache --version 0.27.0
+# Install kache once per machine from the prebuilt release linked above.
 
-git clone --recurse-submodules https://github.com/listenbox/client.git
+git clone --recurse-submodules git@github.com:listenbox/client.git
 cd client
 moon run client:build
 moon ci
@@ -75,10 +74,12 @@ bundle contents, so editing the desktop UI does not invalidate them.
 ### Worktree disk usage
 
 Cargo downloads share `registry` and `git` under `CARGO_HOME` (normally
-`~/.cargo`). `.cargo/config.toml` routes both direct Cargo commands and Moon tasks
-through [kache](https://github.com/kunobi-ninja/kache). Install its pinned version
-once on `PATH`; no global `kache init` or background service is needed for local
-caching. The parent workspace uses this same configuration.
+`~/.cargo`). All command automation uses `kache cargo -- ...`; standalone Rust
+tools use `kache rustc` with an explicit crate name and output directory so they
+can be cached too. `.cargo/config.toml` also routes compiler calls from tools
+that invoke Cargo internally through [kache](https://github.com/kunobi-ninja/kache).
+Install its pinned version once on `PATH`; no global `kache init` or background
+service is needed for local caching. The parent workspace uses this same configuration.
 
 Each checkout keeps its own `target/` and Cargo build lock. Kache stores compatible
 compiler artifacts once in the user-level content-addressed store:
@@ -103,6 +104,21 @@ archives, and packaged binaries still take space in each checkout. Ten identical
 builds can share eligible compiler artifacts; ten different revisions still need their
 unique outputs. Windows keeps kache's default exclusion of executable caching.
 
+The pinned Dioxus CLI is installed once per host target under
+`${XDG_CACHE_HOME:-~/.cache}/listenbox/build-tools/dioxus-cli/0.7.10/`.
+Each worktree links `crates/desktop/dist/dev-tools/bin/dx` to that installation.
+The install explicitly enables kache because registry installs ignore project
+Cargo configuration, and removes its isolated temporary build directory on
+success or failure. Moon checks this shared installation each time instead of
+archiving another copy of the tool in every worktree.
+
+Profiling uses the regular `target/profiling/` profile directory instead of a
+second target tree. It keeps kache enabled with `KACHE_RUSTC_PATH_NORMALIZE=0`
+so Instruments can resolve real source paths. `KACHE_CACHE_EXECUTABLES=0`
+preserves the macOS object paths rustc needs to pack the final dSYM, while
+libraries remain cached. Those profiling entries are specific to the checkout;
+ordinary builds share normalized artifacts.
+
 Inspect actual reuse and retention from the client directory:
 
 ```sh
@@ -112,7 +128,7 @@ kache targets
 ```
 
 Enabling kache does not retroactively deduplicate existing `target/` files. After
-stopping builds in an existing worktree, `cargo clean` and the next Moon build
+stopping builds in an existing worktree, `kache cargo -- clean` and the next Moon build
 repopulate it through kache. Inspect `kache targets` before cleaning unused
 worktrees; deleting a target can release blocks retained by its outputs.
 `kache gc` reclaims eligible unreferenced entries. FFmpeg remains in this

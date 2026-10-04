@@ -22,10 +22,10 @@ tasks:
     inputs: ['@group(sources)', 'project://client?group=cargo-config']
     script: |-
       set -euo pipefail
-      cargo build --locked -p youtubei
+      kache cargo -- build --locked -p youtubei
   test:
     deps:
       - target: youtubejs:bundle
         cacheStrategy: outputs
     inputs: ['@group(sources)', '@group(tests)', 'project://client?group=cargo-config']
-    command: cargo test --locked -p youtubei
+    command: kache cargo -- test --locked -p youtubei
