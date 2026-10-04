@@ -54,12 +54,10 @@ pub struct Workspace {
     loaded: bool,
     loading: bool,
     authenticating: bool,
-    importing: bool,
+    creating: bool,
     auto_sync: bool,
     import_open: bool,
     import_kind: ShowSourceKind,
-    import_cancel: Option<CancellationToken>,
-    import_slug: Option<String>,
     artwork_cache: Entity<ArtworkCache>,
     team: Option<String>,
     team_picker: bool,
@@ -152,8 +150,12 @@ enum Message {
     Open(String),
     Catalog(anyhow::Result<Catalog>),
     Login(anyhow::Result<()>),
-    ImportCreated(Show),
-    Imported(anyhow::Result<(Show, Report)>),
+    ImportCreated(Show, CancellationToken),
+    Imported {
+        slug: Option<String>,
+        kind: ShowSourceKind,
+        result: anyhow::Result<(Show, Report)>,
+    },
     Report(String, Report),
     Finished(String, anyhow::Result<()>),
     SyncDue,
@@ -237,12 +239,10 @@ impl Workspace {
             loaded: false,
             loading: false,
             authenticating: false,
-            importing: false,
+            creating: false,
             auto_sync: false,
             import_open: false,
             import_kind: ShowSourceKind::Audio,
-            import_cancel: None,
-            import_slug: None,
             artwork_cache: ArtworkCache::new(cx),
             team: None,
             team_picker: false,
@@ -437,11 +437,9 @@ impl Workspace {
                 self.stopping = None;
                 self.authenticating = false;
                 self.loading = false;
-                self.importing = false;
+                self.creating = false;
                 self.auto_sync = false;
                 self.import_open = false;
-                self.import_slug = None;
-                self.import_cancel = None;
                 self.artwork_cache
                     .update(cx, |cache, cx| cache.clear(window, cx));
                 self.jobs.clear();
@@ -524,11 +522,13 @@ impl Workspace {
                     }
                 }
             }
-            Message::ImportCreated(show) => {
-                self.import_slug = Some(show.slug.clone());
-                if let Some(cancel) = &self.import_cancel {
-                    self.jobs.insert(show.slug.clone(), cancel.clone());
-                }
+            Message::ImportCreated(show, cancel) => {
+                // Creation owns the form. Episode work belongs to this podcast
+                // from here onward, so another playlist can be created now.
+                self.creating = false;
+                self.source
+                    .update(cx, |state, cx| state.set_value("", window, cx));
+                self.jobs.insert(show.slug.clone(), cancel);
                 self.team = Some(show.team_id.clone());
                 let slug = show.slug.clone();
                 self.catalog.shows.push(show);
@@ -537,21 +537,32 @@ impl Workspace {
                 self.reports
                     .insert(slug, "Importing the first episodes…".into());
             }
-            Message::Imported(result) => {
-                self.importing = false;
-                self.import_cancel = None;
-                let imported_slug = self.import_slug.take();
-                if let Some(slug) = &imported_slug {
-                    self.jobs.remove(slug);
+            Message::Imported { slug, kind, result } => {
+                if slug.is_none() {
+                    self.creating = false;
                 }
+                let stopped = slug.as_ref().is_some_and(|slug| {
+                    self.jobs
+                        .remove(slug)
+                        .is_some_and(|cancel| cancel.is_cancelled())
+                });
                 match result {
                     Ok((show, report)) => {
-                        self.source
-                            .update(cx, |state, cx| state.set_value("", window, cx));
                         self.receive(Message::Report(show.slug, report), window, cx);
                     }
+                    Err(_) if stopped => {
+                        if let Some(slug) = slug {
+                            if self.selected.as_ref() == Some(&slug) {
+                                self.load_episodes(cx);
+                            }
+                            self.reports.insert(
+                                slug,
+                                "Stopped. Progress is saved for the next sync.".into(),
+                            );
+                        }
+                    }
                     Err(error) => {
-                        if let Some(slug) = &imported_slug {
+                        if let Some(slug) = &slug {
                             self.reports.insert(
                                 slug.clone(),
                                 "Import stopped. Use Sync now to continue.".into(),
@@ -561,8 +572,8 @@ impl Workspace {
                             error,
                             &self.client,
                             self.catalog.import_team.as_deref(),
-                            imported_slug.is_some(),
-                            &self.import_kind,
+                            slug.is_some(),
+                            &kind,
                         ));
                         // Creation may have committed even when its reply was lost.
                         // A catalog reload exposes that podcast for explicit resumption.
@@ -656,7 +667,7 @@ impl Workspace {
     }
 
     fn import_playlist(&mut self, cx: &mut Context<Self>) {
-        if !self.loaded || self.importing || self.stopping.is_some() {
+        if !self.loaded || self.creating || self.stopping.is_some() {
             return;
         }
         let source = self.source.read(cx).value().to_string();
@@ -668,10 +679,9 @@ impl Workspace {
                 return;
             }
         };
-        self.importing = true;
+        self.creating = true;
         self.error = None;
         let cancel = self.cancel.child_token();
-        self.import_cancel = Some(cancel.clone());
         let (client, sender, kind) = (
             self.client.clone(),
             self.sender.clone(),
@@ -679,13 +689,26 @@ impl Workspace {
         );
         self.tasks.spawn_on(
             async move {
-                let created = sender.clone();
+                let created_sender = sender.clone();
+                let created_cancel = cancel.clone();
+                let (created, mut imported) = tokio::sync::oneshot::channel();
+                let mut created = Some(created);
                 let result = client
-                    .import_playlist(&source, kind, cancel, move |show| {
-                        let _ = created.send(Message::ImportCreated(show.clone()));
+                    .import_playlist(&source, kind.clone(), cancel, move |show| {
+                        if let Some(created) = created.take() {
+                            let _ = created.send(show.slug.clone());
+                        }
+                        let _ = created_sender
+                            .send(Message::ImportCreated(show.clone(), created_cancel.clone()));
                     })
                     .await;
-                let _ = sender.send(Message::Imported(result));
+                // The creation callback finishes before this operation returns,
+                // so completion carries its own podcast even on a later error.
+                let _ = sender.send(Message::Imported {
+                    slug: imported.try_recv().ok(),
+                    kind,
+                    result,
+                });
             },
             self.runtime.handle(),
         );
@@ -918,7 +941,7 @@ impl Workspace {
                             )
                             .child(Icon::new(assets::IconName::Plus).small()),
                     )
-                    .disabled(!self.loaded || self.importing || self.stopping.is_some())
+                    .disabled(!self.loaded || self.creating || self.stopping.is_some())
                     .on_click(cx.listener(|view, _, window, cx| {
                         view.settings_open = false;
                         view.cookie_input = settings::cookie_input(window, cx);
@@ -1039,7 +1062,7 @@ impl Workspace {
 
     fn import_form(&self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let t = Tokens::current(cx);
-        let busy = self.importing || self.stopping.is_some();
+        let busy = self.creating || self.stopping.is_some();
         let team = self
             .catalog
             .import_team
@@ -1069,10 +1092,10 @@ impl Workspace {
                 .child(div().text_size(px(12.)).text_color(t.muted)
                     .child(if self.import_kind == ShowSourceKind::Video { "A video plan with enough storage for the playlist is required. Playlist order is preserved. On later syncs, videos removed from the playlist are removed from the podcast." } else { "A paid podcast plan is required. Playlist order is preserved. On later syncs, videos removed from the playlist are removed from the podcast." })))
             .child(div().flex().items_center().gap_3()
-                .child(Button::new("start-import").primary().label(if self.importing { "Checking playlist and plan…" } else { "Create podcast & import" })
+                .child(Button::new("start-import").primary().label(if self.creating { "Checking playlist and plan…" } else { "Create podcast & import" })
                     .disabled(busy).on_click(cx.listener(|view, _, _, cx| view.import_playlist(cx))))
-                .when(self.importing, |row| row.child(Spinner::new().small()))
-                .when(!self.importing && self.show().is_some(), |row| row.child(Button::new("cancel-import").ghost().label("Cancel")
+                .when(self.creating, |row| row.child(Spinner::new().small()))
+                .when(!self.creating && self.show().is_some(), |row| row.child(Button::new("cancel-import").ghost().label("Cancel")
                     .on_click(cx.listener(|view, _, _, cx| { view.import_open = false; view.error = None; cx.notify(); })))));
         form.into_any_element()
     }

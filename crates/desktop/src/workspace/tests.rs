@@ -660,6 +660,140 @@ async fn live_backend(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 #[ignore = "requires the parent workspace's ephemeral Listenbox services"]
+async fn live_concurrent_imports(cx: &mut TestAppContext) {
+    let runtime = Arc::new(tokio::runtime::Runtime::new().unwrap());
+    let config = Config::load(None).unwrap();
+    let sources = std::fs::read_to_string(config.directory.join("test-playlist-urls")).unwrap();
+    let sources: Vec<_> = sources.lines().collect();
+    let api =
+        listenbox_sync_engine::api::Api::new(config.clone(), CancellationToken::new()).unwrap();
+    let client = Client::desktop(config).unwrap();
+    let cancel = CancellationToken::new();
+    cx.update(gpui_kit::init);
+    cx.executor().allow_parking();
+    let mut view = None;
+    let handle = cx.open_window(size(px(840.), px(600.)), |window, cx| {
+        tokens::apply(window, cx);
+        let entity = cx.new(|cx| {
+            Workspace::new(
+                client,
+                runtime.clone(),
+                cancel.clone(),
+                TaskTracker::new(),
+                window,
+                cx,
+            )
+        });
+        view = Some(entity.clone());
+        Root::new(entity, window, cx)
+    });
+    let view = view.unwrap();
+    wait_for(cx, &view, |view| !view.loading).await;
+    cx.update_window(handle.into(), |_, window, cx| {
+        assert!(view.read(cx).loaded, "{:?}", view.read(cx).error);
+        window.render_frame(cx);
+        window.click("playlist-url", cx);
+        window.input(sources[0], cx);
+        window.click("start-import", cx);
+    })
+    .unwrap();
+    wait_for(cx, &view, |view| view.jobs.len() == 1).await;
+    import_gate(&runtime, &api, "first-admitted");
+    let first = cx
+        .update_window(handle.into(), |_, window, cx| {
+            let first = view.read(cx).show().unwrap().slug.clone();
+            window.render_frame(cx);
+            window.click("new-import", cx);
+            assert!(
+                view.read(cx).import_open,
+                "another podcast's import prevented opening the import form"
+            );
+            window.click("playlist-url", cx);
+            window.input(sources[1], cx);
+            window.click("start-import", cx);
+            first
+        })
+        .unwrap();
+    wait_for(cx, &view, |view| view.jobs.len() == 2).await;
+    import_gate(&runtime, &api, "second-admitted");
+    let second = cx
+        .update_window(handle.into(), |_, window, cx| {
+            let second = view.read(cx).show().unwrap().slug.clone();
+            assert_ne!(first, second);
+            window.render_frame(cx);
+            window.click("new-import", cx);
+            assert!(
+                view.read(cx).import_open,
+                "simultaneous imports prevented opening the import form"
+            );
+            window.click("playlist-url", cx);
+            window.input("https://www.youtube.com/playlist?list=PLnextdraft", cx);
+            second
+        })
+        .unwrap();
+    import_gate(&runtime, &api, "release-first");
+    wait_for(cx, &view, |view| !view.jobs.contains_key(&first)).await;
+    cx.update_window(handle.into(), |_, window, cx| {
+        let state = view.read(cx);
+        assert!(state.error.is_none(), "{:?}", state.error);
+        assert!(
+            state.reports[&first].starts_with("1 added"),
+            "{:?}",
+            state.reports
+        );
+        assert!(
+            !state.jobs[&second].is_cancelled(),
+            "first completion stopped the second import"
+        );
+        assert!(
+            state.import_open,
+            "first completion closed the next import form"
+        );
+        assert_eq!(
+            state.source.read(cx).value().as_str(),
+            "https://www.youtube.com/playlist?list=PLnextdraft"
+        );
+        window.render_frame(cx);
+        window.click(format!("show-{second}"), cx);
+        window.click("stop-sync", cx);
+    })
+    .unwrap();
+    wait_for(cx, &view, |view| view.jobs.is_empty()).await;
+    cx.update_window(handle.into(), |_, window, cx| {
+        assert!(view.read(cx).error.is_none(), "{:?}", view.read(cx).error);
+        assert!(view.read(cx).reports[&first].starts_with("1 added"));
+        window.render_frame(cx);
+        assert!(window.try_find("stop-sync").is_none());
+        window.click("new-import", cx);
+        assert!(view.read(cx).import_open);
+        assert_eq!(
+            view.read(cx).source.read(cx).value().as_str(),
+            "https://www.youtube.com/playlist?list=PLnextdraft"
+        );
+    })
+    .unwrap();
+    cancel.cancel();
+}
+
+fn import_gate(
+    runtime: &tokio::runtime::Runtime,
+    api: &listenbox_sync_engine::api::Api,
+    gate: &str,
+) {
+    runtime.block_on(async {
+        let response = api
+            .http
+            .get(format!("{}/__test__/imports/{gate}", api.config.api_origin))
+            .timeout(Duration::from_secs(3))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status().as_u16(), 204, "import gate {gate} failed");
+    });
+}
+
+#[gpui_kit::test]
+#[ignore = "requires the parent workspace's ephemeral Listenbox services"]
 async fn live_import(cx: &mut TestAppContext) {
     let runtime = Arc::new(tokio::runtime::Runtime::new().unwrap());
     let config = Config::load(None).unwrap();
@@ -698,13 +832,16 @@ async fn live_import(cx: &mut TestAppContext) {
         window.input(&source, cx);
         window.click("start-import", cx);
         assert!(
-            view.read(cx).importing,
+            view.read(cx).creating,
             "import did not start: {:?}",
             view.read(cx).error
         );
     })
     .unwrap();
-    wait_for(cx, &view, |view| !view.importing && !view.loading).await;
+    wait_for(cx, &view, |view| {
+        !view.creating && !view.loading && view.jobs.is_empty()
+    })
+    .await;
     cx.update_window(handle.into(), |_, window, cx| {
         let state = view.read(cx);
         if recover_scan {
@@ -798,10 +935,13 @@ async fn live_import_payment_required(cx: &mut TestAppContext) {
         window.input(&source, cx);
         window.click("import-video", cx);
         window.click("start-import", cx);
-        assert!(view.read(cx).importing, "import did not start");
+        assert!(view.read(cx).creating, "import did not start");
     })
     .unwrap();
-    wait_for(cx, &view, |view| !view.importing && !view.loading).await;
+    wait_for(cx, &view, |view| {
+        !view.creating && !view.loading && view.jobs.is_empty()
+    })
+    .await;
     cx.update_window(handle.into(), |_, window, cx| {
         let state = view.read(cx);
         assert!(
