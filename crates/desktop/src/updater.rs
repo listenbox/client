@@ -175,6 +175,7 @@ pub fn install(view: &Entity<Workspace>, cx: &mut App) {
                         view.update(cx, |view, cx| view.shutdown(Shutdown::Update, cx));
                     } else {
                         crate::platform::refresh_menus(cx);
+                        view.update(cx, |_, cx| cx.notify());
                     }
                 });
             }

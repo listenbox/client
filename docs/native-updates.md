@@ -7,10 +7,11 @@ verified before extraction, and their licenses accompany installed files.
 Developer builds have no native updater or production checks. Release builds
 enable `native-updater` explicitly and require a valid public key.
 
-Both frameworks check every 24 hours. Users can change automatic checks from
-the Listenbox menu; Windows also exposes the framework's native preference.
-Manual checks bring the app forward and use native current/error feedback.
-The tray/menu-bar command stays available with the workspace hidden.
+Both frameworks check every 24 hours. Settings exposes Check for Updates and
+Automatically Check for Updates on macOS and Windows, using the native
+framework's persisted preference. Developer builds show both controls disabled.
+The macOS Listenbox menu also offers Check for Updates. Manual checks bring the
+app forward and use native current/error feedback.
 
 The workspace TaskTracker remains the authoritative owner of admitted work.
 Updater callbacks only enqueue a request onto GPUI. The workspace cancels new

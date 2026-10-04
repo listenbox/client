@@ -177,8 +177,9 @@ Stable desktop releases use the workspace `X.Y.Z` version and matching
 notarized Apple Silicon DMG and Windows x64/ARM64 per-user Setup installers.
 Sparkle on macOS and WinSparkle on Windows provide native update prompts,
 manual checks and persisted automatic-check preferences. Both verify Ed25519
-signatures for the final download. The Check for Updates command is also
-available from the tray/menu bar while the workspace is hidden.
+signatures for the final download. Settings offers Check for Updates and
+Automatically Check for Updates on macOS and Windows. The macOS Listenbox
+menu also offers Check for Updates.
 
 Windows installers currently have no Authenticode publisher certificate and
 may show a SmartScreen warning. Their in-app update authenticity is protected
@@ -207,7 +208,7 @@ moon run desktop:build-release-windows-arm64
 
 Outputs are in `crates/desktop/dist/`. FFmpeg and the MSVC runtime are linked statically. Each Windows target has its own FFmpeg cache, separate from the native macOS/Linux build. GPUI compiles its release shaders using the Windows SDK, so these tasks must run on Windows. The release profile is `%LOCALAPPDATA%\Listenbox` on Windows; debug builds use `%USERPROFILE%\.cache\listenbox\dev`. `LISTENBOX_PROFILE_DIR` overrides it on all platforms.
 
-Release builds open without a console window and keep a system tray icon while running. Closing the window with X hides it and keeps synchronization running. Click the tray icon to reopen the window, or right-click it for Open Listenbox, Check for Updates, and Quit Listenbox. The macOS menu-bar icon offers the same actions in updater-enabled releases. Quit waits for active work to shut down cleanly. Windows may place the icon in the tray's hidden-icons overflow.
+Release builds open without a console window and keep a system tray icon while running. Closing the window with X hides it and keeps synchronization running. Click the tray icon to reopen the window, or right-click it for Open Listenbox and Quit Listenbox. The macOS menu-bar icon offers the same actions. Quit waits for active work to shut down cleanly. Windows may place the icon in the tray's hidden-icons overflow.
 
 Desktop icon artwork lives in `crates/desktop/assets/icon.png`. macOS packages it directly; the desktop Cargo build generates a multi-resolution Windows ICO from the same image and embeds it as resource 1 for Explorer, the window, and the taskbar. `assets/tray.svg` adapts the shared web favicon's L-and-dot geometry without its tile background. The build renders a 36px macOS template (18pt at Retina scale) and a 32px Windows mark with a contrasting outline for light and dark taskbars. Generated ICO, PNG previews, and embedded RGBA pixels live in Cargo's build output directory; edit the source artwork to regenerate them.
 

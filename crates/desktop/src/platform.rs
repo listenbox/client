@@ -71,30 +71,23 @@ pub fn install_actions(view: &Entity<Workspace>, cx: &mut App) {
         show_window(cx);
         crate::updater::check();
     });
-    cx.on_action(|_: &AutomaticUpdates, cx| {
+    let automatic_updates = view.clone();
+    cx.on_action(move |_: &AutomaticUpdates, cx| {
         crate::updater::toggle_automatic();
-        refresh_menus(cx);
+        automatic_updates.update(cx, |_, cx| cx.notify());
     });
     refresh_menus(cx);
 }
 
 pub fn refresh_menus(cx: &mut App) {
-    let mut items = vec![
+    let items = vec![
         MenuItem::action("Settings…", OpenSettings),
         MenuItem::action("Check for Updates…", CheckUpdates).disabled(!crate::updater::can_check()),
-    ];
-    if crate::updater::enabled() {
-        items.push(
-            MenuItem::action("Automatically Check for Updates", AutomaticUpdates)
-                .checked(crate::updater::automatic()),
-        );
-    }
-    items.extend([
         MenuItem::separator(),
         MenuItem::action("Log out", Logout),
         MenuItem::separator(),
         MenuItem::action(format!("Quit {APP_NAME}"), Quit),
-    ]);
+    ];
     cx.set_menus(vec![Menu::new(APP_NAME).items(items)]);
     #[cfg(target_os = "macos")]
     macos::configure_app_menu();

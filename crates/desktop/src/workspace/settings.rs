@@ -1,4 +1,5 @@
 use super::*;
+use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::Textarea;
 use listenbox_sync_engine::cookies;
 
@@ -119,11 +120,16 @@ impl Workspace {
                 .child(div().flex().items_center().gap_3()
                     .child(Button::new("save-cookies").primary().label(if busy { "Please wait…" } else { "Save cookies" }).disabled(busy).on_click(cx.listener(|view, _, _, cx| view.save_cookies(false, cx))))
                     .child(Button::new("remove-cookies").ghost().label("Remove cookies").disabled(busy || (!self.cookie_saved && self.cookie_error.is_none())).on_click(cx.listener(|view, _, _, cx| view.save_cookies(true, cx))))))
-            .when(cfg!(target_os = "windows"), |pane| pane
+            .when(cfg!(any(target_os = "macos", target_os = "windows")), |pane| pane
                 .child(div().flex().flex_col().gap_2()
                     .child(div().text_size(px(tokens::TITLE)).font_weight(FontWeight::SEMIBOLD).child("Updates"))
                     .child(div().text_color(t.muted).child(format!("{} {}", crate::APP_NAME, env!("CARGO_PKG_VERSION"))))
                     .when(!crate::updater::enabled(), |section| section.child(div().text_color(t.muted).child("Updates are unavailable in this development build.")))
+                    .child(Checkbox::new("automatic-updates")
+                        .label("Automatically Check for Updates")
+                        .checked(crate::updater::automatic())
+                        .disabled(self.stopping.is_some() || !crate::updater::enabled())
+                        .on_click(|_, _, cx| cx.dispatch_action(&crate::platform::AutomaticUpdates)))
                     .child(div().flex().items_start().child(Button::new("check-updates")
                         .label("Check for Updates…")
                         .disabled(self.stopping.is_some() || !crate::updater::can_check())

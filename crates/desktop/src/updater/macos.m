@@ -19,7 +19,8 @@ static NSApplicationTerminateReply shouldTerminate(id object, SEL selector, NSAp
 @implementation ListenboxUpdater
 - (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object
                        change:(NSDictionary *)change context:(void *)context {
-    if ([keyPath isEqualToString:@"canCheckForUpdates"]) eventCallback(1);
+    if ([keyPath isEqualToString:@"canCheckForUpdates"] ||
+        [keyPath isEqualToString:@"automaticallyChecksForUpdates"]) eventCallback(1);
 }
 - (BOOL)updater:(SPUUpdater *)updater shouldPostponeRelaunchForUpdate:(SUAppcastItem *)item
     untilInvokingBlock:(void (^)(void))installHandler {
@@ -46,6 +47,8 @@ int listenbox_updater_init(const char *key, const char *feed, void (*callback)(i
         initWithStartingUpdater:NO updaterDelegate:delegate userDriverDelegate:nil];
     [delegate.controller.updater addObserver:delegate forKeyPath:@"canCheckForUpdates"
         options:NSKeyValueObservingOptionInitial | NSKeyValueObservingOptionNew context:NULL];
+    [delegate.controller.updater addObserver:delegate forKeyPath:@"automaticallyChecksForUpdates"
+        options:NSKeyValueObservingOptionNew context:NULL];
     NSError *error = nil;
     if (![delegate.controller.updater startUpdater:&error]) {
         NSLog(@"Cannot start Listenbox updater: %@", error);
@@ -69,5 +72,6 @@ void listenbox_updater_drained(void) {
 void listenbox_updater_permit_termination(void) { terminationPermitted = YES; }
 void listenbox_updater_cleanup(void) {
     [delegate.controller.updater removeObserver:delegate forKeyPath:@"canCheckForUpdates"];
+    [delegate.controller.updater removeObserver:delegate forKeyPath:@"automaticallyChecksForUpdates"];
     delegate = nil;
 }
