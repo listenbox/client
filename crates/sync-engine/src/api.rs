@@ -98,7 +98,11 @@ impl Api {
         let request = request
             .map_err(|error| error.without_url())
             .context("build HTTP request")?;
-        let diagnostic = cfg!(debug_assertions).then(|| {
+        let diagnostic = (cfg!(debug_assertions)
+            && !request.url().host_str().is_some_and(|host| {
+                host == "googlevideo.com" || host.ends_with(".googlevideo.com")
+            }))
+        .then(|| {
             let origin = request.url().origin().ascii_serialization();
             // Signed media URLs may contain credentials in their paths and query strings.
             let path = if origin != self.config.api_origin {
