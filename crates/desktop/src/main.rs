@@ -20,6 +20,8 @@ use listenbox_sync_engine::{client::Client, config::Config};
 use std::sync::Arc;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
+const APP_NAME: &str = env!("LISTENBOX_APP_NAME");
+
 fn main() -> anyhow::Result<()> {
     let runtime = Arc::new(tokio::runtime::Runtime::new()?);
     let mut args = std::env::args_os().skip(1);
@@ -30,12 +32,12 @@ fn main() -> anyhow::Result<()> {
             })?))
         }
         Some(flag) if flag == "--help" => {
-            println!("Listenbox desktop\nUsage: listenbox-desktop [--config PATH]");
+            println!("{APP_NAME} desktop\nUsage: listenbox-desktop [--config PATH]");
             return Ok(());
         }
         Some(flag) if flag == "--version" => {
             println!(
-                "Listenbox {} ({})",
+                "{APP_NAME} {} ({})",
                 env!("CARGO_PKG_VERSION"),
                 env!("LISTENBOX_SOURCE_COMMIT")
             );
@@ -95,7 +97,7 @@ fn main() -> anyhow::Result<()> {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     window_min_size: Some(size(px(840.), px(600.))),
                     titlebar: Some(gpui_kit::TitlebarOptions {
-                        title: Some("Listenbox".into()),
+                        title: Some(APP_NAME.into()),
                         ..Default::default()
                     }),
                     ..Default::default()

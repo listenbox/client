@@ -16,8 +16,8 @@ cat > "$bundle_info" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-<key>CFBundleName</key><string>Listenbox</string>
-<key>CFBundleDisplayName</key><string>Listenbox</string>
+<key>CFBundleName</key><string>Listenbox Dev</string>
+<key>CFBundleDisplayName</key><string>Listenbox Dev</string>
 <key>CFBundleIdentifier</key><string>app.listenbox.client.dev</string>
 <key>CFBundleExecutable</key><string>listenbox-desktop</string>
 <key>CFBundleIconFile</key><string>icon.icns</string>

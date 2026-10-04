@@ -199,14 +199,16 @@ moonx desktop:dev
 Moon installs the pinned Dioxus CLI (`dx` 0.7.10) into `crates/desktop/dist/dev-tools` and runs `dx serve --hot-patch` with the desktop's `hot-reload` feature. Subsecond patches rendering and UI event code in the running app. Each patch refreshes GPUI's window and recreates element callbacks while retaining the workspace, input entities, and active sync jobs. Failed builds leave the development session available for the next edit.
 
 Before starting `dx`, Moon generates the development bundle's `Info.plist` with
-the Listenbox application name and current Cargo version. `Dioxus.toml` selects
-that metadata. Native update controls remain disabled in development builds.
+the Listenbox Dev application name and current Cargo version. `Dioxus.toml` selects
+that metadata. Development and profiling builds use Listenbox Dev for native
+menus, window titles, tray labels, and Windows executable metadata; production
+releases use Listenbox. Native update controls remain disabled in development builds.
 
 Starting a new `dx` session recompiles the desktop executable to capture linker
 arguments, even when its source is unchanged. Cargo reuses unchanged dependency
 crates. Keep the session running for fast live patches.
 
-Changes to fields or field types of live structs, startup code, and running async tasks require a full rebuild (`r` in the `dx` terminal). Hotpatching does not migrate retained state or restart existing futures. `dx` owns source watching and compilation; dependency and configuration changes also need a rebuild. Quit Listenbox stops the app and leaves `dx` available to reopen it with `o`; closing the window keeps the app running. Ctrl-C stops the development session and requests normal application shutdown.
+Changes to fields or field types of live structs, startup code, and running async tasks require a full rebuild (`r` in the `dx` terminal). Hotpatching does not migrate retained state or restart existing futures. `dx` owns source watching and compilation; dependency and configuration changes also need a rebuild. Quit Listenbox Dev stops the app and leaves `dx` available to reopen it with `o`; closing the window keeps the app running. Ctrl-C stops the development session and requests normal application shutdown.
 
 `config/dev.yaml` points at `http://localhost:8080` (public API) and `http://localhost:5174` (dashboard sign-in). Debug builds automatically log HTTP method, route, response status, elapsed milliseconds, and trace ID to stderr; release builds omit these diagnostics. Desktop debug startup also prints the active profile and SQLite path. Signed media URLs and credentials are omitted from diagnostics. Debug builds use the worktree-independent `~/.cache/listenbox/dev` profile, isolating credentials and resumable work from the release profile. To use the same dev login from the CLI, run from the client repository:
 

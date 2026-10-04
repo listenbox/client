@@ -1,4 +1,7 @@
-use crate::workspace::{Shutdown, Workspace};
+use crate::{
+    APP_NAME,
+    workspace::{Shutdown, Workspace},
+};
 use gpui_kit::{App, Entity, Menu, MenuItem, Window, actions};
 
 #[cfg(target_os = "windows")]
@@ -90,9 +93,9 @@ pub fn refresh_menus(cx: &mut App) {
         MenuItem::separator(),
         MenuItem::action("Log out", Logout),
         MenuItem::separator(),
-        MenuItem::action("Quit Listenbox", Quit),
+        MenuItem::action(format!("Quit {APP_NAME}"), Quit),
     ]);
-    cx.set_menus(vec![Menu::new("Listenbox").items(items)]);
+    cx.set_menus(vec![Menu::new(APP_NAME).items(items)]);
     #[cfg(target_os = "macos")]
     macos::configure_app_menu();
 }
@@ -131,8 +134,8 @@ mod status_item {
 
     pub(super) fn install(view: &Entity<Workspace>, cx: &mut App) {
         let menu = TrayMenu::new();
-        let open = TrayMenuItem::new("Open Listenbox", true, None);
-        let quit = TrayMenuItem::new("Quit Listenbox", true, None);
+        let open = TrayMenuItem::new(format!("Open {APP_NAME}"), true, None);
+        let quit = TrayMenuItem::new(format!("Quit {APP_NAME}"), true, None);
         menu.append_items(&[&open, &quit]).expect("status menu");
         let (open, quit) = (open.id().clone(), quit.id().clone());
         let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
@@ -182,7 +185,7 @@ mod status_item {
         );
         let builder = TrayIconBuilder::new()
             .with_menu(Box::new(menu))
-            .with_tooltip("Listenbox — YouTube to podcast sync")
+            .with_tooltip(format!("{APP_NAME} — YouTube to podcast sync"))
             .with_icon(Icon::from_rgba(pixels.to_vec(), size, size).expect("status icon pixels"));
         #[cfg(target_os = "macos")]
         let builder = builder.with_icon_as_template(true);
@@ -195,6 +198,7 @@ mod status_item {
 
 #[cfg(target_os = "macos")]
 mod macos {
+    use crate::APP_NAME;
     use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
     pub(super) fn configure_app_menu() {
         let Some(main_thread) = objc2::MainThreadMarker::new() else {
@@ -218,7 +222,7 @@ mod macos {
             objc2::MainThreadMarker::new().expect("macOS main thread"),
         );
         for window in app.windows() {
-            if window.title().to_string() == "Listenbox" {
+            if window.title().to_string() == APP_NAME {
                 window.orderOut(None);
             }
         }
@@ -231,7 +235,7 @@ mod macos {
         );
         app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
         for window in app.windows() {
-            if window.title().to_string() == "Listenbox" {
+            if window.title().to_string() == APP_NAME {
                 window.deminiaturize(None);
                 window.makeKeyAndOrderFront(None);
             }

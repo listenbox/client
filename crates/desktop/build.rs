@@ -7,6 +7,13 @@ use resvg::{tiny_skia, usvg};
 use std::{env, error::Error, fs, path::Path};
 
 fn main() -> Result<(), Box<dyn Error>> {
+    let app_name =
+        if env::var("PROFILE")? == "release" && env::var_os("CARGO_FEATURE_PROFILING").is_none() {
+            "Listenbox"
+        } else {
+            "Listenbox Dev"
+        };
+    println!("cargo:rustc-env=LISTENBOX_APP_NAME={app_name}");
     println!("cargo:rustc-check-cfg=cfg(listenbox_updater)");
     println!("cargo:rerun-if-env-changed=LISTENBOX_UPDATE_PUBLIC_KEY");
     println!("cargo:rerun-if-changed=src/updater/macos.m");
@@ -108,7 +115,8 @@ BEGIN
   BLOCK "040904B0"
   BEGIN
    VALUE "CompanyName", "Listenbox"
-   VALUE "ProductName", "Listenbox"
+   VALUE "ProductName", "{app_name}"
+   VALUE "FileDescription", "{app_name}"
    VALUE "ProductVersion", "{version}"
    VALUE "FileVersion", "{version}.0"
    VALUE "Comments", "Source commit: {commit}"

@@ -122,7 +122,7 @@ impl Workspace {
             .when(cfg!(target_os = "windows"), |pane| pane
                 .child(div().flex().flex_col().gap_2()
                     .child(div().text_size(px(tokens::TITLE)).font_weight(FontWeight::SEMIBOLD).child("Updates"))
-                    .child(div().text_color(t.muted).child(format!("Listenbox {}", env!("CARGO_PKG_VERSION"))))
+                    .child(div().text_color(t.muted).child(format!("{} {}", crate::APP_NAME, env!("CARGO_PKG_VERSION"))))
                     .when(!crate::updater::enabled(), |section| section.child(div().text_color(t.muted).child("Updates are unavailable in this development build.")))
                     .child(div().flex().items_start().child(Button::new("check-updates")
                         .label("Check for Updates…")
