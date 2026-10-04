@@ -184,7 +184,7 @@ impl Workspace {
     ) -> Self {
         let (sender, mut receiver) = unbounded_channel();
         let source = cx.new(|cx| {
-            InputState::new(window, cx).placeholder("https://www.youtube.com/playlist?list=…")
+            InputState::new(window, cx).placeholder("https://www.youtube.com/@your-channel")
         });
         cx.spawn_in(window, async move |view, cx| {
             while let Some(message) = receiver.recv().await {
@@ -673,12 +673,12 @@ impl Workspace {
         self.error = error;
     }
 
-    fn import_playlist(&mut self, cx: &mut Context<Self>) {
+    fn import_collection(&mut self, cx: &mut Context<Self>) {
         if !self.loaded || self.creating.is_some() || self.stopping.is_some() {
             return;
         }
         let source = self.source.read(cx).value().to_string();
-        let source = match listenbox_sync_engine::youtube::playlist_source(&source) {
+        let source = match listenbox_sync_engine::youtube::collection_source(&source) {
             Ok(source) => source,
             Err(error) => {
                 self.error = Some(error.to_string().into());
@@ -701,7 +701,7 @@ impl Workspace {
                 let (created, mut imported) = tokio::sync::oneshot::channel();
                 let mut created = Some(created);
                 let result = client
-                    .import_playlist(&source, kind.clone(), cancel, move |event| match event {
+                    .import_collection(&source, kind.clone(), cancel, move |event| match event {
                         ImportEvent::Preparing(preparation) => {
                             let _ = created_sender.send(Message::ImportPreparation(preparation));
                         }
@@ -935,7 +935,7 @@ impl Workspace {
             div().px(px(tokens::NAV_ROW_INSET)).child(
                 Button::new("new-import")
                     .primary()
-                    .accessibility_label("Import playlist")
+                    .accessibility_label("Import from YouTube")
                     .w_full()
                     .h(px(tokens::CONTROL_HEIGHT))
                     .px(px(tokens::GAP))
@@ -949,7 +949,7 @@ impl Workspace {
                                 div()
                                     .flex_1()
                                     .font_weight(FontWeight::SEMIBOLD)
-                                    .child("Import playlist"),
+                                    .child("Import from YouTube"),
                             )
                             .child(Icon::new(assets::IconName::Plus).small()),
                     )
@@ -1057,7 +1057,7 @@ impl Workspace {
                     .py_4()
                     .text_size(px(12.))
                     .text_color(t.muted)
-                    .child("Your imported playlists will appear here."),
+                    .child("Your imported podcasts will appear here."),
             );
         }
         rail.child(navigation)
@@ -1127,7 +1127,7 @@ impl Workspace {
                             div()
                                 .text_size(px(12.))
                                 .text_color(t.muted)
-                                .child("Playlist URL"),
+                                .child("Playlist or channel URL"),
                         )
                         .child(
                             div()
@@ -1140,12 +1140,12 @@ impl Workspace {
         }
         let form = div().flex().flex_col().items_start().gap(px(tokens::SPACE)).max_w(px(620.)).py(px(tokens::SPACE))
             .child(div().flex().flex_col().gap_3()
-                .child(div().text_size(px(tokens::PAGE_TITLE)).font_weight(FontWeight::BOLD).child("Import a YouTube playlist"))
-                .child(div().text_color(t.muted).child("Give your playlist a podcast home. Import it once, then keep new episodes coming with Listenbox.")))
+                .child(div().text_size(px(tokens::PAGE_TITLE)).font_weight(FontWeight::BOLD).child("Import from YouTube"))
+                .child(div().text_color(t.muted).child("Import a public playlist or channel, then keep new episodes in sync.")))
             .child(div().w_full().flex().flex_col().gap_2()
-                .child(div().font_weight(FontWeight::SEMIBOLD).child("Playlist URL"))
-                .child(Input::new(&self.source).id("playlist-url").disabled(busy))
-                .child(div().text_size(px(12.)).text_color(t.muted).child("Use a public playlist. Its title becomes your podcast’s name.")))
+                .child(div().font_weight(FontWeight::SEMIBOLD).child("Playlist or channel URL"))
+                .child(Input::new(&self.source).id("youtube-url").disabled(busy))
+                .child(div().text_size(px(12.)).text_color(t.muted).child("Use a public playlist or channel URL, with or without /videos.")))
             .child(div().flex().flex_col().gap_2()
                 .child(div().font_weight(FontWeight::SEMIBOLD).child("Podcast format"))
                 .child(div().flex().gap_2()
@@ -1158,10 +1158,10 @@ impl Workspace {
             .child(div().w_full().border_t_1().border_color(t.divider).pt_4().flex().flex_col().gap_2()
                 .child(format!("Creates a new podcast in {team}."))
                 .child(div().text_size(px(12.)).text_color(t.muted)
-                    .child(if self.import_kind == ShowSourceKind::Video { "A video plan with enough storage for the playlist is required. Playlist order is preserved. On later syncs, videos removed from the playlist are removed from the podcast." } else { "A paid podcast plan is required. Playlist order is preserved. On later syncs, videos removed from the playlist are removed from the podcast." })))
+                    .child(if self.import_kind == ShowSourceKind::Video { "A video plan with enough storage is required. Playlists keep their order; channels show newest uploads first. Removed videos leave the podcast on the next complete sync." } else { "A paid podcast plan is required. Playlists keep their order; channels show newest uploads first. Removed videos leave the podcast on the next complete sync." })))
             .child(div().flex().items_center().gap_3()
                 .child(Button::new("start-import").primary().label("Create podcast & import")
-                    .disabled(busy).on_click(cx.listener(|view, _, _, cx| view.import_playlist(cx))))
+                    .disabled(busy).on_click(cx.listener(|view, _, _, cx| view.import_collection(cx))))
                 .when(self.show().is_some(), |row| row.child(Button::new("cancel-import").ghost().label("Cancel")
                     .on_click(cx.listener(|view, _, _, cx| { view.import_open = false; view.error = None; cx.notify(); })))));
         form.into_any_element()
@@ -1181,8 +1181,8 @@ impl Workspace {
         }
         if !self.loaded {
             return div().flex().flex_col().items_start().gap(px(tokens::SPACE)).max_w(px(600.)).py(px(tokens::SPACE * 2.))
-                .child(div().text_size(px(tokens::PAGE_TITLE)).font_weight(FontWeight::BOLD).child("Your playlists. Your podcast."))
-                .child(div().text_color(t.muted).child("Bring a public YouTube playlist to Listenbox, then keep your podcast in sync from this desktop."))
+                .child(div().text_size(px(tokens::PAGE_TITLE)).font_weight(FontWeight::BOLD).child("Your YouTube recordings as a podcast"))
+                .child(div().text_color(t.muted).child("Bring a public YouTube playlist or channel to Listenbox, then keep your podcast in sync from this desktop."))
                 .child(Button::new("welcome-action").primary().label(if self.authenticating { "Finish in your browser…" } else { "Sign in to Listenbox" })
                     .disabled(self.authenticating || self.stopping.is_some()).on_click(cx.listener(|view, _, _, cx| view.login(cx))))
                 .child(div().text_size(px(12.)).text_color(t.muted).child("Uses your Listenbox account and podcast plan.")).into_any_element();
@@ -1194,6 +1194,7 @@ impl Workspace {
         let source = show.youtube_linkage().unwrap_or_default().to_owned();
         let source_link = source.clone();
         let is_playlist = source.contains("/playlist?");
+        let is_channel = source.contains("/channel/");
         let format = if show.source_kind == ShowSourceKind::Audio {
             "Audio podcast"
         } else {
@@ -1216,7 +1217,7 @@ impl Workspace {
                         .child(Icon::new(assets::IconName::ExternalLink))
                         .child(div().flex_1().min_w_0().truncate().child(source)))
                     .on_click(move |_, _, cx| cx.open_url(&source_link)))
-                .child(div().text_size(px(12.)).text_color(t.muted).child(if is_playlist { "Episodes follow the playlist’s order. Removed videos leave this podcast on the next sync." } else { "This podcast imports a YouTube video. Sync again to resume unfinished transfers." })));
+                .child(div().text_size(px(12.)).text_color(t.muted).child(if is_playlist { "Episodes follow the playlist’s order. Removed videos leave this podcast on the next sync." } else if is_channel { "Episodes follow upload dates, newest first. Removed videos leave this podcast on the next complete sync." } else { "This podcast imports a YouTube video. Sync again to resume unfinished transfers." })));
         if !show.has_active_subscription {
             pane = pane.child(
                 div()

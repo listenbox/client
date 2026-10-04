@@ -32,6 +32,8 @@ youtubei = { path = "../youtubei" }
 rusqlite = { version = "0.38", features = ["bundled"] }
 refinery = { version = "=0.9.2", default-features = false, features = ["rusqlite"] }
 parking_lot = "0.12"
+percent-encoding = "2"
+regex = "1"
 
 
 [lints]

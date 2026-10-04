@@ -149,14 +149,14 @@ impl Client {
             shows,
         })
     }
-    pub async fn import_playlist(
+    pub async fn import_collection(
         &self,
         source: &str,
         kind: p::ShowSourceKind,
         cancel: CancellationToken,
         event: impl FnMut(crate::youtube::ImportEvent) + Send + 'static,
     ) -> Result<(p::Show, Report)> {
-        let source = crate::youtube::playlist_source(source)?;
+        let source = crate::youtube::collection_source(source)?;
         let api = self.api(cancel)?;
         let engine = self.engine.clone();
         let runtime = tokio::runtime::Handle::current();

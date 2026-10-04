@@ -710,7 +710,7 @@ async fn live_concurrent_imports(cx: &mut TestAppContext) {
     cx.update_window(handle.into(), |_, window, cx| {
         assert!(view.read(cx).loaded, "{:?}", view.read(cx).error);
         window.render_frame(cx);
-        window.click("playlist-url", cx);
+        window.click("youtube-url", cx);
         window.input(sources[0], cx);
         window.click("start-import", cx);
     })
@@ -726,7 +726,7 @@ async fn live_concurrent_imports(cx: &mut TestAppContext) {
                 view.read(cx).import_open,
                 "another podcast's import prevented opening the import form"
             );
-            window.click("playlist-url", cx);
+            window.click("youtube-url", cx);
             window.input(sources[1], cx);
             window.click("start-import", cx);
             first
@@ -744,7 +744,7 @@ async fn live_concurrent_imports(cx: &mut TestAppContext) {
                 view.read(cx).import_open,
                 "simultaneous imports prevented opening the import form"
             );
-            window.click("playlist-url", cx);
+            window.click("youtube-url", cx);
             window.input("https://www.youtube.com/playlist?list=PLnextdraft", cx);
             second
         })
@@ -844,14 +844,14 @@ async fn live_video_creation_progress(cx: &mut TestAppContext) {
     cx.update_window(handle.into(), |_, window, cx| {
         assert!(view.read(cx).loaded, "{:?}", view.read(cx).error);
         window.render_frame(cx);
-        window.click("playlist-url", cx);
+        window.click("youtube-url", cx);
         window.input(&source, cx);
         window.click("import-video", cx);
         window.click("start-import", cx);
         window.render_frame(cx);
         assert!(window.find("creation-status").visible());
         assert!(window.try_find("start-import").is_none());
-        assert!(window.try_find("playlist-url").is_none());
+        assert!(window.try_find("youtube-url").is_none());
     })
     .unwrap();
     wait_for(cx, &view, |view| {
@@ -953,7 +953,7 @@ async fn live_video_creation_progress(cx: &mut TestAppContext) {
             window.render_frame(cx);
             assert!(window.try_find("creation-status").is_none());
             assert_ne!(window.find("start-import").disabled(), Some(true));
-            assert!(window.find("playlist-url").visible());
+            assert!(window.find("youtube-url").visible());
         })
         .unwrap();
         cancel.cancel();
@@ -1071,7 +1071,7 @@ async fn live_import(cx: &mut TestAppContext) {
             "ordinary podcast leaked into sync library"
         );
         window.render_frame(cx);
-        window.click("playlist-url", cx);
+        window.click("youtube-url", cx);
         window.input(&source, cx);
         window.click("start-import", cx);
         assert!(
@@ -1174,7 +1174,7 @@ async fn live_import_payment_required(cx: &mut TestAppContext) {
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
         assert!(window.try_find("upgrade-plan").is_none());
-        window.click("playlist-url", cx);
+        window.click("youtube-url", cx);
         window.input(&source, cx);
         window.click("import-video", cx);
         window.click("start-import", cx);
@@ -1220,7 +1220,7 @@ async fn live_import_payment_required(cx: &mut TestAppContext) {
             .clone()
             .update(cx, |state, cx| state.set_value("invalid", window, cx));
         window.scroll(
-            "playlist-url",
+            "youtube-url",
             ScrollDelta::Pixels(point(px(0.), px(-300.))),
             cx,
         );

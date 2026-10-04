@@ -8,7 +8,10 @@ use crate::{
 use anyhow::{Context, Result, ensure};
 use serde_json::json;
 use sha2::{Digest, Sha256};
-use std::{path::Path, time::Instant};
+use std::{
+    path::Path,
+    time::{Duration, Instant},
+};
 use url::Url;
 
 enum ImportListing {
@@ -46,27 +49,109 @@ pub fn is_source(source: &str) -> bool {
     })
 }
 
-/// Validate the playlist boundary before starting network or creating a podcast.
-pub fn playlist_source(source: &str) -> Result<String> {
+/// Validate collection URLs before starting network or creating a podcast.
+pub fn collection_source(source: &str) -> Result<String> {
     let url = Url::parse(source.trim())?;
-    let ids: Vec<_> = url.query_pairs().filter(|(key, _)| key == "list").collect();
     ensure!(
         source.len() <= 2048
             && url.scheme() == "https"
             && matches!(url.host_str(), Some("youtube.com" | "www.youtube.com"))
-            && url.path() == "/playlist"
             && url.username().is_empty()
             && url.password().is_none()
-            && url.port().is_none()
+            && url.port().is_none(),
+        "Enter an HTTPS YouTube playlist or channel URL"
+    );
+    if let Some(path) = channel_path(&url)? {
+        ensure!(
+            !url.query_pairs()
+                .any(|(key, _)| key == "list" || key == "v"),
+            "Channel URL cannot contain a playlist or video ID"
+        );
+        return Ok(format!("https://www.youtube.com{path}"));
+    }
+    let ids: Vec<_> = url.query_pairs().filter(|(key, _)| key == "list").collect();
+    ensure!(
+        url.path() == "/playlist"
             && ids.len() == 1
             && (2..=200).contains(&ids[0].1.len())
             && valid_youtube_id(&ids[0].1),
-        "Enter a public YouTube playlist URL, such as https://www.youtube.com/playlist?list=PL…"
+        "Enter a public YouTube playlist or channel URL"
     );
     Ok(format!(
         "https://www.youtube.com/playlist?list={}",
         ids[0].1
     ))
+}
+
+fn channel_path(url: &Url) -> Result<Option<String>> {
+    let path = url.path().trim_end_matches('/');
+    let path = path.strip_suffix("/videos").unwrap_or(path);
+    if let Some(id) = path.strip_prefix("/channel/") {
+        ensure!(valid_channel_id(id), "invalid YouTube channel ID");
+        return Ok(Some(format!("/channel/{id}")));
+    }
+    if let Some(handle) = path.strip_prefix("/@") {
+        let decoded = percent_encoding::percent_decode_str(handle).decode_utf8()?;
+        ensure!(
+            !decoded.is_empty()
+                && decoded.chars().count() <= 100
+                && decoded
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || matches!(c, '.' | '_' | '-')),
+            "invalid YouTube channel handle"
+        );
+        return Ok(Some(format!("/@{handle}")));
+    }
+    Ok(None)
+}
+
+fn valid_channel_id(id: &str) -> bool {
+    id.len() == 24 && id.starts_with("UC") && valid_youtube_id(id)
+}
+
+pub(crate) fn collection_playlist_id(url: &Url) -> Option<String> {
+    if let Some(id) = url.path().strip_prefix("/channel/") {
+        return valid_channel_id(id).then(|| format!("UU{}", &id[2..]));
+    }
+    url.query_pairs()
+        .find(|(key, _)| key == "list")
+        .map(|(_, id)| id.into_owned())
+}
+
+async fn resolve_channel(api: &Api, collection: String) -> Result<String> {
+    if !Url::parse(&collection)?.path().starts_with("/@") {
+        return Ok(collection);
+    }
+    let http = Api::http_client(true)?;
+    let response = api
+        .send(http.get(&collection).timeout(Duration::from_secs(10)))
+        .await
+        .context("read YouTube channel page")?;
+    ensure!(
+        response.status().as_u16() == 200,
+        "YouTube channel page returned HTTP {}",
+        response.status()
+    );
+    let body = api
+        .wait(crate::api::read_bounded(response, 8 << 20))
+        .await
+        .context("read YouTube channel HTML")?;
+    let html = std::str::from_utf8(&body).context("invalid YouTube channel HTML")?;
+    let assignment = regex::Regex::new(r"<script\b[^>]*>\s*(?:var\s+)?ytInitialData\s*=\s*")?;
+    let start = assignment
+        .find(html)
+        .context("YouTube channel page has no metadata")?
+        .end();
+    let data: serde_json::Value = serde_json::Deserializer::from_str(&html[start..])
+        .into_iter()
+        .next()
+        .context("YouTube channel metadata is missing")?
+        .context("invalid YouTube channel metadata")?;
+    let id = data["metadata"]["channelMetadataRenderer"]["externalId"]
+        .as_str()
+        .filter(|id| valid_channel_id(id))
+        .context("YouTube channel metadata has no valid channel ID")?;
+    Ok(format!("https://www.youtube.com/channel/{id}"))
 }
 
 /// Both interfaces use this creation boundary and the same durable first sync.
@@ -84,17 +169,22 @@ pub async fn import(
     let mut import_api = api.clone();
     import_api.cancel = api.cancel.child_token();
     let api = &import_api;
+    let source = source.trim();
     let url = Url::parse(source)?;
     ensure!(
-        is_source(source)
+        source.len() <= 2048
+            && is_source(source)
             && url.scheme() == "https"
             && url.username().is_empty()
             && url.password().is_none()
             && url.port().is_none(),
         "invalid YouTube source URL"
     );
-    let collection = if url.query_pairs().any(|(key, _)| key == "list") {
-        Some(playlist_source(source)?)
+    let collection = if url.query_pairs().any(|(key, _)| key == "list")
+        || url.path() == "/playlist"
+        || channel_path(&url)?.is_some()
+    {
+        Some(collection_source(source)?)
     } else {
         None
     };
@@ -142,14 +232,14 @@ pub async fn import(
     preparation.video_remaining_seconds =
         (kind == p::ShowSourceKind::Video).then_some(capacity.video_remaining_seconds);
     event(ImportEvent::Preparing(preparation.clone()));
+    let collection = match collection {
+        Some(collection) => Some(resolve_channel(api, collection).await?),
+        None => None,
+    };
     let youtube = YouTube::new(api).await?;
     let (title, canonical, listing) = if let Some(collection) = &collection {
-        let id = Url::parse(collection)?
-            .query_pairs()
-            .find(|(key, _)| key == "list")
-            .unwrap()
-            .1
-            .into_owned();
+        let id = collection_playlist_id(&Url::parse(collection)?)
+            .context("YouTube collection has no playlist ID")?;
         let (title, page) = youtube.playlist_head(api, &id).await?;
         let listing = if kind == p::ShowSourceKind::Video {
             ImportListing::Complete(
@@ -181,7 +271,7 @@ pub async fn import(
             id.len() == 11 && valid_youtube_id(&id),
             "invalid YouTube video ID"
         );
-        let media = match youtube.media(api, &id).await? {
+        let media = match youtube.media(api, &id, source).await? {
             Playback::Available(media) => media,
             Playback::Unavailable(reason) => {
                 anyhow::bail!("YouTube playback unavailable: {reason}")
@@ -345,7 +435,7 @@ pub(crate) async fn import_video(
                 .wait(async { Ok(transfer.acquire_stage(Stage::Download).await) })
                 .await?;
             let downloaded: Result<Playback> = async {
-                let playback = youtube.media(api, id).await?;
+                let playback = youtube.media(api, id, collection).await?;
                 let Playback::Available(media) = playback else {
                     return Ok(playback);
                 };
