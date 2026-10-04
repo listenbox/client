@@ -42,6 +42,9 @@
 
 ## Releases
 
+- Standard CI runs on `master` pushes and pull requests. Native builds run only
+  on pull requests and `v*` tag pushes. Never add a branch-push trigger to the
+  native workflow: it would build a release commit again when its tag is pushed.
 - Manually bump `[workspace.package].version` in `Cargo.toml`, run `kache cargo -- update --workspace`,
   commit/merge, then tag that client commit `vX.Y.Z` and push that specific tag.
 - Pushing the matching version tag automatically starts `desktop-release` jobs;

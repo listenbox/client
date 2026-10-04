@@ -1,7 +1,7 @@
 name: Native builds and stable releases
 on:
+  # Branch pushes belong to ci.yaml; native builds run on PRs and release tags.
   push:
-    branches: [master]
     tags: [v*]
   pull_request:
 concurrency:

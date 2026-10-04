@@ -186,8 +186,10 @@ may show a SmartScreen warning. Their in-app update authenticity is protected
 by WinSparkle's embedded public key. SignPath approval is being pursued
 separately and is not a release prerequisite.
 
-Pushes to `master` and pull requests build validation artifacts without
-production signing secrets. Pushing a matching version tag automatically starts
+Pushes to `master` run standard CI. Pull requests also build native validation
+artifacts without production signing secrets. Native builds do not run on branch
+pushes, so a release commit builds once when its version tag is pushed.
+Pushing a matching version tag automatically starts
 the release through the `desktop-release` environment without manual deployment
 approval. It publishes only after all three native builds complete. The
 publisher verifies immutable assets and anonymous downloads before selecting

@@ -38,10 +38,12 @@ each component between 0 and 65535. Allocate a strictly greater version, update
 the lockfile and create the matching immutable `vX.Y.Z` tag. macOS
 compares `X.Y.Z`; Windows compares `X.Y.Z.0`. Display version is `X.Y.Z`;
 the source commit is provenance, never update ordering. Every target comes
-from the tagged commit. Pull requests and master builds publish no stable
+from the tagged commit. Master pushes run standard CI only; native builds run
+on pull requests and version tags, avoiding duplicate native builds when a
+release commit and its tag are pushed. Pull request builds publish no stable
 release and receive no production secrets.
 
-Windows PR/master jobs compile the native updater, verify DLL loading and
+Windows PR jobs compile the native updater, verify DLL loading and
 compile the same per-user installer as stable releases. Their
 `desktop-validation` environment contains only public updater keys. macOS
 validation packages an ad-hoc development bundle; protected tags enable its

@@ -29,7 +29,7 @@ Cargo integration is deferred until the dependency offers a suitable build hook.
 PR acceptance covers macOS ARM64, Windows x64, and Windows ARM64:
 real media preparation and decoding,
 application packaging, architecture/linkage checks, and Windows startup. Tests run
-on cache hits too. Only master pushes publish releases. Existing native preparation
+on cache hits too. Only matching version tags publish releases. Existing native preparation
 and caches remain; no Cargo migration or Windows success is claimed here.
 
 Sources: [upstream builder](https://github.com/shssoichiro/ffmpeg-the-third/blob/47eb652418f56f8010e640946b105cd5614701f7/ffmpeg-sys-the-third/build/compile.rs),
