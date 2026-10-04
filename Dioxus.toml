@@ -1,3 +1,19 @@
 [application]
 name = "Listenbox Dev"
 macos_info_plist = "crates/desktop/dist/dev-bundle/Info.plist"
+
+[web.watcher]
+# The pinned CLI patch watches Rust and Cargo manifests automatically. These
+# additional inputs are relative to the client workspace, not the desktop crate.
+watch_path = [
+    "Cargo.lock",
+    "Dioxus.toml",
+    "rust-toolchain.toml",
+    ".cargo/config.toml",
+    "crates/desktop/assets/icon.png",
+    "crates/desktop/assets/tray.svg",
+    "crates/desktop/src/updater/macos.m",
+    "crates/sync-engine/migrations/V1__initial.sql",
+    "crates/sync-engine/migrations/V2__source_outcomes.sql",
+    "vendor/bundle/cf-worker.js",
+]

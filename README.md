@@ -104,11 +104,11 @@ archives, and packaged binaries still take space in each checkout. Ten identical
 builds can share eligible compiler artifacts; ten different revisions still need their
 unique outputs. Windows keeps kache's default exclusion of executable caching.
 
-The pinned Dioxus CLI is installed once per host target under
-`${XDG_CACHE_HOME:-~/.cache}/listenbox/build-tools/dioxus-cli/0.7.10/`.
+The pinned Dioxus CLI is installed once per watcher patch and host target under
+`${XDG_CACHE_HOME:-~/.cache}/listenbox/build-tools/dioxus-cli/0.7.10/<patch-sha256>/<host>/`.
 Each worktree links `crates/desktop/dist/dev-tools/bin/dx` to that installation.
-The install explicitly enables kache because registry installs ignore project
-Cargo configuration, and removes its isolated temporary build directory on
+The installer downloads the pinned crate, applies `tools/dioxus-watch.patch`,
+explicitly enables kache, and removes its isolated temporary build directory on
 success or failure. Moon checks this shared installation each time instead of
 archiving another copy of the tool in every worktree.
 
@@ -229,6 +229,13 @@ moonx desktop:dev
 ```
 
 Moon installs the pinned Dioxus CLI (`dx` 0.7.10) into `crates/desktop/dist/dev-tools` and runs `dx serve --hot-patch` with the desktop's `hot-reload` feature. Subsecond patches rendering and UI event code in the running app. Each patch refreshes GPUI's window and recreates element callbacks while retaining the workspace, input entities, and active sync jobs. Failed builds leave the development session available for the next edit.
+
+The pinned CLI includes `tools/dioxus-watch.patch`: only Rust files, Cargo
+manifests, and the asset/build inputs listed in `Dioxus.toml` reach hot reload.
+Markdown and unrelated files are ignored, including edits mixed with a Rust save.
+Additional watch paths are relative to the client workspace. The shared CLI
+installation is keyed by its version, watcher patch, and host target. After changing
+the watcher configuration or patch, restart `moon run desktop:dev` manually.
 
 Before starting `dx`, Moon generates the development bundle's `Info.plist` with
 the Listenbox Dev application name and current Cargo version. `Dioxus.toml` selects

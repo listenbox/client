@@ -1,0 +1,73 @@
+--- a/src/serve/runner.rs
++++ b/src/serve/runner.rs
+@@ -319,6 +319,12 @@
+                     }
+ 
+                     for path in event.paths {
++                        // Filter before batching: unrelated files must never reach hot reload,
++                        // even when they are saved together with a Rust source file.
++                        if !self.is_relevant_watch_path(&path) {
++                            continue;
++                        }
++
+                         // Workaround for notify and vscode-like editor:
+                         // - when edit & save a file in vscode, there will be two notifications,
+                         // - the first one is a file with empty content.
+@@ -1014,7 +1020,44 @@
+         }
+     }
+ 
++    fn is_relevant_watch_path(&self, path: &Path) -> bool {
++        path.extension().and_then(|ext| ext.to_str()) == Some("rs")
++            || path.file_name().and_then(|name| name.to_str()) == Some("Cargo.toml")
++            || self.additional_watch_paths().any(|input| path.starts_with(input))
++    }
++
++    fn additional_watch_paths(&self) -> impl Iterator<Item = PathBuf> + '_ {
++        self.client
++            .build
++            .config
++            .web
++            .watcher
++            .watch_path
++            .iter()
++            .map(|path| self.workspace.workspace_root().join(path))
++    }
++
+     fn watch_filesystem(&mut self) {
++        // Explicit assets and build inputs may live outside a crate or in an
++        // otherwise ignored output directory (for example, an embedded JS bundle).
++        let additional_paths: Vec<_> = self.additional_watch_paths().collect();
++        for path in additional_paths {
++            // Watch the parent of a file so atomic replacement does not detach it.
++            let (directory, mode) = if path.is_dir() {
++                (path, RecursiveMode::Recursive)
++            } else {
++                let Some(parent) = path.parent() else {
++                    continue;
++                };
++                (parent.to_path_buf(), RecursiveMode::NonRecursive)
++            };
++            if directory.exists() {
++                if let Err(err) = self.watcher.watch(&directory, mode) {
++                    handle_notify_error(err);
++                }
++            }
++        }
++
+         // Watch the folders of the crates that we're interested in
+         for path in self.watch_paths(
+             self.client.build.crate_dir(),
+@@ -1087,6 +1130,12 @@
+                     .matched(entry.path(), entry.path().is_dir())
+                     .is_ignore()
+                 {
++                    continue;
++                }
++
++                // Keep directories for new Rust modules and atomic editor saves,
++                // but do not register unrelated files as individual watches.
++                if !entry.path().is_dir() && !self.is_relevant_watch_path(&entry.path()) {
+                     continue;
+                 }
+ 
