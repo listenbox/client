@@ -6,6 +6,9 @@ pub const INITIAL_DOWNLOADS: usize = 2;
 pub const INITIAL_UPLOADS: usize = 2;
 pub const MAX_DOWNLOADS: usize = 16;
 pub const MAX_UPLOADS: usize = 8;
+// Preserve the existing grace periods with one-second throughput samples.
+const STALLED_SAMPLES: usize = 10;
+const PROBE_SAMPLES: usize = 15;
 
 #[derive(Clone, Copy)]
 pub(super) struct Observation {
@@ -86,7 +89,7 @@ impl NetworkLimits {
                 && observations[peer].active == probe.baseline[peer].active;
             let no_demand = !own.saturated || own.active == 0;
             let failed = observations.iter().any(|sample| sample.failed);
-            if comparable || no_demand || failed || probe.windows >= 3 {
+            if comparable || no_demand || failed || probe.windows >= PROBE_SAMPLES {
                 // Multiplying relative rates is equivalent to adding log-rate
                 // utilities (proportional fairness). Raw byte totals would let a
                 // fast downlink hide a severe regression on a slow uplink.
@@ -142,7 +145,7 @@ impl NetworkLimits {
             let slowdown = direction.baseline.is_some_and(|(rate, active)| {
                 active == sample.active && sample.rate > 0. && sample.rate < rate * 0.65
             });
-            if direction.stalled >= 2 || slowdown {
+            if direction.stalled >= STALLED_SAMPLES || slowdown {
                 direction.back_off();
                 backed_off = true;
                 continue;

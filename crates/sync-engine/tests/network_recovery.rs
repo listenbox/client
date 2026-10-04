@@ -13,8 +13,12 @@ use std::{
         Arc,
         atomic::{AtomicUsize, Ordering},
     },
+    time::Duration,
 };
 use tokio_util::sync::CancellationToken;
+
+// Cross Tokio's millisecond-rounded deadline so each advance wakes the sampler.
+const SAMPLE_WINDOW: Duration = Duration::from_millis(1001);
 
 async fn hold_manual_clock() -> (std::sync::mpsc::Sender<()>, tokio::task::JoinHandle<()>) {
     let (hold_clock, receive) = std::sync::mpsc::channel::<()>();
@@ -92,7 +96,7 @@ async fn receive_window(
         }
         changes.changed().await.unwrap();
     }
-    tokio::time::advance(std::time::Duration::from_secs(5)).await;
+    tokio::time::advance(SAMPLE_WINDOW).await;
     tokio::task::yield_now().await;
 }
 
@@ -150,12 +154,12 @@ async fn live_download_adaptation() {
             changes.changed().await.unwrap();
         }
         downloading_gate(&engine.downloads, &mut changes, 2).await;
-        tokio::time::advance(std::time::Duration::from_secs(5)).await;
+        tokio::time::advance(SAMPLE_WINDOW).await;
         tokio::task::yield_now().await;
         receive_window(&api, mock, &engine.downloads, &mut changes, 16 << 10).await;
         downloading_gate(&engine.downloads, &mut changes, 3).await;
         // Exclude the window in which the third receiver joined.
-        tokio::time::advance(std::time::Duration::from_secs(5)).await;
+        tokio::time::advance(SAMPLE_WINDOW).await;
         tokio::task::yield_now().await;
         receive_window(&api, mock, &engine.downloads, &mut changes, 16 << 10).await;
         assert_eq!(
@@ -165,7 +169,7 @@ async fn live_download_adaptation() {
         );
         receive_window(&api, mock, &engine.downloads, &mut changes, 16 << 10).await;
         downloading_gate(&engine.downloads, &mut changes, 4).await;
-        tokio::time::advance(std::time::Duration::from_secs(5)).await;
+        tokio::time::advance(SAMPLE_WINDOW).await;
         tokio::task::yield_now().await;
         // Four receivers get the same aggregate bytes as the previous three.
         receive_window(&api, mock, &engine.downloads, &mut changes, 12 << 10).await;
@@ -174,8 +178,8 @@ async fn live_download_adaptation() {
             3,
             "A throughput plateau kept an extra connection"
         );
-        for _ in 0..2 {
-            tokio::time::advance(std::time::Duration::from_secs(5)).await;
+        for _ in 0..10 {
+            tokio::time::advance(SAMPLE_WINDOW).await;
             tokio::task::yield_now().await;
         }
         while engine.downloads.snapshot().download_slots > 1 {
@@ -276,8 +280,8 @@ async fn live_pipeline_stall() {
             .error_for_status()
             .unwrap();
         let initial = engine.downloads.snapshot().upload_slots;
-        for _ in 0..4 {
-            tokio::time::advance(std::time::Duration::from_secs(5)).await;
+        for _ in 0..12 {
+            tokio::time::advance(SAMPLE_WINDOW).await;
             tokio::task::yield_now().await;
         }
         while engine.downloads.snapshot().upload_slots >= initial {

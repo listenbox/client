@@ -15,7 +15,8 @@ pub const MAX_IN_FLIGHT: usize = MAX_DOWNLOADS + MAX_UPLOADS + MAX_PREPARATIONS;
 
 pub const RANGES_PER_TRANSFER: usize = 4;
 pub const RANGE_BYTES: usize = 1024 * 1024;
-const SAMPLE_INTERVAL: Duration = Duration::from_secs(5);
+const SAMPLE_INTERVAL: Duration = Duration::from_secs(1);
+const IDLE_RESET_AFTER: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Rate {
@@ -379,7 +380,7 @@ impl Transfer {
                     if state
                         .idle_since
                         .take()
-                        .is_some_and(|since| since.elapsed() >= SAMPLE_INTERVAL)
+                        .is_some_and(|since| since.elapsed() >= IDLE_RESET_AFTER)
                     {
                         state.adaptive = NetworkLimits::default();
                         state.snapshot.download_slots = INITIAL_DOWNLOADS;
