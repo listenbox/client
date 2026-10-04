@@ -115,7 +115,7 @@ fn application_menus() -> Vec<OwnedMenu> {
         MenuItem::separator(),
         MenuItem::action("Log out", Logout),
         MenuItem::separator(),
-        MenuItem::action(format!("Quit {APP_NAME}"), Quit),
+        MenuItem::action("Quit", Quit),
     ];
     vec![
         Menu::new(APP_NAME).items(items),
