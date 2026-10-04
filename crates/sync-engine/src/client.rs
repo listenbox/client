@@ -154,7 +154,7 @@ impl Client {
         source: &str,
         kind: p::ShowSourceKind,
         cancel: CancellationToken,
-        created: impl FnMut(&p::Show) + Send + 'static,
+        event: impl FnMut(crate::youtube::ImportEvent) + Send + 'static,
     ) -> Result<(p::Show, Report)> {
         let source = crate::youtube::playlist_source(source)?;
         let api = self.api(cancel)?;
@@ -162,7 +162,7 @@ impl Client {
         let runtime = tokio::runtime::Handle::current();
         tokio::task::spawn_blocking(move || {
             runtime.block_on(crate::youtube::import(
-                &api, &engine, &source, None, kind, created,
+                &api, &engine, &source, None, kind, event,
             ))
         })
         .await?

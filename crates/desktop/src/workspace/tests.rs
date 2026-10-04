@@ -812,6 +812,231 @@ fn import_gate(
 
 #[gpui_kit::test]
 #[ignore = "requires the parent workspace's ephemeral Listenbox services"]
+async fn live_video_creation_progress(cx: &mut TestAppContext) {
+    let runtime = Arc::new(tokio::runtime::Runtime::new().unwrap());
+    let config = Config::load(None).unwrap();
+    let source = std::fs::read_to_string(config.directory.join("test-playlist-url")).unwrap();
+    let fail_scan = config.directory.join("test-video-scan-failure").exists();
+    let api =
+        listenbox_sync_engine::api::Api::new(config.clone(), CancellationToken::new()).unwrap();
+    let client = Client::desktop(config).unwrap();
+    let cancel = CancellationToken::new();
+    cx.update(gpui_kit::init);
+    cx.executor().allow_parking();
+    let mut view = None;
+    let handle = cx.open_window(size(px(1080.), px(840.)), |window, cx| {
+        tokens::apply(window, cx);
+        let entity = cx.new(|cx| {
+            Workspace::new(
+                client,
+                runtime.clone(),
+                cancel.clone(),
+                TaskTracker::new(),
+                window,
+                cx,
+            )
+        });
+        view = Some(entity.clone());
+        Root::new(entity, window, cx)
+    });
+    let view = view.unwrap();
+    wait_for(cx, &view, |view| !view.loading).await;
+    cx.update_window(handle.into(), |_, window, cx| {
+        assert!(view.read(cx).loaded, "{:?}", view.read(cx).error);
+        window.render_frame(cx);
+        window.click("playlist-url", cx);
+        window.input(&source, cx);
+        window.click("import-video", cx);
+        window.click("start-import", cx);
+        window.render_frame(cx);
+        assert!(window.find("creation-status").visible());
+        assert!(window.try_find("start-import").is_none());
+        assert!(window.try_find("playlist-url").is_none());
+    })
+    .unwrap();
+    wait_for(cx, &view, |view| {
+        view.creating.as_ref().is_some_and(|preparation| {
+            preparation.stage == ImportStage::ScanningPlaylist
+                && preparation
+                    .scan
+                    .as_ref()
+                    .is_some_and(|scan| scan.videos == 2)
+        })
+    })
+    .await;
+    cx.update(|cx| {
+        let preparation = view.read(cx).creating.as_ref().unwrap();
+        let scan = preparation.scan.as_ref().unwrap();
+        assert_eq!(scan.estimated_seconds, 900);
+        assert_eq!(scan.unknown_durations, 1);
+        assert_eq!(preparation.video_remaining_seconds, Some(72 * 3600));
+        assert!(view.read(cx).catalog.shows.is_empty());
+    });
+    // Check the same real stalled scan at both window sizes and appearances.
+    for dimensions in [size(px(840.), px(600.)), size(px(1080.), px(840.))] {
+        cx.simulate_window_resize(handle.into(), dimensions);
+        for mode in [
+            gpui_kit::component::ThemeMode::Light,
+            gpui_kit::component::ThemeMode::Dark,
+        ] {
+            cx.update_window(handle.into(), |_, window, cx| {
+                gpui_kit::component::Theme::change(mode, Some(window), cx);
+                tokens::project(cx);
+                window.render_frame(cx);
+                for id in [
+                    "creation-status",
+                    "creation-videos",
+                    "creation-duration",
+                    "creation-storage",
+                ] {
+                    let element = window.find(id);
+                    assert!(
+                        element.visible(),
+                        "{id} was not visible at {dimensions:?} in {mode:?}"
+                    );
+                    assert!(
+                        element.bounds().right()
+                            <= window.find("workspace-content").bounds().right(),
+                        "{id} overflowed the working pane"
+                    );
+                }
+                assert_eq!(
+                    window.find("creation-videos").label(),
+                    Some("2 videos found so far")
+                );
+                assert_eq!(
+                    window.find("creation-duration").label(),
+                    Some("Known video duration: 15 min")
+                );
+                assert_eq!(
+                    window.find("creation-storage").label(),
+                    Some("Video storage available: 72 hr")
+                );
+                let was_open = view.read(cx).import_open;
+                window.click("new-import", cx);
+                window.input("changed while preparing", cx);
+                assert_eq!(
+                    view.read(cx).import_open,
+                    was_open,
+                    "preparation allowed opening another import form"
+                );
+                assert_eq!(
+                    view.read(cx).source.read(cx).value().as_str(),
+                    source.as_str()
+                );
+            })
+            .unwrap();
+        }
+    }
+    import_gate(&runtime, &api, "release-scan");
+    if fail_scan {
+        wait_for(cx, &view, |view| view.creating.is_none() && !view.loading).await;
+        cx.update_window(handle.into(), |_, window, cx| {
+            let state = view.read(cx);
+            assert!(
+                state.catalog.shows.is_empty(),
+                "incomplete scan created a podcast"
+            );
+            assert!(
+                state.jobs.is_empty(),
+                "incomplete scan started importing episodes"
+            );
+            assert!(
+                state
+                    .error
+                    .as_ref()
+                    .is_some_and(|error| error.message.contains("503")),
+                "{:?}",
+                state.error
+            );
+            assert_eq!(state.source.read(cx).value().as_str(), source.as_str());
+            window.render_frame(cx);
+            assert!(window.try_find("creation-status").is_none());
+            assert_ne!(window.find("start-import").disabled(), Some(true));
+            assert!(window.find("playlist-url").visible());
+        })
+        .unwrap();
+        cancel.cancel();
+        return;
+    }
+    import_gate(&runtime, &api, "creation-requested");
+    wait_for(cx, &view, |view| {
+        view.creating
+            .as_ref()
+            .is_some_and(|preparation| preparation.stage == ImportStage::CreatingPodcast)
+    })
+    .await;
+    cx.update_window(handle.into(), |_, window, cx| {
+        assert!(view.read(cx).creating.is_some());
+        assert!(view.read(cx).catalog.shows.is_empty());
+        let scan = view
+            .read(cx)
+            .creating
+            .as_ref()
+            .unwrap()
+            .scan
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            scan.videos, 3,
+            "duplicate videos inflated preparation progress"
+        );
+        assert_eq!(
+            scan.estimated_seconds, 2700,
+            "known hidden durations were not included"
+        );
+        assert_eq!(scan.unknown_durations, 1);
+        window.render_frame(cx);
+        assert!(
+            window.try_find("creation-status").is_some(),
+            "playlist preparation gave no visible explanation of the wait"
+        );
+        assert!(
+            window.try_find("creation-videos").is_some(),
+            "the full scan gave no video count"
+        );
+        assert!(
+            window.try_find("creation-storage").is_some(),
+            "the video plan gave no available storage"
+        );
+        assert!(window.try_find("start-import").is_none());
+        assert_eq!(
+            window.find("creation-videos").label(),
+            Some("3 videos found")
+        );
+        assert_eq!(
+            window.find("creation-duration").label(),
+            Some("Known video duration: 45 min")
+        );
+    })
+    .unwrap();
+    import_gate(&runtime, &api, "release-creation");
+    wait_for(cx, &view, |view| {
+        view.creating.is_none() && !view.loading && view.jobs.is_empty()
+    })
+    .await;
+    cx.update_window(handle.into(), |_, window, cx| {
+        let state = view.read(cx);
+        assert!(state.error.is_none(), "{:?}", state.error);
+        assert_eq!(state.catalog.shows.len(), 1);
+        assert!(
+            state
+                .reports
+                .values()
+                .any(|report| report.starts_with("1 added")),
+            "{:?}",
+            state.reports
+        );
+        window.render_frame(cx);
+        assert!(window.try_find("creation-status").is_none());
+        assert!(window.try_find("sync-now").is_some());
+    })
+    .unwrap();
+    cancel.cancel();
+}
+
+#[gpui_kit::test]
+#[ignore = "requires the parent workspace's ephemeral Listenbox services"]
 async fn live_import(cx: &mut TestAppContext) {
     let runtime = Arc::new(tokio::runtime::Runtime::new().unwrap());
     let config = Config::load(None).unwrap();
@@ -850,14 +1075,14 @@ async fn live_import(cx: &mut TestAppContext) {
         window.input(&source, cx);
         window.click("start-import", cx);
         assert!(
-            view.read(cx).creating,
+            view.read(cx).creating.is_some(),
             "import did not start: {:?}",
             view.read(cx).error
         );
     })
     .unwrap();
     wait_for(cx, &view, |view| {
-        !view.creating && !view.loading && view.jobs.is_empty()
+        view.creating.is_none() && !view.loading && view.jobs.is_empty()
     })
     .await;
     cx.update_window(handle.into(), |_, window, cx| {
@@ -953,11 +1178,11 @@ async fn live_import_payment_required(cx: &mut TestAppContext) {
         window.input(&source, cx);
         window.click("import-video", cx);
         window.click("start-import", cx);
-        assert!(view.read(cx).creating, "import did not start");
+        assert!(view.read(cx).creating.is_some(), "import did not start");
     })
     .unwrap();
     wait_for(cx, &view, |view| {
-        !view.creating && !view.loading && view.jobs.is_empty()
+        view.creating.is_none() && !view.loading && view.jobs.is_empty()
     })
     .await;
     cx.update_window(handle.into(), |_, window, cx| {

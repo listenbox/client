@@ -28,6 +28,15 @@ pub struct PlaylistSnapshot {
     pub can_remove: bool,
 }
 
+/// Observed unique entries from the pages read so far, never a guessed total.
+#[derive(Clone, Debug)]
+pub struct PlaylistScan {
+    pub title: String,
+    pub videos: usize,
+    pub estimated_seconds: i64,
+    pub unknown_durations: usize,
+}
+
 #[derive(Clone)]
 pub struct Video {
     pub id: String,
@@ -161,7 +170,7 @@ impl YouTube {
 
     pub async fn snapshot(&self, api: &Api, id: &str) -> Result<PlaylistSnapshot> {
         let (_, page) = self.playlist_head(api, id).await?;
-        self.complete_playlist(api, page).await
+        self.complete_playlist(api, page, |_| {}).await
     }
 
     /// Read only the first page before creating an audio podcast. Video
@@ -203,6 +212,7 @@ impl YouTube {
         &self,
         api: &Api,
         mut page: Playlist,
+        mut progress: impl FnMut(PlaylistScan),
     ) -> Result<PlaylistSnapshot> {
         api.wait(async {
             let mut title = None;
@@ -211,6 +221,7 @@ impl YouTube {
             let mut seen = HashSet::new();
             let mut pages = 0;
             let mut can_remove = true;
+            let mut unknown_durations = 0;
             loop {
                 let data = page.data().await?;
                 ensure!(
@@ -298,6 +309,7 @@ impl YouTube {
                         _ => bail!("Unsupported playlist item; listing is incomplete"),
                     };
                     if seen.insert(video.id.clone()) {
+                        unknown_durations += usize::from(seconds == 0);
                         estimated_seconds = estimated_seconds
                             .checked_add(seconds)
                             .context("Playlist duration exceeds the supported range")?;
@@ -306,6 +318,12 @@ impl YouTube {
                 }
                 pages += 1;
                 ensure!(pages <= 10000, "YouTube playlist exceeds the scan limit");
+                progress(PlaylistScan {
+                    title: title.clone().context("YouTube playlist missing title")?,
+                    videos: present.len(),
+                    estimated_seconds,
+                    unknown_durations,
+                });
                 if !data.has_continuation {
                     break;
                 }

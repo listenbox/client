@@ -16,6 +16,7 @@ use listenbox_sync_engine::{
     downloads::{Phase, Snapshot},
     publicapi::{Show, ShowSourceKind},
     sync::Report,
+    youtube::{ImportEvent, ImportPreparation, ImportStage},
 };
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
@@ -54,7 +55,7 @@ pub struct Workspace {
     loaded: bool,
     loading: bool,
     authenticating: bool,
-    creating: bool,
+    creating: Option<ImportPreparation>,
     auto_sync: bool,
     import_open: bool,
     import_kind: ShowSourceKind,
@@ -150,6 +151,7 @@ enum Message {
     Open(String),
     Catalog(anyhow::Result<Catalog>),
     Login(anyhow::Result<()>),
+    ImportPreparation(ImportPreparation),
     ImportCreated(Show, CancellationToken),
     Imported {
         slug: Option<String>,
@@ -239,7 +241,7 @@ impl Workspace {
             loaded: false,
             loading: false,
             authenticating: false,
-            creating: false,
+            creating: None,
             auto_sync: false,
             import_open: false,
             import_kind: ShowSourceKind::Audio,
@@ -437,7 +439,7 @@ impl Workspace {
                 self.stopping = None;
                 self.authenticating = false;
                 self.loading = false;
-                self.creating = false;
+                self.creating = None;
                 self.auto_sync = false;
                 self.import_open = false;
                 self.artwork_cache
@@ -522,10 +524,15 @@ impl Workspace {
                     }
                 }
             }
+            Message::ImportPreparation(preparation) => {
+                if self.creating.is_some() {
+                    self.creating = Some(preparation);
+                }
+            }
             Message::ImportCreated(show, cancel) => {
                 // Creation owns the form. Episode work belongs to this podcast
                 // from here onward, so another playlist can be created now.
-                self.creating = false;
+                self.creating = None;
                 self.source
                     .update(cx, |state, cx| state.set_value("", window, cx));
                 self.jobs.insert(show.slug.clone(), cancel);
@@ -539,7 +546,7 @@ impl Workspace {
             }
             Message::Imported { slug, kind, result } => {
                 if slug.is_none() {
-                    self.creating = false;
+                    self.creating = None;
                 }
                 let stopped = slug.as_ref().is_some_and(|slug| {
                     self.jobs
@@ -667,7 +674,7 @@ impl Workspace {
     }
 
     fn import_playlist(&mut self, cx: &mut Context<Self>) {
-        if !self.loaded || self.creating || self.stopping.is_some() {
+        if !self.loaded || self.creating.is_some() || self.stopping.is_some() {
             return;
         }
         let source = self.source.read(cx).value().to_string();
@@ -679,7 +686,7 @@ impl Workspace {
                 return;
             }
         };
-        self.creating = true;
+        self.creating = Some(ImportPreparation::default());
         self.error = None;
         let cancel = self.cancel.child_token();
         let (client, sender, kind) = (
@@ -694,12 +701,17 @@ impl Workspace {
                 let (created, mut imported) = tokio::sync::oneshot::channel();
                 let mut created = Some(created);
                 let result = client
-                    .import_playlist(&source, kind.clone(), cancel, move |show| {
-                        if let Some(created) = created.take() {
-                            let _ = created.send(show.slug.clone());
+                    .import_playlist(&source, kind.clone(), cancel, move |event| match event {
+                        ImportEvent::Preparing(preparation) => {
+                            let _ = created_sender.send(Message::ImportPreparation(preparation));
                         }
-                        let _ = created_sender
-                            .send(Message::ImportCreated(show.clone(), created_cancel.clone()));
+                        ImportEvent::Created(show) => {
+                            if let Some(created) = created.take() {
+                                let _ = created.send(show.slug.clone());
+                            }
+                            let _ = created_sender
+                                .send(Message::ImportCreated(show, created_cancel.clone()));
+                        }
                     })
                     .await;
                 // The creation callback finishes before this operation returns,
@@ -941,7 +953,7 @@ impl Workspace {
                             )
                             .child(Icon::new(assets::IconName::Plus).small()),
                     )
-                    .disabled(!self.loaded || self.creating || self.stopping.is_some())
+                    .disabled(!self.loaded || self.creating.is_some() || self.stopping.is_some())
                     .on_click(cx.listener(|view, _, window, cx| {
                         view.settings_open = false;
                         view.cookie_input = settings::cookie_input(window, cx);
@@ -1062,7 +1074,7 @@ impl Workspace {
 
     fn import_form(&self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let t = Tokens::current(cx);
-        let busy = self.creating || self.stopping.is_some();
+        let busy = self.creating.is_some() || self.stopping.is_some();
         let team = self
             .catalog
             .import_team
@@ -1070,6 +1082,62 @@ impl Workspace {
             .and_then(|id| self.catalog.teams.iter().find(|team| &team.id == id))
             .map(|team| team.name.as_str())
             .unwrap_or("your authorized team");
+        if let Some(preparation) = &self.creating {
+            return div()
+                .w_full()
+                .min_w_0()
+                .max_w(px(620.))
+                .py(px(tokens::SPACE))
+                .flex()
+                .flex_col()
+                .gap(px(tokens::SPACE))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_3()
+                        .child(
+                            div()
+                                .text_size(px(tokens::PAGE_TITLE))
+                                .font_weight(FontWeight::BOLD)
+                                .child(if self.import_kind == ShowSourceKind::Video {
+                                    "Preparing your video podcast"
+                                } else {
+                                    "Preparing your audio podcast"
+                                }),
+                        )
+                        .child(
+                            div()
+                                .text_color(t.muted)
+                                .child(format!("Creates a new podcast in {team}.")),
+                        ),
+                )
+                .child(self.creation_status(preparation, cx))
+                .child(
+                    div()
+                        .w_full()
+                        .min_w_0()
+                        .border_t_1()
+                        .border_color(t.divider)
+                        .pt_4()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(
+                            div()
+                                .text_size(px(12.))
+                                .text_color(t.muted)
+                                .child("Playlist URL"),
+                        )
+                        .child(
+                            div()
+                                .w_full()
+                                .truncate()
+                                .child(self.source.read(cx).value().to_string()),
+                        ),
+                )
+                .into_any_element();
+        }
         let form = div().flex().flex_col().items_start().gap(px(tokens::SPACE)).max_w(px(620.)).py(px(tokens::SPACE))
             .child(div().flex().flex_col().gap_3()
                 .child(div().text_size(px(tokens::PAGE_TITLE)).font_weight(FontWeight::BOLD).child("Import a YouTube playlist"))
@@ -1092,10 +1160,9 @@ impl Workspace {
                 .child(div().text_size(px(12.)).text_color(t.muted)
                     .child(if self.import_kind == ShowSourceKind::Video { "A video plan with enough storage for the playlist is required. Playlist order is preserved. On later syncs, videos removed from the playlist are removed from the podcast." } else { "A paid podcast plan is required. Playlist order is preserved. On later syncs, videos removed from the playlist are removed from the podcast." })))
             .child(div().flex().items_center().gap_3()
-                .child(Button::new("start-import").primary().label(if self.creating { "Checking playlist and plan…" } else { "Create podcast & import" })
+                .child(Button::new("start-import").primary().label("Create podcast & import")
                     .disabled(busy).on_click(cx.listener(|view, _, _, cx| view.import_playlist(cx))))
-                .when(self.creating, |row| row.child(Spinner::new().small()))
-                .when(!self.creating && self.show().is_some(), |row| row.child(Button::new("cancel-import").ghost().label("Cancel")
+                .when(self.show().is_some(), |row| row.child(Button::new("cancel-import").ghost().label("Cancel")
                     .on_click(cx.listener(|view, _, _, cx| { view.import_open = false; view.error = None; cx.notify(); })))));
         form.into_any_element()
     }

@@ -132,10 +132,12 @@ impl Engine {
         slug: &str,
         source: &str,
         snapshot: PlaylistSnapshot,
+        youtube: &YouTube,
     ) -> Result<Report> {
-        let mut api = api.clone();
-        api.cancel = api.cancel.child_token();
-        match self.sync(&api, slug, Some((source, snapshot))).await {
+        match self
+            .sync(api, slug, Some((source, snapshot, youtube)))
+            .await
+        {
             Err(error) if error.is::<crate::api::SyncStopped>() => Ok(Report {
                 stopped: true,
                 ..Report::default()
@@ -148,7 +150,7 @@ impl Engine {
         &self,
         api: &Api,
         slug: &str,
-        scanned: Option<(&str, PlaylistSnapshot)>,
+        scanned: Option<(&str, PlaylistSnapshot, &YouTube)>,
     ) -> Result<Report> {
         std::fs::create_dir_all(&api.config.directory)?;
         let lock_key = hex::encode(Sha256::digest(format!("{}\0{slug}", api.config.api_origin)));
@@ -167,8 +169,14 @@ impl Engine {
             .youtube_linkage()
             .context("This podcast has no linked YouTube playlist or video.")?;
         let source = url::Url::parse(collection)?;
-        let youtube = YouTube::new(api).await?;
-        let snapshot = if let Some((scanned_source, snapshot)) = scanned {
+        let initialized;
+        let youtube = if let Some((_, _, youtube)) = &scanned {
+            *youtube
+        } else {
+            initialized = YouTube::new(api).await?;
+            &initialized
+        };
+        let snapshot = if let Some((scanned_source, snapshot, _)) = scanned {
             ensure!(
                 collection == scanned_source,
                 "Show source differs from the admitted playlist"
@@ -248,7 +256,6 @@ impl Engine {
         }
         let audio = before.show.source_kind == p::ShowSourceKind::Audio;
         let mut work = stream::iter(additions.iter().zip(transfers).map(|(video, transfer)| {
-            let youtube = &youtube;
             let journal = &journal;
             async move {
                 let active = match api.wait(async { Ok(transfer.acquire().await) }).await {

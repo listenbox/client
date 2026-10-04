@@ -45,6 +45,135 @@ impl ImportProgress {
 }
 
 impl Workspace {
+    pub(super) fn creation_status(
+        &self,
+        preparation: &ImportPreparation,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let t = Tokens::current(cx);
+        let video = self.import_kind == ShowSourceKind::Video;
+        let (heading, explanation) = match preparation.stage {
+            ImportStage::CheckingPlan => (
+                "Checking your plan…",
+                "Checking your team’s plan before reading the playlist.",
+            ),
+            ImportStage::ReadingPlaylist => (
+                "Opening the playlist…",
+                "Connecting to YouTube to read the playlist title and videos.",
+            ),
+            ImportStage::ScanningPlaylist => (
+                "Reading all playlist videos…",
+                "Reading every playlist page to check that it fits your video storage. Large playlists take longer.",
+            ),
+            ImportStage::CreatingPodcast => (
+                "Creating your podcast…",
+                if video {
+                    "Playlist checked. Creating the podcast before importing episodes."
+                } else {
+                    "Creating the podcast. Episodes will start importing next."
+                },
+            ),
+        };
+        let mut status = div()
+            .id("creation-status")
+            .role(Role::Status)
+            .aria_label(heading)
+            .aria_description(explanation)
+            .w_full()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(
+                div()
+                    .text_size(px(tokens::TITLE))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(heading),
+            )
+            .child(div().text_color(t.muted).child(explanation))
+            .child(
+                Progress::new("creation-progress")
+                    .small()
+                    .color(t.action)
+                    .loading(true)
+                    .accessibility_label(heading),
+            );
+        if let Some(scan) = &preparation.scan {
+            let count = format!(
+                "{} {} found{}",
+                scan.videos,
+                if scan.videos == 1 { "video" } else { "videos" },
+                if preparation.stage == ImportStage::ScanningPlaylist {
+                    " so far"
+                } else {
+                    ""
+                }
+            );
+            status = status
+                .child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(scan.title.clone()),
+                )
+                .child(
+                    div()
+                        .id("creation-videos")
+                        .role(Role::Label)
+                        .aria_label(count.clone())
+                        .child(count)
+                        .test_support(),
+                )
+                .child(
+                    div()
+                        .id("creation-duration")
+                        .role(Role::Label)
+                        .aria_label(format!(
+                            "Known video duration: {}",
+                            storage_duration(scan.estimated_seconds)
+                        ))
+                        .flex()
+                        .justify_between()
+                        .gap_3()
+                        .child(div().text_color(t.muted).child("Known video duration"))
+                        .child(storage_duration(scan.estimated_seconds))
+                        .test_support(),
+                );
+            if scan.unknown_durations > 0 {
+                status = status.child(div().text_size(px(12.)).text_color(t.muted).child(format!(
+                    "{} {} no listed duration. Actual storage is checked as videos are imported.",
+                    scan.unknown_durations,
+                    if scan.unknown_durations == 1 {
+                        "video has"
+                    } else {
+                        "videos have"
+                    },
+                )));
+            }
+        }
+        if let Some(remaining) = preparation.video_remaining_seconds {
+            status = status.child(
+                div()
+                    .id("creation-storage")
+                    .role(Role::Label)
+                    .aria_label(format!(
+                        "Video storage available: {}",
+                        storage_duration(remaining)
+                    ))
+                    .border_t_1()
+                    .border_color(t.divider)
+                    .pt_3()
+                    .flex()
+                    .justify_between()
+                    .gap_3()
+                    .child(div().text_color(t.muted).child("Video storage available"))
+                    .child(storage_duration(remaining))
+                    .test_support(),
+            );
+        }
+        status.test_support().into_any_element()
+    }
+
     pub(super) fn import_progress(&self, slug: &str) -> ImportProgress {
         // The engine publishes every playlist entry, including episodes already
         // imported before this sync, independently of the selected podcast.
@@ -177,5 +306,21 @@ impl Workspace {
             ));
         }
         status.into_any_element()
+    }
+}
+
+fn storage_duration(seconds: i64) -> String {
+    if seconds == 0 {
+        "0 min".into()
+    } else if seconds < 60 {
+        "Less than 1 min".into()
+    } else {
+        let hours = seconds / 3600;
+        let minutes = seconds / 60 % 60;
+        match (hours, minutes) {
+            (0, minutes) => format!("{minutes} min"),
+            (hours, 0) => format!("{hours} hr"),
+            (hours, minutes) => format!("{hours} hr {minutes} min"),
+        }
     }
 }

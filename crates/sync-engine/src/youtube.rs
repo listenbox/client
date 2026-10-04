@@ -2,7 +2,7 @@ use crate::{
     api::{Api, PaymentRequired},
     download::download,
     downloads::Stage,
-    innertube::{Playback, PlaylistSnapshot, Video, YouTube},
+    innertube::{Playback, PlaylistScan, PlaylistSnapshot, Video, YouTube},
     publicapi as p,
 };
 use anyhow::{Context, Result, ensure};
@@ -14,6 +14,27 @@ use url::Url;
 enum ImportListing {
     Pending(youtubei::Playlist),
     Complete(PlaylistSnapshot),
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum ImportStage {
+    #[default]
+    CheckingPlan,
+    ReadingPlaylist,
+    ScanningPlaylist,
+    CreatingPodcast,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ImportPreparation {
+    pub stage: ImportStage,
+    pub scan: Option<PlaylistScan>,
+    pub video_remaining_seconds: Option<i64>,
+}
+
+pub enum ImportEvent {
+    Preparing(ImportPreparation),
+    Created(p::Show),
 }
 
 pub fn is_source(source: &str) -> bool {
@@ -56,8 +77,13 @@ pub async fn import(
     source: &str,
     requested_slug: Option<&str>,
     kind: p::ShowSourceKind,
-    mut created: impl FnMut(&p::Show),
+    mut event: impl FnMut(ImportEvent),
 ) -> Result<(p::Show, crate::sync::Report)> {
+    // One import owns both the YouTube session and first sync's cancellation.
+    // A server stop drains this operation without cancelling sibling imports.
+    let mut import_api = api.clone();
+    import_api.cancel = api.cancel.child_token();
+    let api = &import_api;
     let url = Url::parse(source)?;
     ensure!(
         is_source(source)
@@ -76,23 +102,29 @@ pub async fn import(
         .map(crate::slug)
         .transpose()
         .map_err(anyhow::Error::msg)?;
-    if let Some(slug) = &requested_slug {
-        let shows = match api
-            .client()
-            .list_shows(p::ListShowsParams {
-                youtube_imports_only: None,
-            })
-            .await?
-        {
-            p::ListShowsResponse::Status200(value) => value,
-            response => return Err(api.response_error(response).await),
-        };
-        ensure!(
-            !shows.iter().any(|show| show.slug == *slug),
-            "Podcast {slug:?} already exists. Use sync to resume an imported podcast, or choose a new slug."
-        );
-    }
-    let capacity: p::ImportCapacity = match api.client().get_import_capacity().await? {
+    let mut preparation = ImportPreparation::default();
+    event(ImportEvent::Preparing(preparation.clone()));
+    let client = api.client();
+    let duplicate = async {
+        if let Some(slug) = &requested_slug {
+            let shows = match client
+                .list_shows(p::ListShowsParams {
+                    youtube_imports_only: None,
+                })
+                .await?
+            {
+                p::ListShowsResponse::Status200(value) => value,
+                response => return Err(api.response_error(response).await),
+            };
+            ensure!(
+                !shows.iter().any(|show| show.slug == *slug),
+                "Podcast {slug:?} already exists. Use sync to resume an imported podcast, or choose a new slug."
+            );
+        }
+        Ok(())
+    };
+    let (_, capacity) = tokio::try_join!(duplicate, client.get_import_capacity())?;
+    let capacity = match capacity {
         p::GetImportCapacityResponse::Status200(value) => value,
         response => return Err(api.response_error(response).await),
     };
@@ -106,6 +138,10 @@ pub async fn import(
     if kind == p::ShowSourceKind::Video && !capacity.video_allowed {
         return Err(PaymentRequired("A video podcast plan is required to import this playlist as video. Upgrade your plan, then try again.".into()).into());
     }
+    preparation.stage = ImportStage::ReadingPlaylist;
+    preparation.video_remaining_seconds =
+        (kind == p::ShowSourceKind::Video).then_some(capacity.video_remaining_seconds);
+    event(ImportEvent::Preparing(preparation.clone()));
     let youtube = YouTube::new(api).await?;
     let (title, canonical, listing) = if let Some(collection) = &collection {
         let id = Url::parse(collection)?
@@ -116,7 +152,15 @@ pub async fn import(
             .into_owned();
         let (title, page) = youtube.playlist_head(api, &id).await?;
         let listing = if kind == p::ShowSourceKind::Video {
-            ImportListing::Complete(youtube.complete_playlist(api, page).await?)
+            ImportListing::Complete(
+                youtube
+                    .complete_playlist(api, page, |scan| {
+                        preparation.stage = ImportStage::ScanningPlaylist;
+                        preparation.scan = Some(scan);
+                        event(ImportEvent::Preparing(preparation.clone()));
+                    })
+                    .await?,
+            )
         } else {
             ImportListing::Pending(page)
         };
@@ -168,6 +212,8 @@ pub async fn import(
                 capacity.video_remaining_seconds as f64 / 3600.0,
             )).into());
     }
+    preparation.stage = ImportStage::CreatingPodcast;
+    event(ImportEvent::Preparing(preparation));
     let mut slug = match &requested_slug {
         Some(slug) => slug.clone(),
         None if collection.is_some() => {
@@ -211,14 +257,14 @@ pub async fn import(
         }
     };
     let slug = &show.slug;
-    created(&show);
+    event(ImportEvent::Created(show.clone()));
     let report = async {
         let snapshot = match listing {
-            ImportListing::Pending(page) => youtube.complete_playlist(api, page).await?,
+            ImportListing::Pending(page) => youtube.complete_playlist(api, page, |_| {}).await?,
             ImportListing::Complete(snapshot) => snapshot,
         };
         engine
-            .import_snapshot(api, slug, &canonical, snapshot)
+            .import_snapshot(api, slug, &canonical, snapshot, &youtube)
             .await
     }
     .await
