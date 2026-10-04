@@ -166,9 +166,7 @@ preserves acknowledged parts across interruption and explicit sync.
 `moon run client-engine:test-media` runs the production media preparation code
 against local AAC, Opus, and AVC fixtures. It decodes M4A, MP4, and HLS output and
 checks invalid input, cancellation before preparation, and native tool paths.
-Tests have a hard 30-second timeout and no retries. See
-[the build comparison](docs/ffmpeg-build.md) for why the existing minimal builder
-remains in use.
+Tests have a hard 30-second timeout and no retries.
 
 ### Desktop releases
 
