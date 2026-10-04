@@ -18,7 +18,10 @@ use listenbox_sync_engine::{
     sync::Report,
     youtube::{ImportEvent, ImportPreparation, ImportStage},
 };
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
@@ -72,6 +75,7 @@ pub struct Workspace {
     cookie_message: Option<String>,
     cookie_error: Option<String>,
     jobs: HashMap<String, CancellationToken>,
+    paused: HashSet<String>,
     reports: HashMap<String, SyncReport>,
     error: Option<ErrorNotice>,
     progress: Snapshot,
@@ -262,6 +266,7 @@ impl Workspace {
             cookie_message: None,
             cookie_error: None,
             jobs: HashMap::new(),
+            paused: HashSet::new(),
             reports: HashMap::new(),
             error: None,
             progress: Snapshot::default(),
@@ -453,6 +458,7 @@ impl Workspace {
                 self.artwork_cache
                     .update(cx, |cache, cx| cache.clear(window, cx));
                 self.jobs.clear();
+                self.paused.clear();
                 self.reports.clear();
                 match result {
                     Ok(()) => {
@@ -479,6 +485,8 @@ impl Workspace {
                     Ok(catalog) => {
                         self.reports
                             .retain(|slug, _| catalog.shows.iter().any(|show| &show.slug == slug));
+                        self.paused
+                            .retain(|slug| catalog.shows.iter().any(|show| &show.slug == slug));
                         let urls: Vec<_> = catalog
                             .shows
                             .iter()
@@ -575,7 +583,7 @@ impl Workspace {
                             self.reports.insert(
                                 slug,
                                 SyncReport::Notice(
-                                    "Stopped. Progress is saved for the next sync.".into(),
+                                    "Paused for this session. Resume to continue syncing.".into(),
                                 ),
                             );
                         }
@@ -605,6 +613,7 @@ impl Workspace {
             Message::Report(slug, report) => {
                 if report.stopped {
                     self.catalog.shows.retain(|show| show.slug != slug);
+                    self.paused.remove(&slug);
                     self.reports.remove(&slug);
                     if self.selected.as_ref() == Some(&slug) {
                         self.select(
@@ -632,7 +641,9 @@ impl Workspace {
                 if stopped {
                     self.reports.insert(
                         slug,
-                        SyncReport::Notice("Stopped. Progress is saved for the next sync.".into()),
+                        SyncReport::Notice(
+                            "Paused for this session. Resume to continue syncing.".into(),
+                        ),
                     );
                 } else if let Err(error) = result {
                     if error.is::<listenbox_sync_engine::cookies::SignInRequired>() {
@@ -768,6 +779,7 @@ impl Workspace {
             .iter()
             .filter(|show| {
                 show.has_active_subscription
+                    && !self.paused.contains(&show.slug)
                     && (!only_new || !self.reports.contains_key(&show.slug))
             })
             .map(|show| show.slug.clone())
@@ -779,7 +791,25 @@ impl Workspace {
 
     fn sync(&mut self, cx: &mut Context<Self>) {
         if let Some(show) = self.show() {
-            self.sync_show(show.slug.clone(), cx);
+            let slug = show.slug.clone();
+            if self.jobs.contains_key(&slug) || self.stopping.is_some() {
+                return;
+            }
+            self.paused.remove(&slug);
+            self.sync_show(slug, cx);
+        }
+    }
+
+    fn pause(&mut self, cx: &mut Context<Self>) {
+        if self.stopping.is_some() {
+            return;
+        }
+        if let Some(slug) = &self.selected {
+            self.paused.insert(slug.clone());
+            if let Some(cancel) = self.jobs.get(slug) {
+                cancel.cancel();
+            }
+            cx.notify();
         }
     }
 
@@ -787,7 +817,7 @@ impl Workspace {
         if self.stopping.is_some() {
             return;
         }
-        if self.jobs.contains_key(&slug) {
+        if self.jobs.contains_key(&slug) || self.paused.contains(&slug) {
             return;
         }
         let cancel = self.cancel.child_token();
@@ -981,7 +1011,9 @@ impl Workspace {
             let running = self.jobs.get(&slug);
             let progress = self.import_progress(&slug);
             let status = if running.is_some_and(|cancel| cancel.is_cancelled()) {
-                "Stopping…".into()
+                "Pausing…".into()
+            } else if self.paused.contains(&slug) {
+                "Paused".into()
             } else if running.is_some() && progress.total > 0 {
                 format!("{} / {} imported", progress.imported, progress.total)
             } else if running.is_some() {

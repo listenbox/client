@@ -757,7 +757,7 @@ async fn live_backend(cx: &mut TestAppContext) {
         );
         window.render_frame(cx);
         assert_ne!(window.find("sync-now").disabled(), Some(true));
-        assert!(window.try_find("stop-sync").is_none());
+        assert_eq!(window.find("pause-sync").label(), Some("Pause"));
         assert!(window.try_find("pause-transfers").is_none());
         assert_podcast_header(window, 1);
         window.dispatch_action(native_menu_action("Settings…", cx), cx);
@@ -961,7 +961,7 @@ async fn live_concurrent_imports(cx: &mut TestAppContext) {
         );
         window.render_frame(cx);
         window.click(format!("show-{second}"), cx);
-        window.click("stop-sync", cx);
+        window.click("pause-sync", cx);
     })
     .unwrap();
     wait_for(cx, &view, |view| view.jobs.is_empty()).await;
@@ -969,7 +969,7 @@ async fn live_concurrent_imports(cx: &mut TestAppContext) {
         assert!(view.read(cx).error.is_none(), "{:?}", view.read(cx).error);
         assert!(matches!(view.read(cx).reports[&first], SyncReport::Summary(ref report) if report.added == 1));
         window.render_frame(cx);
-        assert!(window.try_find("stop-sync").is_none());
+        assert!(window.try_find("pause-sync").is_none());
         window.click("new-import", cx);
         assert!(view.read(cx).import_open);
         assert_eq!(
@@ -996,6 +996,248 @@ fn import_gate(
             .unwrap();
         assert_eq!(response.status().as_u16(), 204, "import gate {gate} failed");
     });
+}
+
+#[gpui_kit::test]
+#[ignore = "requires the parent workspace's ephemeral Listenbox services"]
+async fn live_pause_imports(cx: &mut TestAppContext) {
+    let runtime = Arc::new(tokio::runtime::Runtime::new().unwrap());
+    let config = Config::load(None).unwrap();
+    let sources = std::fs::read_to_string(config.directory.join("test-playlist-urls")).unwrap();
+    let sources: Vec<_> = sources.lines().collect();
+    let api =
+        listenbox_sync_engine::api::Api::new(config.clone(), CancellationToken::new()).unwrap();
+    let client = Client::desktop(config).unwrap();
+    let cancel = CancellationToken::new();
+    let _cancel_on_exit = cancel.clone().drop_guard();
+    let tasks = TaskTracker::new();
+    cx.update(gpui_kit::init);
+    cx.executor().allow_parking();
+    let mut view = None;
+    let handle = cx.open_window(size(px(840.), px(600.)), |window, cx| {
+        tokens::apply(window, cx);
+        let entity = cx.new(|cx| {
+            Workspace::new(
+                client.clone(),
+                runtime.clone(),
+                cancel.clone(),
+                tasks.clone(),
+                window,
+                cx,
+            )
+        });
+        view = Some(entity.clone());
+        Root::new(entity, window, cx)
+    });
+    let view = view.unwrap();
+    wait_for_import_state(cx, &view, &runtime, |view| !view.loading).await;
+    cx.update_window(handle.into(), |_, window, cx| {
+        assert!(view.read(cx).loaded, "{:?}", view.read(cx).error);
+        window.render_frame(cx);
+        window.click("youtube-url", cx);
+        window.input(sources[0], cx);
+        window.click("start-import", cx);
+    })
+    .unwrap();
+    wait_for_import_state(cx, &view, &runtime, |view| {
+        view.progress
+            .items
+            .iter()
+            .filter(|item| item.attempt == 1)
+            .count()
+            == listenbox_sync_engine::downloads::MAX_IN_FLIGHT
+            && view
+                .progress
+                .items
+                .iter()
+                .any(|item| item.phase == Phase::Resolving)
+    })
+    .await;
+    let first = cx
+        .update_window(handle.into(), |_, window, cx| {
+            let first = view.read(cx).show().unwrap().slug.clone();
+            window.render_frame(cx);
+            window.click("new-import", cx);
+            window.click("youtube-url", cx);
+            window.input(sources[1], cx);
+            window.click("start-import", cx);
+            first
+        })
+        .unwrap();
+    wait_for_import_state(cx, &view, &runtime, |view| {
+        view.jobs.len() == 2
+            && view
+                .progress
+                .items
+                .iter()
+                .any(|item| item.source_id != first && item.phase == Phase::Queued)
+    })
+    .await;
+    let second = cx
+        .update_window(handle.into(), |_, window, cx| {
+            let second = view.read(cx).show().unwrap().slug.clone();
+            window.render_frame(cx);
+            window.click(format!("show-{first}"), cx);
+            assert_eq!(window.find("pause-sync").label(), Some("Pause"));
+            window.click("pause-sync", cx);
+            window.render_frame(cx);
+            assert_eq!(window.find("pause-sync").label(), Some("Pausing…"));
+            second
+        })
+        .unwrap();
+    wait_for_import_state(cx, &view, &runtime, |view| !view.jobs.contains_key(&first)).await;
+    wait_for_import_state(cx, &view, &runtime, |view| !view.jobs.contains_key(&second)).await;
+    let saved = runtime
+        .block_on(client.sync_state(first.clone()))
+        .unwrap()
+        .items;
+    assert_eq!(saved.len(), 32, "pause lost durable queued work");
+    assert!(
+        saved.iter().all(|item| item.phase == Phase::Queued),
+        "{saved:?}"
+    );
+    cx.update_window(handle.into(), |_, _, cx| {
+        let state = view.read(cx);
+        assert!(state.error.is_none(), "{:?}", state.error);
+        assert!(
+            matches!(&state.reports[&second], SyncReport::Summary(report) if report.added == 1),
+            "{:?}",
+            state.reports
+        );
+    })
+    .unwrap();
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        view.update(cx, |view, cx| view.sync_all(false, cx));
+        assert!(
+            !view.read(cx).jobs.contains_key(&first),
+            "automatic scan restarted the paused podcast"
+        );
+        assert!(
+            view.read(cx).jobs.contains_key(&second),
+            "pause disabled a sibling's automatic sync"
+        );
+        assert_eq!(window.find("sync-now").label(), Some("Resume"));
+        assert!(window.try_find("pause-sync").is_none());
+        window.dispatch_action(native_menu_action("Reload", cx), cx);
+    })
+    .unwrap();
+    wait_for_import_state(cx, &view, &runtime, |view| !view.loading).await;
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("sync-now").label(),
+            Some("Resume"),
+            "Reload cleared the session pause"
+        );
+        assert!(!view.read(cx).jobs.contains_key(&first));
+    })
+    .unwrap();
+    import_gate(&runtime, &api, "resume-paused");
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.click("sync-now", cx);
+        assert!(
+            view.read(cx).jobs.contains_key(&first),
+            "Resume did not start the saved podcast"
+        );
+    })
+    .unwrap();
+    wait_for_import_state(cx, &view, &runtime, |view| !view.jobs.contains_key(&first)).await;
+    let resumed = runtime
+        .block_on(client.sync_state(first.clone()))
+        .unwrap()
+        .items;
+    assert_eq!(resumed.len(), 32);
+    assert!(
+        resumed.iter().all(|item| item.phase == Phase::Skipped),
+        "Resume did not finish the saved queue: {resumed:?}"
+    );
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(window.find("sync-now").label(), Some("Sync now"));
+        window.click("pause-sync", cx);
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("sync-now").label(),
+            Some("Resume"),
+            "idle podcast could not be paused"
+        );
+    })
+    .unwrap();
+    cancel.cancel();
+    tasks.close();
+    runtime.block_on(async {
+        tokio::time::timeout(Duration::from_secs(3), tasks.wait())
+            .await
+            .unwrap()
+    });
+    let next_cancel = CancellationToken::new();
+    let _cancel_next_session = next_cancel.clone().drop_guard();
+    let next_tasks = TaskTracker::new();
+    let mut next = None;
+    cx.open_window(size(px(1080.), px(840.)), |window, cx| {
+        tokens::apply(window, cx);
+        let entity = cx.new(|cx| {
+            Workspace::new(
+                client,
+                runtime.clone(),
+                next_cancel.clone(),
+                next_tasks.clone(),
+                window,
+                cx,
+            )
+        });
+        next = Some(entity.clone());
+        Root::new(entity, window, cx)
+    });
+    let next = next.unwrap();
+    wait_for_import_state(cx, &next, &runtime, |view| {
+        view.loaded && view.jobs.is_empty() && view.reports.contains_key(&first)
+    })
+    .await;
+    cx.update(|cx| {
+        assert!(
+            matches!(&next.read(cx).reports[&first], SyncReport::Summary(report) if report.skipped == 32),
+            "a new app session did not sync the paused podcast: {:?}",
+            next.read(cx).reports
+        )
+    });
+    next_cancel.cancel();
+    next_tasks.close();
+    runtime.block_on(async {
+        tokio::time::timeout(Duration::from_secs(3), next_tasks.wait())
+            .await
+            .unwrap()
+    });
+}
+
+async fn wait_for_import_state(
+    cx: &mut TestAppContext,
+    view: &Entity<Workspace>,
+    runtime: &tokio::runtime::Runtime,
+    predicate: impl Fn(&Workspace) -> bool,
+) {
+    let guard = runtime.spawn(async { tokio::time::sleep(Duration::from_secs(3)).await });
+    let timed_out =
+        match futures_util::future::select(Box::pin(wait_for(cx, view, predicate)), guard).await {
+            futures_util::future::Either::Left(((), guard)) => {
+                guard.abort();
+                false
+            }
+            futures_util::future::Either::Right((_, pending)) => {
+                drop(pending);
+                true
+            }
+        };
+    if timed_out {
+        cx.update(|cx| {
+            panic!(
+                "import state did not arrive: jobs={:?} progress={:?}",
+                view.read(cx).jobs,
+                view.read(cx).progress.items
+            )
+        });
+    }
 }
 
 #[gpui_kit::test]

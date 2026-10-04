@@ -201,7 +201,7 @@ Measure the composed result, including hover and focus.
 
 Use GPUI Kit for focus, keyboard activation, disabled state and pointer state.
 Use `.primary()` explicitly for Import playlist, creation, sign-in and Sync now.
-Stop uses an outline; source links and browser handoffs use ghost buttons.
+Pause uses an outline; source links and browser handoffs use ghost buttons.
 Not-imported video titles use underlined, keyboard-focusable links
 to YouTube. White default buttons are not primary actions.
 
@@ -231,10 +231,12 @@ are synthetic fixtures with provenance in `tests/fixtures/README.md`.
 ## Sync and episode status
 
 Existing imports sync on startup and hourly while Listenbox is running. Sync
-now requests another immediate pass. Stop cancels the current work and saves
-progress; it does not permanently disable automatic sync. There is no opt-in
+now requests another immediate pass. Pause cancels current work and saves
+progress, then skips automatic scans for this podcast until Resume or the next
+app session. Reload preserves the pause and other podcasts keep syncing. Show
+Pausing… until the task drains, then Resume. Idle podcasts can also be paused. There is no opt-in
 button for the app’s main purpose. Progress and added/removed/unchanged/skipped
-totals render only during an active sync; idle state retains failure and stopped
+totals render only during an active sync; idle state retains failure and paused
 notices when recovery is needed.
 
 The engine owns checkpoints, transfers and the scan cadence for CLI and desktop.
@@ -250,7 +252,7 @@ YouTube in the browser, without a separate handoff button. The
 `Not imported` filter is conditional on those rows and disappears when none
 remain. Its Retry imports action starts another sync through the engine's saved
 work, including failures whose automatic attempts were exhausted. Disable it
-while the selected podcast is syncing or stopping, or lacks an active plan.
+while the selected podcast is syncing or pausing, or lacks an active plan.
 Downloads show a horizontal progress bar, received/total bytes and
 measured throughput. There is no queue or upload pause/resume control.
 Checkpoints recover crashes and unexpected interruptions. Empty states describe

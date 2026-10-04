@@ -204,7 +204,8 @@ impl Workspace {
     pub(super) fn import_status(&self, show: &Show, cx: &mut Context<Self>) -> AnyElement {
         let t = Tokens::current(cx);
         let running = self.jobs.get(&show.slug);
-        let stopping = running.is_some_and(|cancel| cancel.is_cancelled());
+        let pausing = running.is_some_and(|cancel| cancel.is_cancelled());
+        let paused = self.paused.contains(&show.slug);
         let progress = self.import_progress(&show.slug);
         let mut status = div()
             .id("import-status")
@@ -215,14 +216,16 @@ impl Workspace {
             .flex_col()
             .gap_3();
         let mut heading = div().flex().items_center().gap_3();
-        if running.is_some() {
+        if running.is_some() || paused {
             heading = heading.child(
                 div()
                     .flex_1()
                     .min_w_0()
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child(if stopping {
-                        "Stopping import…".into()
+                    .child(if pausing {
+                        "Pausing sync…".into()
+                    } else if paused {
+                        "Sync paused".into()
                     } else if progress.total == 0 {
                         "Checking for new episodes…".into()
                     } else {
@@ -238,7 +241,7 @@ impl Workspace {
                 Button::new("sync-now")
                     .primary()
                     .icon(assets::IconName::RefreshCw)
-                    .label("Sync now")
+                    .label(if paused { "Resume" } else { "Sync now" })
                     .disabled(
                         running.is_some()
                             || self.stopping.is_some()
@@ -246,20 +249,13 @@ impl Workspace {
                     )
                     .on_click(cx.listener(|view, _, _, cx| view.sync(cx))),
             )
-            .when(running.is_some(), |row| {
+            .when(!paused || running.is_some(), |row| {
                 row.child(
-                    Button::new("stop-sync")
+                    Button::new("pause-sync")
                         .outline()
-                        .label(if stopping { "Stopping…" } else { "Stop" })
-                        .disabled(stopping)
-                        .on_click(cx.listener(|view, _, _, cx| {
-                            if let Some(cancel) =
-                                view.selected.as_ref().and_then(|slug| view.jobs.get(slug))
-                            {
-                                cancel.cancel();
-                            }
-                            cx.notify();
-                        })),
+                        .label(if pausing { "Pausing…" } else { "Pause" })
+                        .disabled(pausing || self.stopping.is_some())
+                        .on_click(cx.listener(|view, _, _, cx| view.pause(cx))),
                 )
             });
         status = status.child(heading);
@@ -269,7 +265,7 @@ impl Workspace {
                     Progress::new("import-progress")
                         .small()
                         .color(t.action)
-                        .loading(progress.total == 0 && !stopping)
+                        .loading(progress.total == 0 && !pausing)
                         .value(progress.percent())
                         .accessibility_label(if progress.total == 0 {
                             "Checking the YouTube source".into()
@@ -284,8 +280,8 @@ impl Workspace {
                     div()
                         .text_size(px(12.))
                         .text_color(t.muted)
-                        .child(if stopping {
-                            "Finishing current work and saving progress.".into()
+                        .child(if pausing {
+                            "Finishing current writes and saving progress.".into()
                         } else if progress.total == 0 {
                             "Reading YouTube and comparing it with this podcast.".into()
                         } else {
@@ -321,6 +317,12 @@ impl Workspace {
                         .test_support(),
                 );
             }
+        } else if paused {
+            status = status.child(
+                div()
+                    .text_color(t.muted)
+                    .child("Paused for this session. Resume to continue syncing."),
+            );
         } else if let Some(SyncReport::Notice(notice)) = self.reports.get(&show.slug) {
             status = status.child(div().text_color(t.muted).child(notice.clone()));
         }

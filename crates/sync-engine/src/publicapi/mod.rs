@@ -2674,8 +2674,6 @@ pub struct PreparedMediaObject {
     pub content_type: PreparedMediaObjectContentType,
     #[serde(rename = "name")]
     pub name: std::string::String,
-    #[serde(rename = "sha256")]
-    pub sha256: SHA256Hex,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

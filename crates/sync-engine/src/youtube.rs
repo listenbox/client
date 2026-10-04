@@ -411,14 +411,6 @@ pub(crate) async fn import_video(
     let saved = journal.prepared(&operation_id)?;
     let manifest = match saved {
         Some(manifest) => {
-            for object in &manifest.objects {
-                let (length, hash) =
-                    crate::episodes::file_hash(&directory.join(&object.name)).await?;
-                ensure!(
-                    length as i64 == object.byte_length && hash == object.sha256,
-                    "Prepared media changed on disk; cannot resume this upload"
-                );
-            }
             eprintln!(
                 "FFmpeg preparation reused show_slug={slug} video_id={id} operation_id={operation_id}"
             );
@@ -495,7 +487,7 @@ pub(crate) async fn import_video(
             // Join the FFmpeg owner before releasing files, including after cancellation.
             let duration = tokio::task::spawn_blocking(move || {
                 // The actual blocking worker owns the CPU permit, including if
-                // its async caller is dropped. Normal Stop still joins it.
+                // its async caller is dropped. Normal cancellation still joins it.
                 let _preparing = preparing;
                 // Measure execution, excluding download and blocking-pool wait time.
                 let started = Instant::now();
@@ -531,7 +523,7 @@ pub(crate) async fn import_video(
                 description: Some(media.description),
                 duration_seconds: duration,
                 published_at: media.published_at,
-                objects: inventory(&directory, audio).await?,
+                objects: inventory(&directory, audio)?,
             };
             for object in &manifest.objects {
                 std::fs::File::open(directory.join(&object.name))?.sync_all()?;
@@ -642,7 +634,7 @@ pub(crate) async fn import_video(
     Ok(ImportOutcome::Published)
 }
 
-async fn inventory(root: &Path, audio: bool) -> Result<Vec<p::PreparedMediaObject>> {
+fn inventory(root: &Path, audio: bool) -> Result<Vec<p::PreparedMediaObject>> {
     let mut directories = vec![root.to_owned()];
     let mut names = Vec::new();
     while let Some(directory) = directories.pop() {
@@ -677,12 +669,11 @@ async fn inventory(root: &Path, audio: bool) -> Result<Vec<p::PreparedMediaObjec
         } else {
             "video/mp4"
         };
-        let (length, sha256) = crate::episodes::file_hash(&root.join(&name)).await?;
+        let length = std::fs::metadata(root.join(&name))?.len();
         objects.push(p::PreparedMediaObject {
             name,
             content_type: serde_json::from_value(json!(content_type))?,
-            byte_length: length as i64,
-            sha256,
+            byte_length: i64::try_from(length)?,
         });
     }
     Ok(objects)
