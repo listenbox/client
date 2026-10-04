@@ -49,7 +49,7 @@ pub fn playlist_source(source: &str) -> Result<String> {
 }
 
 /// Both interfaces use this creation boundary and the same durable first sync.
-/// Creation is never an upsert: collisions must be resumed with sync explicitly.
+/// Creation is never an upsert: explicit slug collisions must be resumed with sync.
 pub async fn import(
     api: &Api,
     engine: &crate::sync::Engine,
@@ -72,27 +72,26 @@ pub async fn import(
     } else {
         None
     };
-    let slug = requested_slug.map(str::to_owned).unwrap_or_else(|| {
-        format!(
-            "youtube-{}",
-            &hex::encode(Sha256::digest(collection.as_deref().unwrap_or(source)))[..16]
-        )
-    });
-    let slug = crate::slug(&slug).map_err(anyhow::Error::msg)?;
-    let shows: Vec<p::Show> = match api
-        .client()
-        .list_shows(p::ListShowsParams {
-            youtube_imports_only: None,
-        })
-        .await?
-    {
-        p::ListShowsResponse::Status200(value) => value,
-        response => return Err(api.response_error(response).await),
-    };
-    ensure!(
-        !shows.iter().any(|show| show.slug == slug),
-        "Podcast {slug:?} already exists. Use sync to resume an imported podcast, or choose a new slug."
-    );
+    let requested_slug = requested_slug
+        .map(crate::slug)
+        .transpose()
+        .map_err(anyhow::Error::msg)?;
+    if let Some(slug) = &requested_slug {
+        let shows = match api
+            .client()
+            .list_shows(p::ListShowsParams {
+                youtube_imports_only: None,
+            })
+            .await?
+        {
+            p::ListShowsResponse::Status200(value) => value,
+            response => return Err(api.response_error(response).await),
+        };
+        ensure!(
+            !shows.iter().any(|show| show.slug == *slug),
+            "Podcast {slug:?} already exists. Use sync to resume an imported podcast, or choose a new slug."
+        );
+    }
     let capacity: p::ImportCapacity = match api.client().get_import_capacity().await? {
         p::GetImportCapacityResponse::Status200(value) => value,
         response => return Err(api.response_error(response).await),
@@ -169,16 +168,49 @@ pub async fn import(
                 capacity.video_remaining_seconds as f64 / 3600.0,
             )).into());
     }
-    let show = match api.client().create_show(p::CreateShowParams {
-        body: p::CreateShow {
-            id: format!("shw_{}", &uuid::Uuid::new_v4().simple().to_string()[..16]),
-            title, slug: slug.clone(), source_kind: kind.clone(), language: "en".into(),
-            image_asset_id: None, youtube_url: Some(canonical.clone()),
-        },
-    }).await.with_context(|| format!("Create podcast {slug:?}. If creation completed but its reply was lost, reload your podcasts and resume with sync."))? {
-        p::CreateShowResponse::Status201(show) => show,
-        response => return Err(api.response_error(response).await).with_context(|| format!("Create podcast {slug:?}. If creation completed but its reply was lost, reload your podcasts and resume with sync.")),
+    let mut slug = match &requested_slug {
+        Some(slug) => slug.clone(),
+        None if collection.is_some() => {
+            let mut slug = slug::slugify(&title);
+            slug.truncate(63);
+            slug.trim_end_matches('-').to_owned()
+        }
+        None => format!("youtube-{}", &hex::encode(Sha256::digest(source))[..16]),
     };
+    let mut title_slug = requested_slug.is_none() && collection.is_some() && !slug.is_empty();
+    if slug.is_empty() {
+        slug = random_playlist_slug();
+    }
+    let mut body = p::CreateShow {
+        id: format!("shw_{}", &uuid::Uuid::new_v4().simple().to_string()[..16]),
+        title,
+        slug,
+        source_kind: kind,
+        language: "en".into(),
+        image_asset_id: None,
+        youtube_url: Some(canonical.clone()),
+    };
+    let show = loop {
+        let context = format!(
+            "Create podcast {:?}. If creation completed but its reply was lost, reload your podcasts and resume with sync.",
+            body.slug
+        );
+        let response = api
+            .client()
+            .create_show(p::CreateShowParams { body: body.clone() })
+            .await
+            .with_context(|| context.clone())?;
+        match response {
+            p::CreateShowResponse::Status201(show) => break show,
+            // A conflict confirms no show was created; an ambiguous failure cannot.
+            p::CreateShowResponse::Status409(_) if title_slug => {
+                title_slug = false;
+                body.slug = random_playlist_slug();
+            }
+            response => return Err(api.response_error(response).await).context(context),
+        }
+    };
+    let slug = &show.slug;
     created(&show);
     let report = async {
         let snapshot = match listing {
@@ -186,12 +218,19 @@ pub async fn import(
             ImportListing::Complete(snapshot) => snapshot,
         };
         engine
-            .import_snapshot(api, &slug, &canonical, snapshot)
+            .import_snapshot(api, slug, &canonical, snapshot)
             .await
     }
     .await
     .with_context(|| format!("Podcast {slug:?} was created. Resume it with sync."))?;
     Ok((show, report))
+}
+
+fn random_playlist_slug() -> String {
+    format!(
+        "youtube-{}",
+        &uuid::Uuid::new_v4().simple().to_string()[..16]
+    )
 }
 
 fn valid_youtube_id(id: &str) -> bool {
