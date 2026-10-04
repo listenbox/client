@@ -74,6 +74,8 @@ TypeScript declaration. Upstream methods still run on live JavaScript objects.
 | `PlaylistVideo \| LockupView \| …` | `PlaylistItem::{PlaylistVideo, LockupView, Other}` |
 | `channel.metadata` | `channel.metadata().await?` → `ChannelMetadata` |
 | `info.basic_info`, `playability_status`, `page[0].microformat`, `cpn` | `info.data().await?` → `VideoInfoData` in one context access |
+| `playability_status.error_screen` | `PlayerErrorScreen` preserves `PlayerInterstitial.content` title/description and `PlayerErrorMessage` reason/subreason as `TextValue` |
+| `InnertubeError.info` for player errors | `Error.playability_status` captures the same native `PlayabilityStatus` projection before serialization; `Error.info` retains generic exception details |
 | `info.streaming_data?.formats / adaptive_formats` | `info.formats()` / `info.adaptive_formats().await?` → `Vec<Format>` with cached `FormatInfo` |
 | `{ client: 'VISIONOS' }` | `GetVideoInfoOptions { client: Some(Client::VisionOs), ..Default::default() }` |
 | `yt.session.player`, `Player.create` | `session().await?.player`, `set_player`, `Player::create` |

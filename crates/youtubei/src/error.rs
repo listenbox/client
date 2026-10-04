@@ -1,3 +1,4 @@
+use crate::models::PlayabilityStatus;
 use rquickjs::{Coerced, Ctx, FromJs};
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -8,7 +9,9 @@ pub struct Error {
     pub message: String,
     pub stack: Option<String>,
     /// Structured upstream exception details, such as a player status.
-    pub info: Option<serde_json::Value>,
+    pub info: Option<Box<serde_json::Value>>,
+    /// Native player details retain Text.toString() before serialization loses its prototype.
+    pub playability_status: Option<Box<PlayabilityStatus>>,
 }
 
 impl Error {
@@ -20,6 +23,7 @@ impl Error {
             message: message.into(),
             stack: None,
             info: None,
+            playability_status: None,
         }
     }
 
@@ -29,7 +33,24 @@ impl Error {
         }
         let value = ctx.catch();
         let stack = value.as_exception().and_then(|e| e.stack());
-        let info = (|| -> rquickjs::Result<Option<serde_json::Value>> {
+        let playability_status = (|| -> rquickjs::Result<Option<Box<PlayabilityStatus>>> {
+            let Some(object) = value.as_object() else {
+                return Ok(None);
+            };
+            let info: rquickjs::Value = object.get("info")?;
+            let Some(object) = info.as_object() else {
+                return Ok(None);
+            };
+            if !object.contains_key("status")? {
+                return Ok(None);
+            }
+            PlayabilityStatus::from_js(ctx, info).map(|status| Some(Box::new(status)))
+        })()
+        .unwrap_or_else(|_| {
+            ctx.catch();
+            None
+        });
+        let info = (|| -> rquickjs::Result<Option<Box<serde_json::Value>>> {
             let Some(object) = value.as_object() else {
                 return Ok(None);
             };
@@ -37,7 +58,7 @@ impl Error {
             let Some(json) = ctx.json_stringify(info)? else {
                 return Ok(None);
             };
-            Ok(serde_json::from_str(&json.to_string()?).ok())
+            Ok(serde_json::from_str(&json.to_string()?).ok().map(Box::new))
         })();
         let info = info.unwrap_or_else(|_| {
             // A non-serializable detail must not replace the original error or
@@ -52,6 +73,7 @@ impl Error {
             message,
             stack,
             info,
+            playability_status,
         }
     }
 }

@@ -263,7 +263,41 @@ model!(BasicInfo {
     is_live_content: Option<bool>,
 });
 // Upstream declares status as string, rather than a closed union.
-model!(PlayabilityStatus { status: String, reason: Option<String> });
+model!(PlayabilityStatus {
+    status: String, reason: Option<String>, error_screen: Option<PlayerErrorScreen>,
+});
+model!(InterstitialView {
+    title: TextValue,
+    description: TextValue
+});
+model!(PlayerErrorMessage {
+    reason: TextValue,
+    subreason: TextValue
+});
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum PlayerErrorScreen {
+    PlayerInterstitial { content: Option<InterstitialView> },
+    PlayerErrorMessage(PlayerErrorMessage),
+    Other { node_type: String },
+}
+
+impl<'js> FromJs<'js> for PlayerErrorScreen {
+    fn from_js(ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<Self> {
+        let object = Object::from_js(ctx, value.clone())?;
+        Ok(match object.get::<_, String>("type")?.as_str() {
+            "PlayerInterstitial" => Self::PlayerInterstitial {
+                content: object.get("content")?,
+            },
+            "PlayerErrorMessage" => {
+                Self::PlayerErrorMessage(PlayerErrorMessage::from_js(ctx, value)?)
+            }
+            kind => Self::Other {
+                node_type: kind.into(),
+            },
+        })
+    }
+}
 model!(PlayerMicroformat { publish_date: Option<String>, upload_date: Option<String> });
 
 /// Metadata used during audio resolution, read in one engine access.

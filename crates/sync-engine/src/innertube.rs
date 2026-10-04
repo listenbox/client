@@ -8,7 +8,8 @@ use youtubei::{
     BrowseOptions, Client, Engine, EngineOptions, FetchRequest, FetchResponse, Format,
     GetVideoInfoOptions, Innertube, Player, Playlist, SessionOptions, UniversalCache, VideoInfo,
     models::{
-        ContentImage, LockupContentType, Microformat, PlaylistAlert, PlaylistItem, ThumbnailOverlay,
+        ContentImage, LockupContentType, Microformat, PlayabilityStatus, PlayerErrorScreen,
+        PlaylistAlert, PlaylistItem, ThumbnailOverlay,
     },
 };
 
@@ -340,18 +341,13 @@ impl YouTube {
             // VideoInfo. Inspect its structured status, never error wording.
             Err(error)
                 if error
-                    .info
+                    .playability_status
                     .as_ref()
-                    .is_some_and(|info| info["status"] == "ERROR") =>
+                    .is_some_and(|status| status.status == "ERROR") =>
             {
-                return Ok(PlayerResponse::Unavailable(
-                    error
-                        .info
-                        .as_ref()
-                        .and_then(|info| info["reason"].as_str())
-                        .unwrap_or("Video unavailable")
-                        .to_owned(),
-                ));
+                return Ok(PlayerResponse::Unavailable(unavailable_reason(
+                    error.playability_status.as_ref().unwrap(),
+                )));
             }
             Err(error) => return Err(error.into()),
         };
@@ -363,12 +359,7 @@ impl YouTube {
         match status.status.as_str() {
             "OK" => {}
             "UNPLAYABLE" => {
-                return Ok(PlayerResponse::Unavailable(
-                    status
-                        .reason
-                        .clone()
-                        .unwrap_or_else(|| "Video unavailable".into()),
-                ));
+                return Ok(PlayerResponse::Unavailable(unavailable_reason(status)));
             }
             "LOGIN_REQUIRED" => {
                 return Err(anyhow::Error::new(SignInRequired).context(format!(
@@ -684,6 +675,42 @@ fn duration_badge_seconds(text: &str) -> Option<i64> {
         total = total.checked_mul(60)?.checked_add(value)?;
     }
     Some(total)
+}
+
+fn unavailable_reason(status: &PlayabilityStatus) -> String {
+    let (screen_reason, detail) = match status.error_screen.as_ref() {
+        Some(PlayerErrorScreen::PlayerInterstitial {
+            content: Some(content),
+        }) => (
+            Some(content.title.as_str()),
+            Some(content.description.as_str()),
+        ),
+        Some(PlayerErrorScreen::PlayerErrorMessage(message)) => (
+            Some(message.reason.as_str()),
+            Some(message.subreason.as_str()),
+        ),
+        _ => (None, None),
+    };
+    // Upstream Text.toString() uses N/A for an empty text node.
+    let present = |text: &&str| !text.trim().is_empty() && text.trim() != "N/A";
+    let mut reason = status
+        .reason
+        .as_deref()
+        .filter(present)
+        .or(screen_reason.filter(present))
+        .unwrap_or("Video unavailable")
+        .trim()
+        .to_owned();
+    if let Some(detail) = detail.filter(present).map(str::trim)
+        && !reason.contains(detail)
+    {
+        if !reason.ends_with(['.', '!', '?']) {
+            reason.push('.');
+        }
+        reason.push(' ');
+        reason.push_str(detail);
+    }
+    reason
 }
 
 fn cookie_authorization(header: &str, timestamp: u64) -> String {

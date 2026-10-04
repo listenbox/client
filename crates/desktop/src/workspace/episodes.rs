@@ -1,5 +1,5 @@
 use super::*;
-use gpui_kit::base::{ScrollbarHandle, Selectable};
+use gpui_kit::base::{Link, ScrollbarHandle, Selectable};
 use listenbox_sync_engine::{
     downloads::Download,
     publicapi::{EpisodeListItem, EpisodeStatus},
@@ -269,6 +269,22 @@ impl Workspace {
         let id = episode
             .map(|episode| episode.id.clone())
             .unwrap_or_else(|| item.unwrap().id.clone());
+        let title = if row.issue() {
+            Link::new(SharedString::from(format!("open-source-{id}")))
+                .href(item.unwrap().source_url.clone())
+                .open_with(|url, _, _, cx| cx.open_url(url))
+                .accessibility_label(title.clone())
+                .text_color(t.ink)
+                .text_decoration_1()
+                .text_decoration_color(t.muted)
+                .cursor_pointer()
+                .hover(|style| style.text_decoration_color(t.ink))
+                .focus_visible(|style| style.bg(t.selected).text_decoration_2())
+                .child(title)
+                .into_any_element()
+        } else {
+            div().child(title).into_any_element()
+        };
         let mut element = div()
             .id(SharedString::from(format!("episode-row-{id}")))
             .py_3()
@@ -286,7 +302,15 @@ impl Workspace {
                     .child(
                         div()
                             .flex_shrink_0()
-                            .text_color(if row.issue() { t.danger } else { t.muted })
+                            .text_color(
+                                if row.issue()
+                                    && item.is_some_and(|item| item.phase == Phase::Failed)
+                                {
+                                    t.danger
+                                } else {
+                                    t.muted
+                                },
+                            )
                             .child(status),
                     ),
             );
@@ -326,22 +350,14 @@ impl Workspace {
                     )));
             }
             if let Some(reason) = &item.reason {
-                element = element.child(div().text_color(t.muted).child(reason.clone()));
+                element = element.child(
+                    div()
+                        .text_color(if row.issue() { t.danger } else { t.muted })
+                        .child(reason.clone()),
+                );
             }
             if let Some(error) = &item.error {
                 element = element.child(div().text_color(t.danger).child(error.clone()));
-            }
-            if row.issue() {
-                let source = item.source_url.clone();
-                element = element.child(
-                    div().child(
-                        Button::new(SharedString::from(format!("open-source-{}", item.id)))
-                            .ghost()
-                            .icon(gpui_kit::component::IconName::ExternalLink)
-                            .label("Open in YouTube")
-                            .on_click(move |_, _, cx| cx.open_url(&source)),
-                    ),
-                );
             }
         }
         element.test_support().into_any_element()

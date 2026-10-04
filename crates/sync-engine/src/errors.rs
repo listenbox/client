@@ -49,6 +49,6 @@ pub(crate) fn classify(error: &anyhow::Error) -> Category {
 pub(crate) fn youtube_error(error: anyhow::Error) -> youtubei::Error {
     let category = classify(&error);
     let mut error = youtubei::Error::new(crate::redact(&format!("{error:#}")));
-    error.info = Some(serde_json::json!({ CATEGORY_INFO: category }));
+    error.info = Some(Box::new(serde_json::json!({ CATEGORY_INFO: category })));
     error
 }

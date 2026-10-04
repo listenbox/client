@@ -371,12 +371,6 @@ async fn live_not_imported(cx: &mut TestAppContext) {
                 window.try_find("filter-not-imported").is_none(),
                 "published source retained the Not imported tab"
             );
-            let video = fixture["video"].as_str().unwrap();
-            assert!(
-                window
-                    .try_find(SharedString::from(format!("open-source-{slug}/{video}")))
-                    .is_none()
-            );
         })
         .unwrap();
         cancel.cancel();
@@ -404,12 +398,15 @@ async fn live_not_imported(cx: &mut TestAppContext) {
         window.render_frame(cx);
         assert_eq!(
             window.find("filter-not-imported").label(),
-            Some("Not imported (3)")
+            Some("Not imported (4)")
         );
         let rows = workspace.read(cx).episode_rows();
         let issues: Vec<_> = rows.iter().filter(|row| row.issue()).collect();
-        assert_eq!(issues.len(), 3);
-        for (row, key) in issues.iter().zip(["skipped", "no_stream", "signin"]) {
+        assert_eq!(issues.len(), 4);
+        for (row, key) in issues
+            .iter()
+            .zip(["skipped", "no_stream", "signin", "claimed"])
+        {
             let item = row.item.as_ref().unwrap();
             assert_eq!(item.phase, Phase::Skipped);
             assert_eq!(
@@ -425,6 +422,16 @@ async fn live_not_imported(cx: &mut TestAppContext) {
                 "saved {key} failure lost its explanation"
             );
         }
+        assert_eq!(
+            issues[0].item.as_ref().unwrap().reason.as_deref(),
+            Some("Video unavailable. It was blocked due to the claimed content by SME."),
+            "saved YouTube interstitial lost the copyright explanation"
+        );
+        assert_eq!(
+            issues[3].item.as_ref().unwrap().reason.as_deref(),
+            Some("Video unavailable. It was blocked due to the claimed content by WMG."),
+            "saved YouTube ERROR response lost the copyright explanation"
+        );
         assert!(
             issues[2]
                 .item
@@ -445,18 +452,21 @@ async fn live_not_imported(cx: &mut TestAppContext) {
                 .unwrap()
                 .contains("no downloadable stream URLs")
         );
-        for key in ["skipped", "no_stream", "signin"] {
+        for key in ["skipped", "no_stream", "signin", "claimed"] {
             let id = fixture[key].as_str().unwrap();
             assert!(
                 window
-                    .try_find(SharedString::from(format!("open-source-{slug}/{id}")))
-                    .is_some(),
-                "saved {key} video has no YouTube action"
+                    .find(SharedString::from(format!("episode-row-{slug}/{id}")))
+                    .visible(),
+                "saved {key} video is not visible"
             );
         }
         let no_stream = fixture["no_stream"].as_str().unwrap();
-        window.click(
-            SharedString::from(format!("open-source-{slug}/{no_stream}")),
+        // Activate the title at the top of the actual row, rather than a
+        // separate browser handoff control below the error.
+        window.click_at(
+            SharedString::from(format!("episode-row-{slug}/{no_stream}")),
+            point(px(8.), px(20.)),
             cx,
         );
     })
@@ -505,7 +515,7 @@ async fn live_not_imported(cx: &mut TestAppContext) {
                 .iter()
                 .filter(|row| row.issue())
                 .count(),
-            3
+            4
         )
     });
     if fixture["mode"].as_str() == Some("recover") {

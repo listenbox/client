@@ -120,7 +120,7 @@ episodes from the API appear alongside active and persisted source items scoped
 to that podcast. Published rows retain API array order; pending source rows may
 be placed around them by saved source position without reordering the API
 sequence. The `Not imported` filter appears only when failed or skipped source
-items exist, shows each item's reason or error and an `Open in YouTube` action,
+items exist, shows each item's reason or error and links its title to YouTube,
 and is hidden when the issue count reaches zero.
 
 The 240px sidebar and the working pane have aligned 56px toolbars. Listenbox is
@@ -197,7 +197,8 @@ Measure the composed result, including hover and focus.
 Use GPUI Kit for focus, keyboard activation, disabled state and pointer state.
 Use `.primary()` explicitly for Import playlist, creation, sign-in and Sync now.
 Stop uses an outline; Reload, account, source links and browser handoffs use
-ghost buttons. White default buttons are not primary actions.
+ghost buttons. Not-imported video titles use underlined, keyboard-focusable links
+to YouTube. White default buttons are not primary actions.
 
 **Navigation content must own its alignment.** GPUI Kit centers its internal
 label container even when the outer button has `.justify_start()`. Compose a
@@ -236,7 +237,9 @@ Never suggest importing a second podcast to recover the first.
 The selected podcast's Episodes list uses flat rows separated by quiet dividers.
 It merges published API episodes with active and persisted source items while
 preserving the API array order and the podcast scope. Failed and skipped source
-rows show their reason or error and a ghost `Open in YouTube` action. The
+rows show their full YouTube explanation in the danger color; `Skipped` uses
+muted gray. The video title is an underlined, keyboard-focusable link that opens
+YouTube in the browser, without a separate handoff button. The
 `Not imported` filter is conditional on those rows and disappears when none
 remain. Downloads show a horizontal progress bar, received/total bytes and
 measured throughput. There is no queue or upload pause/resume control.
