@@ -9,6 +9,233 @@ use std::{cell::Cell, rc::Rc, time::Duration};
 
 #[gpui_kit::test]
 #[ignore = "requires the parent workspace's ephemeral Listenbox services"]
+async fn live_authorization_recovery(cx: &mut TestAppContext) {
+    let config = Config::load(None).unwrap();
+    let client = Client::desktop(config.clone()).unwrap();
+    let runtime = Arc::new(tokio::runtime::Runtime::new().unwrap());
+    let tasks = TaskTracker::new();
+    let lifetime = CancellationToken::new();
+    let _stop_on_exit = lifetime.clone().drop_guard();
+    cx.update(gpui_kit::init);
+    cx.executor().allow_parking();
+    let mut view = None;
+    let window = cx.open_window(size(px(840.), px(600.)), |window, cx| {
+        let entity = cx.new(|cx| {
+            Workspace::new(
+                client.clone(),
+                runtime.clone(),
+                lifetime,
+                tasks.clone(),
+                window,
+                cx,
+            )
+        });
+        view = Some(entity.clone());
+        Root::new(entity, window, cx)
+    });
+    let view = view.unwrap();
+    let http = reqwest::Client::new();
+    let gate = |path: &str| {
+        runtime.block_on(async {
+            http.get(format!(
+                "{}/__test__/authorization/{path}",
+                config.api_origin
+            ))
+            .timeout(Duration::from_secs(2))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+        });
+    };
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click("welcome-action", cx);
+    })
+    .unwrap();
+    gate("started/1");
+    cx.run_until_parked();
+    let first_url = cx.opened_url().expect("sign-in did not open the browser");
+    // The external browser has been abandoned without an approval or denial.
+    // Reset the headless platform's URL so reopening must activate the control.
+    cx.update(|cx| cx.open_url("about:blank"));
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        assert!(
+            window.try_find("reopen-sign-in").is_some(),
+            "pending sign-in has no browser recovery control"
+        );
+        window.click("reopen-sign-in", cx);
+    })
+    .unwrap();
+    assert_eq!(cx.opened_url().as_deref(), Some(first_url.as_str()));
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click("cancel-sign-in", cx);
+    })
+    .unwrap();
+    gate("disconnected");
+    wait_for(cx, &view, |view| view.authorization.is_none()).await;
+    assert!(
+        tasks.is_empty(),
+        "cancelled authorization task did not finish"
+    );
+    assert!(!config.directory.join("auth.json").exists());
+    assert!(
+        cx.update(|cx| view.read(cx).error.is_none()),
+        "cancellation displayed a sign-in error"
+    );
+    let first_code = reqwest::Url::parse(&first_url)
+        .unwrap()
+        .query_pairs()
+        .find(|(key, _)| key == "code")
+        .unwrap()
+        .1
+        .into_owned();
+    gate(&format!("approve?code={first_code}"));
+    assert!(
+        !client.has_credentials(),
+        "late approval restored a cancelled sign-in"
+    );
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("welcome-action").label(),
+            Some("Sign in to Listenbox")
+        );
+        window.click("welcome-action", cx);
+    })
+    .unwrap();
+    gate("started/2");
+    cx.run_until_parked();
+    let second_url = cx.opened_url().unwrap();
+    assert_ne!(
+        first_url, second_url,
+        "fresh sign-in reused the abandoned attempt"
+    );
+    let second_code = reqwest::Url::parse(&second_url)
+        .unwrap()
+        .query_pairs()
+        .find(|(key, _)| key == "code")
+        .unwrap()
+        .1
+        .into_owned();
+    gate(&format!("approve?code={second_code}"));
+    wait_for(cx, &view, |view| view.loaded).await;
+    assert!(client.has_credentials());
+    assert_eq!(cx.update(|cx| view.read(cx).catalog.teams.len()), 1);
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("welcome-action").is_none());
+        assert!(window.try_find("cancel-sign-in").is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+#[ignore = "requires the parent workspace's ephemeral Listenbox services"]
+async fn live_authorization_cancel_starting(cx: &mut TestAppContext) {
+    let config = Config::load(None).unwrap();
+    let client = Client::desktop(config.clone()).unwrap();
+    let runtime = Arc::new(tokio::runtime::Runtime::new().unwrap());
+    let tasks = TaskTracker::new();
+    let lifetime = CancellationToken::new();
+    let _stop_on_exit = lifetime.clone().drop_guard();
+    cx.update(gpui_kit::init);
+    cx.executor().allow_parking();
+    let mut view = None;
+    let window = cx.open_window(size(px(480.), px(600.)), |window, cx| {
+        let entity = cx.new(|cx| {
+            Workspace::new(
+                client.clone(),
+                runtime.clone(),
+                lifetime,
+                tasks.clone(),
+                window,
+                cx,
+            )
+        });
+        view = Some(entity.clone());
+        Root::new(entity, window, cx)
+    });
+    let view = view.unwrap();
+    let http = reqwest::Client::new();
+    let gate = |path: &str| {
+        runtime.block_on(async {
+            http.get(format!(
+                "{}/__test__/authorization/{path}",
+                config.api_origin
+            ))
+            .timeout(Duration::from_secs(2))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+        });
+    };
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click("welcome-action", cx);
+    })
+    .unwrap();
+    gate("committed");
+    assert!(
+        cx.opened_url().is_none(),
+        "browser opened before authorization was received"
+    );
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.scroll(
+            "workspace-content",
+            ScrollDelta::Pixels(point(px(0.), px(-400.))),
+            cx,
+        );
+        window.render_frame(cx);
+        let cancel = window.find("cancel-sign-in");
+        assert!(
+            cancel.visible(),
+            "cancel control is hidden in a narrow window"
+        );
+        assert!(
+            cancel.bounds().bottom() <= window.find("workspace-content").bounds().bottom(),
+            "cancel control did not scroll into the viewport"
+        );
+        window.click("cancel-sign-in", cx);
+    })
+    .unwrap();
+    assert!(
+        cx.update(|cx| view
+            .read(cx)
+            .authorization
+            .as_ref()
+            .unwrap()
+            .cancel
+            .is_cancelled()),
+        "cancel control did not cancel the authorization owner"
+    );
+    gate("disconnected");
+    wait_for(cx, &view, |view| view.authorization.is_none()).await;
+    assert!(tasks.is_empty());
+    assert!(!client.has_credentials());
+    assert!(
+        cx.opened_url().is_none(),
+        "cancelled authorization opened the browser"
+    );
+    assert!(cx.update(|cx| view.read(cx).error.is_none()));
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("welcome-action").label(),
+            Some("Sign in to Listenbox")
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+#[ignore = "requires the parent workspace's ephemeral Listenbox services"]
 async fn live_logout_contended_lock(cx: &mut TestAppContext) {
     use std::io::Write;
     #[derive(Clone)]
@@ -588,7 +815,7 @@ async fn live_not_imported(cx: &mut TestAppContext) {
         assert!(window.try_find("welcome-action").is_none());
         assert!(window.try_find("sign-in").is_none());
         assert!(
-            !workspace.read(cx).authenticating,
+            workspace.read(cx).authorization.is_none(),
             "startup opened a second sign-in flow"
         );
     })

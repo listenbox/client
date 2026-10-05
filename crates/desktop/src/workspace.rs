@@ -59,7 +59,7 @@ pub struct Workspace {
     catalog: Catalog,
     loaded: bool,
     loading: bool,
-    authenticating: bool,
+    authorization: Option<Authorization>,
     creating: Option<ImportPreparation>,
     auto_sync: bool,
     import_open: bool,
@@ -80,6 +80,11 @@ pub struct Workspace {
     reports: HashMap<String, SyncReport>,
     error: Option<ErrorNotice>,
     progress: Snapshot,
+}
+
+struct Authorization {
+    cancel: CancellationToken,
+    url: Option<String>,
 }
 
 #[derive(Debug)]
@@ -160,7 +165,7 @@ pub enum Shutdown {
 
 enum Message {
     Drained(Shutdown, anyhow::Result<()>),
-    Open(String),
+    AuthorizationUrl(String),
     Catalog(anyhow::Result<Catalog>),
     Login(anyhow::Result<()>),
     ImportPreparation(ImportPreparation),
@@ -260,7 +265,7 @@ impl Workspace {
             catalog: Catalog::default(),
             loaded: false,
             loading: false,
-            authenticating: false,
+            authorization: None,
             creating: None,
             auto_sync: false,
             import_open: false,
@@ -399,25 +404,46 @@ impl Workspace {
     }
 
     fn login(&mut self, cx: &mut Context<Self>) {
-        if self.authenticating || self.loading || self.stopping.is_some() {
+        if self.authorization.is_some() || self.loading || self.stopping.is_some() {
             return;
         }
-        self.authenticating = true;
         self.error = None;
         let (client, sender, cancel) = (
             self.client.clone(),
             self.sender.clone(),
             self.cancel.child_token(),
         );
+        self.authorization = Some(Authorization {
+            cancel: cancel.clone(),
+            url: None,
+        });
         self.spawn("login", async move {
             let result = client
                 .login(cancel, |url| {
-                    let _ = sender.send(Message::Open(url.into()));
+                    let _ = sender.send(Message::AuthorizationUrl(url.into()));
                 })
                 .await;
             let _ = sender.send(Message::Login(result));
         });
         cx.notify();
+    }
+
+    fn reopen_sign_in(&mut self, cx: &mut Context<Self>) {
+        if self.stopping.is_none()
+            && let Some(authorization) = &self.authorization
+            && !authorization.cancel.is_cancelled()
+            && let Some(url) = &authorization.url
+        {
+            cx.open_url(url);
+        }
+    }
+
+    fn cancel_sign_in(&mut self, cx: &mut Context<Self>) {
+        if let Some(authorization) = &self.authorization {
+            // The login owner must finish before a new attempt can write credentials.
+            authorization.cancel.cancel();
+            cx.notify();
+        }
     }
 
     fn receive(&mut self, message: Message, window: &mut Window, cx: &mut Context<Self>) {
@@ -465,7 +491,7 @@ impl Workspace {
                 self.cancel = self.lifetime.child_token();
                 self.tasks.reopen();
                 self.stopping = None;
-                self.authenticating = false;
+                self.authorization = None;
                 self.loading = false;
                 self.creating = None;
                 self.auto_sync = false;
@@ -493,7 +519,14 @@ impl Workspace {
                 self.sync_all(false, cx);
                 self.reload(cx);
             }
-            Message::Open(url) => cx.open_url(&url),
+            Message::AuthorizationUrl(url) => {
+                if let Some(authorization) = &mut self.authorization
+                    && !authorization.cancel.is_cancelled()
+                {
+                    cx.open_url(&url);
+                    authorization.url = Some(url);
+                }
+            }
             Message::Catalog(result) => {
                 self.loading = false;
                 match result {
@@ -547,9 +580,12 @@ impl Workspace {
                 }
             }
             Message::Login(result) => {
-                self.authenticating = false;
+                let Some(authorization) = self.authorization.take() else {
+                    return;
+                };
                 match result {
                     Ok(()) => self.reload(cx),
+                    Err(_) if authorization.cancel.is_cancelled() => {}
                     Err(error) => {
                         self.error = Some(format!("Sign-in did not finish. {error:#}").into())
                     }
@@ -1222,11 +1258,61 @@ impl Workspace {
                 .into_any_element();
         }
         if !self.loaded {
+            let actions = match &self.authorization {
+                Some(authorization) => {
+                    let cancelling = authorization.cancel.is_cancelled();
+                    div()
+                        .flex()
+                        .flex_col()
+                        .items_start()
+                        .gap_3()
+                        .child(div().text_color(t.muted).child(if cancelling {
+                            "Cancelling sign-in…"
+                        } else {
+                            "Finish signing in in your browser."
+                        }))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_wrap()
+                                .items_center()
+                                .gap_2()
+                                .child(
+                                    Button::new("reopen-sign-in")
+                                        .primary()
+                                        .label("Open browser")
+                                        .disabled(
+                                            authorization.url.is_none()
+                                                || cancelling
+                                                || self.stopping.is_some(),
+                                        )
+                                        .on_click(
+                                            cx.listener(|view, _, _, cx| view.reopen_sign_in(cx)),
+                                        ),
+                                )
+                                .child(
+                                    Button::new("cancel-sign-in")
+                                        .ghost()
+                                        .label("Cancel sign-in")
+                                        .disabled(cancelling || self.stopping.is_some())
+                                        .on_click(
+                                            cx.listener(|view, _, _, cx| view.cancel_sign_in(cx)),
+                                        ),
+                                ),
+                        )
+                }
+                None => div().child(
+                    Button::new("welcome-action")
+                        .primary()
+                        .label("Sign in to Listenbox")
+                        .disabled(self.stopping.is_some())
+                        .on_click(cx.listener(|view, _, _, cx| view.login(cx))),
+                ),
+            };
             return div().flex().flex_col().items_start().gap(px(tokens::SPACE)).max_w(px(600.)).py(px(tokens::SPACE * 2.))
                 .child(div().text_size(px(tokens::PAGE_TITLE)).font_weight(FontWeight::BOLD).child("Your YouTube recordings as a podcast"))
                 .child(div().text_color(t.muted).child("Bring a public YouTube playlist or channel to Listenbox, then keep your podcast in sync from this desktop."))
-                .child(Button::new("welcome-action").primary().label(if self.authenticating { "Finish in your browser…" } else { "Sign in to Listenbox" })
-                    .disabled(self.authenticating || self.stopping.is_some()).on_click(cx.listener(|view, _, _, cx| view.login(cx))))
+                .child(actions)
                 .child(div().text_size(px(12.)).text_color(t.muted).child("Uses your Listenbox account and podcast plan.")).into_any_element();
         }
         if self.import_open || self.show().is_none() {
