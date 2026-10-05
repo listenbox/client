@@ -38,15 +38,48 @@ pub fn prepare(directory: &Path, separate_audio: bool, cancel: &CancellationToke
         options.set("hls_segment_filename", &hls_path(&root.join("media.mp4"))?);
         remux(&mut input, &mp4, &output, kind, options, cancel)?;
     }
+    harmonize_target_durations(directory)?;
     std::fs::write(
         directory.join("hls/master.m3u8"),
         format!(
-            "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-INDEPENDENT-SEGMENTS\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio\",NAME=\"Audio\",DEFAULT=YES,AUTOSELECT=YES,URI=\"audio/index.m3u8\"\n#EXT-X-STREAM-INF:BANDWIDTH=12000000,RESOLUTION={width}x{height},AUDIO=\"audio\"\nvideo/index.m3u8\n"
+            "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-INDEPENDENT-SEGMENTS\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio\",NAME=\"Audio\",DEFAULT=YES,AUTOSELECT=YES,URI=\"audio/index.m3u8\"\n#EXT-X-STREAM-INF:BANDWIDTH=12000000,RESOLUTION={width}x{height},AUDIO=\"audio\",CLOSED-CAPTIONS=NONE\nvideo/index.m3u8\n"
         ),
     )?;
     let duration = playlist_duration(&directory.join("hls/video/index.m3u8"))?
         .min(playlist_duration(&directory.join("hls/audio/index.m3u8"))?);
     Ok(duration.ceil() as i64)
+}
+
+fn harmonize_target_durations(directory: &Path) -> Result<()> {
+    let mut playlists = Vec::new();
+    let mut target_duration = 0;
+    for kind in ["video", "audio"] {
+        let path = directory.join("hls").join(kind).join("index.m3u8");
+        let text = std::fs::read_to_string(&path)?;
+        let duration: u64 = text
+            .lines()
+            .find_map(|line| line.strip_prefix("#EXT-X-TARGETDURATION:"))
+            .context("HLS playlist has no target duration")?
+            .parse()?;
+        target_duration = target_duration.max(duration);
+        playlists.push((path, text));
+    }
+    ensure!(target_duration > 0, "invalid HLS target duration");
+    // Renditions must share a target duration even when copied video keyframes
+    // extend beyond the requested six-second segment length.
+    for (path, text) in playlists {
+        let mut normalized = String::new();
+        for line in text.lines() {
+            if line.starts_with("#EXT-X-TARGETDURATION:") {
+                normalized.push_str(&format!("#EXT-X-TARGETDURATION:{target_duration}"));
+            } else {
+                normalized.push_str(line);
+            }
+            normalized.push('\n');
+        }
+        std::fs::write(path, normalized)?;
+    }
+    Ok(())
 }
 
 fn add_stream(

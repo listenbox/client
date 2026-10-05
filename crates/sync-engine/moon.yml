@@ -49,3 +49,11 @@ tasks:
     options:
       runInCI: false
       cache: false
+  test-hls:
+    description: Validate complete multi-segment desktop HLS packages with Apple mediastreamvalidator.
+    deps: [client:prerequisites]
+    inputs: ['@group(sources)', 'project://client?group=sources']
+    command: kache cargo -- nextest run --locked --release --profile ci --success-output immediate -p listenbox-sync-engine --run-ignored only -E 'test(native_media_tests::apple_hls_)'
+    options:
+      cache: false
+      os: [macos, linux]

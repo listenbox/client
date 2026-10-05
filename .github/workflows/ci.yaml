@@ -25,6 +25,8 @@ jobs:
           version: '2.5.1'
           run-install: false
       - run: sudo apt-get update && sudo apt-get install -y build-essential cmake clang libclang-dev pkg-config shellcheck jq libasound2-dev libfontconfig1-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev libxcb1-dev libx11-xcb-dev libx11-dev libegl1-mesa-dev libvulkan-dev libssl-dev
+      - name: Install pinned Apple HLS validator
+        run: bash tools/install-apple-hls-tools.sh tools/hls_tools_1.26.143.14.tar
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest@0.9.146

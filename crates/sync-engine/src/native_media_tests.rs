@@ -201,3 +201,104 @@ fn cancelled_preparation_does_not_create_output() {
     assert!(error.to_string().contains("cancelled"));
     assert!(!output.exists());
 }
+
+async fn validate_long_gop_hls(separate_audio: bool) {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    fs::copy(fixture("avc-aac-long-gop.mp4"), root.join("source-video")).unwrap();
+    if separate_audio {
+        fs::copy(fixture("opus-long.webm"), root.join("source-audio")).unwrap();
+    }
+    let duration = media::prepare(root, separate_audio, &CancellationToken::new()).unwrap();
+    assert!((8..=9).contains(&duration));
+    let report_path = root.join("validation.json");
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(8),
+        tokio::process::Command::new("mediastreamvalidator")
+            .kill_on_drop(true)
+            .args(["--quiet", "--timeout", "5", "--validation-data-path"])
+            .arg(&report_path)
+            .arg(root.join("hls/master.m3u8"))
+            .output(),
+    )
+    .await
+    .expect("Apple HLS validation must finish within 8 seconds")
+    .expect("mediastreamvalidator is required; run client-engine:test-hls with Apple HLS tools installed");
+    let report: serde_json::Value = serde_json::from_slice(
+        &fs::read(&report_path).expect("validator must produce its structured report"),
+    )
+    .unwrap();
+    let variants = report["variants"].as_array().unwrap();
+    let media_variants: Vec<_> = variants.iter().filter(|v| v["url"].is_string()).collect();
+    assert_eq!(
+        media_variants.len(),
+        2,
+        "validator must visit audio and video: {report}"
+    );
+    for variant in media_variants {
+        let parsed = variant["parsedSegmentsCount"].as_u64().unwrap();
+        let processed = variant["processedSegmentsCount"].as_u64().unwrap();
+        assert!(
+            parsed > 1,
+            "fixture must exercise multiple byte-range segments: {variant}"
+        );
+        assert_eq!(
+            processed, parsed,
+            "validator must consume every media segment: {variant}"
+        );
+        let measured: u64 = variant["discontinuities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| d["measurements"]["measuredSegments"].as_u64().unwrap())
+            .sum();
+        assert_eq!(
+            measured, processed,
+            "validator must analyze media, not only playlists: {variant}"
+        );
+    }
+    fn blocking_findings(value: &serde_json::Value, findings: &mut Vec<serde_json::Value>) {
+        match value {
+            serde_json::Value::Object(object) => {
+                if let Some(level) = object.get("errorRequirementLevel").and_then(|v| v.as_u64())
+                    && (level == 1 || level >= 6)
+                {
+                    findings.push(value.clone());
+                }
+                for child in object.values() {
+                    blocking_findings(child, findings);
+                }
+            }
+            serde_json::Value::Array(array) => {
+                for child in array {
+                    blocking_findings(child, findings);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut findings = Vec::new();
+    blocking_findings(&report, &mut findings);
+    assert!(
+        findings.is_empty(),
+        "Apple HLS MUST-fix findings: {}",
+        serde_json::to_string_pretty(&findings).unwrap()
+    );
+    assert!(
+        output.status.success(),
+        "validator failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires Apple HLS tools; run moon run client-engine:test-hls"]
+async fn apple_hls_combined_long_gop_is_playable() {
+    validate_long_gop_hls(false).await;
+}
+
+#[tokio::test]
+#[ignore = "requires Apple HLS tools; run moon run client-engine:test-hls"]
+async fn apple_hls_separate_opus_long_gop_is_playable() {
+    validate_long_gop_hls(true).await;
+}
