@@ -55,6 +55,7 @@ pub struct Api {
     pub config: Config,
     pub credential: Option<String>,
     pub http: ClientWithMiddleware,
+    pub(crate) upload_http: ClientWithMiddleware,
     pub cancel: CancellationToken,
 }
 
@@ -70,6 +71,10 @@ impl Api {
             config,
             credential,
             http: Self::http_client(false)?,
+            upload_http: reqwest_middleware::ClientBuilder::new(
+                Self::transport_builder()?.build()?,
+            )
+            .build(),
             cancel,
         })
     }
@@ -83,9 +88,11 @@ impl Api {
     }
 
     pub(crate) fn http_client_builder() -> Result<reqwest::ClientBuilder> {
-        let mut builder = Client::builder()
-            .connect_timeout(Duration::from_secs(30))
-            .timeout(Duration::from_secs(30 * 60));
+        Ok(Self::transport_builder()?.timeout(Duration::from_secs(30 * 60)))
+    }
+
+    fn transport_builder() -> Result<reqwest::ClientBuilder> {
+        let mut builder = Client::builder().connect_timeout(Duration::from_secs(30));
         if let Some(path) = std::env::var_os("SSL_CERT_FILE") {
             for certificate in reqwest::Certificate::from_pem_bundle(&std::fs::read(path)?)? {
                 builder = builder.add_root_certificate(certificate);

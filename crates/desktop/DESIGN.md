@@ -260,8 +260,11 @@ YouTube in the browser, without a separate handoff button. The
 remain. Its Retry imports action starts another sync through the engine's saved
 work, including failures whose automatic attempts were exhausted. Disable it
 while the selected podcast is syncing or pausing, or lacks an active plan.
-Downloads show a horizontal progress bar, received/total bytes and
-measured throughput. There is no queue or upload pause/resume control.
+Downloads and uploads show a horizontal progress bar, transferred/total bytes
+and measured throughput. The sync bar measures bytes across prepared media when
+available, while the episode count advances only after publication. Publishing
+is a distinct stage after every upload part has been acknowledged. There is no
+separate queue or per-upload pause/resume control.
 Checkpoints recover crashes and unexpected interruptions. Empty states describe
 real next steps and never invent activity or podcast content.
 

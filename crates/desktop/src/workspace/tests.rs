@@ -8,6 +8,85 @@ use listenbox_sync_engine::config::Config;
 use std::{cell::Cell, rc::Rc, time::Duration};
 
 #[gpui_kit::test]
+#[ignore = "requires the parent API's acknowledged-body upload gate"]
+async fn live_upload_progress(cx: &mut TestAppContext) {
+    let config = Config::load(None).unwrap();
+    let control = std::fs::read_to_string(config.directory.join("test-upload-control")).unwrap();
+    let api =
+        listenbox_sync_engine::api::Api::new(config.clone(), CancellationToken::new()).unwrap();
+    let client = Client::desktop(config).unwrap();
+    let runtime = Arc::new(tokio::runtime::Runtime::new().unwrap());
+    let lifetime = CancellationToken::new();
+    let _stop = lifetime.clone().drop_guard();
+    let tasks = TaskTracker::new();
+    cx.update(gpui_kit::init);
+    cx.executor().allow_parking();
+    let mut view = None;
+    let handle = cx.open_window(size(px(840.), px(600.)), |window, cx| {
+        tokens::apply(window, cx);
+        let entity = cx
+            .new(|cx| Workspace::new(client, runtime.clone(), lifetime, tasks.clone(), window, cx));
+        view = Some(entity.clone());
+        Root::new(entity, window, cx)
+    });
+    let view = view.unwrap();
+    wait_for_import_state(cx, &view, &runtime, |view| {
+        view.progress
+            .items
+            .iter()
+            .any(|item| item.phase == Phase::Uploading)
+    })
+    .await;
+    runtime.block_on(async {
+        api.http
+            .get(control)
+            .timeout(Duration::from_secs(3))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+    });
+    // Flush the live engine snapshot before reading the rendered progress.
+    wait_for_import_state(cx, &view, &runtime, |view| {
+        view.progress == view.client.downloads().snapshot()
+    })
+    .await;
+    cx.update_window(handle.into(), |_, window, cx| {
+        let state = view.read(cx);
+        let slug = &state.show().unwrap().slug;
+        let progress = state.import_progress(slug);
+        assert_eq!(
+            progress.imported, 0,
+            "the storage acknowledgement is still gated"
+        );
+        assert!(
+            progress.percent() > 0.,
+            "transmitted media still renders an empty progress bar"
+        );
+        window.render_frame(cx);
+        window.click("pause-sync", cx);
+    })
+    .unwrap();
+    wait_for_import_state(cx, &view, &runtime, |view| view.jobs.is_empty()).await;
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(window.find("sync-now").label(), Some("Resume"));
+    })
+    .unwrap();
+    assert!(
+        view.read_with(cx, |view, _| view
+            .client
+            .downloads()
+            .snapshot()
+            .items
+            .iter()
+            .all(|item| item.phase == Phase::Queued)),
+        "Pause left an admitted transfer active"
+    );
+}
+
+#[gpui_kit::test]
 #[ignore = "requires the parent workspace's ephemeral Listenbox services"]
 async fn live_authorization_recovery(cx: &mut TestAppContext) {
     let config = Config::load(None).unwrap();

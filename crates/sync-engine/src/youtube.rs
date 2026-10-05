@@ -6,6 +6,7 @@ use crate::{
     publicapi as p,
 };
 use anyhow::{Context, Result, ensure};
+use futures_util::{StreamExt, TryStreamExt};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::{
@@ -553,6 +554,8 @@ pub(crate) async fn import_video(
         }
     };
     let objects = &manifest.objects;
+    let total = objects.iter().map(|object| object.byte_length as u64).sum();
+    transfer.start_upload(total, 0);
     tracing::info!(stage = "upload", "waiting for transfer capacity");
     let uploading = api
         .wait(async { Ok(transfer.acquire_stage(Stage::Upload).await) })
@@ -569,30 +572,67 @@ pub(crate) async fn import_video(
             response => return Err(api.response_error(response).await),
         };
         if session.status == p::EpisodePackageStatus::Completed {
+            transfer.start_upload(total, total);
             return Ok(());
         }
         journal.session(&manifest.operation_id, &session.upload_session_id)?;
         ensure!(session.part_size >= 5 << 20, "invalid package part size");
-        for (ordinal, object) in objects.iter().enumerate() {
-            let initial = session
+        let completed_object = |ordinal| {
+            session
                 .uploads
                 .iter()
-                .find(|upload| upload.object_index == ordinal as i64);
-            let mut offset = 0;
-            let mut number = 1;
-            while offset < object.byte_length {
-                let length = session.part_size.min(object.byte_length - offset);
+                .any(|upload| upload.object_index == ordinal as i64 && upload.parts.is_empty())
+        };
+        let mut saved = 0;
+        for (ordinal, object) in objects.iter().enumerate() {
+            if completed_object(ordinal) {
+                saved += object.byte_length as u64;
+                continue;
+            }
+            for number in 1..=1 + (object.byte_length - 1) / session.part_size {
                 if journal.has_part(&manifest.operation_id, ordinal, number)? {
-                    offset += length;
-                    number += 1;
-                    continue;
+                    saved += session
+                        .part_size
+                        .min(object.byte_length - (number - 1) * session.part_size)
+                        as u64;
                 }
-                let parts = if number == 1
-                    && let Some(initial) = initial
-                {
-                    initial.parts.clone()
+            }
+        }
+        transfer.start_upload(total, saved);
+        let session = &session;
+        let manifest = &manifest;
+        let directory = &directory;
+        let jobs = objects
+            .iter()
+            .enumerate()
+            .filter(|(ordinal, _)| !completed_object(*ordinal))
+            .flat_map(|(ordinal, object)| {
+                (1..=1 + (object.byte_length - 1) / session.part_size)
+                    .map(move |number| (ordinal, object, number))
+            });
+        futures_util::stream::iter(jobs)
+            .map(|(ordinal, object, number)| async move {
+                if journal.has_part(&manifest.operation_id, ordinal, number)? {
+                    return Ok::<_, anyhow::Error>(());
+                }
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)?
+                    .as_millis() as i64;
+                // Admission URLs can expire while earlier objects upload. Refresh at
+                // the point of use, retaining this operation's original multipart ID.
+                let initial = session
+                    .uploads
+                    .iter()
+                    .find(|upload| upload.object_index == ordinal as i64)
+                    .and_then(|upload| {
+                        upload.parts.iter().find(|part| {
+                            part.part_number == number && part.expires_at > now + 30_000
+                        })
+                    });
+                let part = if let Some(initial) = initial {
+                    initial.clone()
                 } else {
-                    let signed: p::PresignedEpisodeUploadParts = match api
+                    let signed = match api
                         .client()
                         .presign_episode_package_parts(p::PresignEpisodePackagePartsParams {
                             upload_session_id: session.upload_session_id.clone(),
@@ -606,15 +646,13 @@ pub(crate) async fn import_video(
                         p::PresignEpisodePackagePartsResponse::Status200(value) => value,
                         response => return Err(api.response_error(response).await),
                     };
-                    signed.parts
+                    ensure!(
+                        signed.parts.len() == 1 && signed.parts[0].part_number == number,
+                        "invalid signed package part"
+                    );
+                    signed.parts.into_iter().next().unwrap()
                 };
-                if parts.is_empty() {
-                    break;
-                }
-                ensure!(
-                    parts.len() == 1 && parts[0].part_number == number,
-                    "invalid signed package part"
-                );
+                let offset = (number - 1) * session.part_size;
                 let length = session.part_size.min(object.byte_length - offset);
                 crate::episodes::upload_part(
                     api,
@@ -622,15 +660,20 @@ pub(crate) async fn import_video(
                     offset as u64,
                     length as u64,
                     "PUT",
-                    &parts[0].upload_url,
+                    &part.upload_url,
                     Some(transfer),
                 )
                 .await?;
+                // Each acknowledged part becomes durable before scheduling more work.
+                // Dropping siblings on error preserves both saved and unknown writes;
+                // an explicit resume safely overwrites an unacknowledged part number.
                 journal.save_part(&manifest.operation_id, ordinal, number)?;
-                offset += length;
-                number += 1;
-            }
-        }
+                Ok(())
+            })
+            .buffer_unordered(4)
+            .try_collect::<Vec<_>>()
+            .await?;
+        transfer.phase(crate::downloads::Phase::Publishing);
         let completed = match api
             .client()
             .complete_episode_package(p::CompleteEpisodePackageParams {

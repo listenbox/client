@@ -13,6 +13,9 @@ pub(crate) enum Category {
 const CATEGORY_INFO: &str = "listenbox_error_category";
 
 pub(crate) fn classify(error: &anyhow::Error) -> Category {
+    if error.is::<crate::episodes::UploadStalled>() {
+        return Category::Retryable;
+    }
     if error
         .downcast_ref::<crate::api::HttpFailure>()
         .is_some_and(|error| (500..600).contains(&error.status))

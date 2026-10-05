@@ -369,6 +369,65 @@ async fn live_pipeline_stall() {
     );
 }
 
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires the parent API's admitted multipart and stalled acknowledgement gate"]
+async fn live_upload_idle_timeout() {
+    let config = Config::load(None).unwrap();
+    let fixture: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(config.directory.join("test-pipeline.json")).unwrap(),
+    )
+    .unwrap();
+    let api = Api::new(config, CancellationToken::new()).unwrap();
+    let control = fixture["control"].as_str().unwrap();
+    let path = std::path::Path::new(fixture["prelude"].as_str().unwrap());
+    let body = serde_json::from_str(fixture["mock"].as_str().unwrap()).unwrap();
+    let admitted = match api
+        .client()
+        .create_episode_package(
+            listenbox_sync_engine::publicapi::CreateEpisodePackageParams { body },
+        )
+        .await
+        .unwrap()
+    {
+        listenbox_sync_engine::publicapi::CreateEpisodePackageResponse::Status201(value) => value,
+        response => panic!("multipart admission failed: {:?}", response),
+    };
+    let url = &admitted.uploads[0].parts[0].upload_url;
+    let length = std::fs::metadata(path).unwrap().len();
+    let (hold_clock, clock_guard) = hold_manual_clock().await;
+    let upload =
+        listenbox_sync_engine::episodes::upload_part(&api, path, 0, length, "PUT", url, None);
+    let monitor = async {
+        api.http
+            .get(format!("{control}/ready"))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+        // Establish transmitted bytes before advancing the real upload deadline.
+        tokio::time::advance(Duration::from_secs(61)).await;
+    };
+    let (result, ()) = tokio::join!(upload, monitor);
+    assert!(result.unwrap_err().to_string().contains("upload stalled"));
+    tokio::time::resume();
+    drop(hold_clock);
+    clock_guard.await.unwrap();
+    // Resume explicitly on the same admitted part, without exercising retries.
+    api.http
+        .get(format!("{control}/release"))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    let etag =
+        listenbox_sync_engine::episodes::upload_part(&api, path, 0, length, "PUT", url, None)
+            .await
+            .unwrap();
+    assert!(!etag.is_empty());
+}
+
 struct DnsFailure {
     address: SocketAddr,
     fail_import: bool,

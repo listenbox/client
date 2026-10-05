@@ -67,6 +67,7 @@ pub enum Phase {
     Preparing,
     WaitingToUpload,
     Uploading,
+    Publishing,
     Retrying,
     Complete,
     Skipped,
@@ -90,6 +91,7 @@ impl Phase {
             Self::Preparing => "Preparing media",
             Self::WaitingToUpload => "Waiting to upload",
             Self::Uploading => "Uploading",
+            Self::Publishing => "Publishing",
             Self::Retrying => "Retrying",
             Self::Complete => "Complete",
             Self::Skipped => "Skipped",
@@ -126,6 +128,8 @@ pub struct Download {
     pub phase: Phase,
     pub attempt: usize,
     pub total: u64,
+    pub upload_total: u64,
+    pub uploaded: u64,
     pub ranges: Vec<ByteRange>,
     pub error: Option<String>,
     rate: Option<Rate>,
@@ -145,6 +149,8 @@ impl Download {
             phase: Phase::Queued,
             attempt: 0,
             total: 0,
+            upload_total: 0,
+            uploaded: 0,
             ranges: Vec::new(),
             error: None,
             rate: None,
@@ -156,7 +162,7 @@ impl Download {
     }
 
     pub fn bytes_per_second(&self) -> u64 {
-        if self.phase != Phase::Downloading {
+        if !matches!(self.phase, Phase::Downloading | Phase::Uploading) {
             return 0;
         }
         self.rate
@@ -449,6 +455,17 @@ impl Transfer {
 
     pub(crate) fn uploaded(&self, bytes: u64) {
         let mut state = self.manager.state.write();
+        if let Some(item) = state
+            .snapshot
+            .items
+            .iter_mut()
+            .find(|item| item.id == self.id)
+        {
+            item.uploaded = (item.uploaded + bytes).min(item.upload_total);
+            if let Some(rate) = &mut item.rate {
+                rate.record(bytes, Instant::now());
+            }
+        }
         state.bytes[Stage::Upload as usize] += bytes;
         state.sample(tokio::time::Instant::now());
         drop(state);
@@ -461,6 +478,8 @@ impl Transfer {
             item.attempt = attempt;
             item.error = None;
             item.total = 0;
+            item.upload_total = 0;
+            item.uploaded = 0;
             item.ranges.clear();
             item.rate = None;
         });
@@ -468,6 +487,14 @@ impl Transfer {
 
     pub fn phase(&self, phase: Phase) {
         self.update(|item| item.phase = phase);
+    }
+
+    pub(crate) fn start_upload(&self, total: u64, saved: u64) {
+        self.update(|item| {
+            item.upload_total = total;
+            item.uploaded = saved.min(total);
+            item.rate = Some(Rate::new(Instant::now()));
+        });
     }
 
     pub fn title(&self, title: &str) {

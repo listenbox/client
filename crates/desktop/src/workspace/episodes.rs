@@ -326,22 +326,27 @@ impl Workspace {
         if episode.is_none()
             && let Some(item) = item
         {
-            if item.phase == Phase::Downloading {
-                let value = if item.total == 0 {
+            if matches!(item.phase, Phase::Downloading | Phase::Uploading) {
+                let (received, total) = if item.phase == Phase::Uploading {
+                    (item.uploaded, item.upload_total)
+                } else {
+                    (item.received(), item.total)
+                };
+                let value = if total == 0 {
                     0.
                 } else {
-                    100. * item.received() as f32 / item.total as f32
+                    100. * received as f32 / total as f32
                 };
                 element = element
                     .child(
                         Progress::new(SharedString::from(format!("progress-{}", item.id)))
                             .value(value)
-                            .accessibility_label(format!("Downloading {}", item.title)),
+                            .accessibility_label(format!("{} {}", item.phase.label(), item.title)),
                     )
                     .child(div().text_size(px(12.)).text_color(t.muted).child(format!(
                         "{:.1} / {:.1} MB · {:.1} MB/s",
-                        item.received() as f64 / 1_000_000.,
-                        item.total as f64 / 1_000_000.,
+                        received as f64 / 1_000_000.,
+                        total as f64 / 1_000_000.,
                         item.bytes_per_second() as f64 / 1_000_000.
                     )));
             }

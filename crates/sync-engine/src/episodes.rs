@@ -280,6 +280,16 @@ fn saved_progress(record: &Resume) {
     );
 }
 
+#[derive(Debug)]
+pub(crate) struct UploadStalled;
+
+impl std::fmt::Display for UploadStalled {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("upload stalled for 60 seconds; resumable upload state preserved")
+    }
+}
+impl std::error::Error for UploadStalled {}
+
 pub async fn upload_part(
     api: &Api,
     path: &Path,
@@ -294,32 +304,56 @@ pub async fn upload_part(
     let transfer = transfer.cloned();
     // Measure bytes as reqwest consumes the streaming body, rather than only
     // observing a multipart acknowledgement after an arbitrarily large part.
-    let stream = tokio_util::io::ReaderStream::new(file.take(length)).inspect_ok(move |chunk| {
-        if let Some(transfer) = &transfer {
-            transfer.uploaded(chunk.len() as u64);
+    let (progress, mut changed) = tokio::sync::watch::channel(tokio::time::Instant::now());
+    let stream = tokio_util::io::ReaderStream::with_capacity(file.take(length), 128 << 10)
+        .inspect_ok(move |chunk| {
+            progress.send_replace(tokio::time::Instant::now());
+            if let Some(transfer) = &transfer {
+                transfer.uploaded(chunk.len() as u64);
+            }
+        });
+    let request = async {
+        let response = api
+            .send(
+                api.upload_http
+                    .request(method.parse()?, url)
+                    .header("Content-Length", length)
+                    .body(reqwest::Body::wrap_stream(stream)),
+            )
+            .await?;
+        ensure!(
+            response.status().is_success(),
+            "upload source part returned HTTP {}",
+            response.status()
+        );
+        let etag = response
+            .headers()
+            .get("ETag")
+            .context("upload part returned no ETag")?
+            .to_str()?
+            .to_owned();
+        api.bytes(response, 64 << 10).await?;
+        Ok(etag)
+    };
+    tokio::pin!(request);
+    let mut body_open = true;
+    let idle_timeout = std::time::Duration::from_secs(60);
+    // An active upload may take hours. Only stalled body/acknowledgement progress
+    // expires; cancellation still drops the request and preserves the journal.
+    loop {
+        let deadline = *changed.borrow() + idle_timeout;
+        tokio::select! {
+            biased;
+            result = &mut request => return result,
+            _ = tokio::time::sleep_until(deadline) => {
+                // Polling the request above may have just consumed another chunk.
+                if changed.borrow().elapsed() >= idle_timeout {
+                    return Err(UploadStalled.into());
+                }
+            },
+            result = changed.changed(), if body_open => { body_open = result.is_ok(); }
         }
-    });
-    let response = api
-        .send(
-            api.http
-                .request(method.parse()?, url)
-                .header("Content-Length", length)
-                .body(reqwest::Body::wrap_stream(stream)),
-        )
-        .await?;
-    ensure!(
-        response.status().is_success(),
-        "upload source part returned HTTP {}",
-        response.status()
-    );
-    let etag = response
-        .headers()
-        .get("ETag")
-        .context("upload part returned no ETag")?
-        .to_str()?
-        .to_owned();
-    api.bytes(response, 64 << 10).await?;
-    Ok(etag)
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, serde::Serialize)]

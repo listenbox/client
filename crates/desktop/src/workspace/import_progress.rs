@@ -9,13 +9,29 @@ pub(super) struct ImportProgress {
     downloading: usize,
     preparing: usize,
     uploading: usize,
+    publishing: usize,
+    upload_bytes: u64,
+    upload_total: u64,
+    upload_rate: u64,
     retrying: usize,
     not_imported: usize,
 }
 
 impl ImportProgress {
+    pub fn accessibility_label(&self) -> String {
+        if self.upload_total > 0 {
+            "Prepared media upload progress".into()
+        } else if self.total == 0 {
+            "Checking the YouTube source".into()
+        } else {
+            format!("{} of {} episodes imported", self.imported, self.total)
+        }
+    }
+
     pub fn percent(&self) -> f32 {
-        if self.total == 0 {
+        if self.upload_total > 0 {
+            100. * self.upload_bytes as f32 / self.upload_total as f32
+        } else if self.total == 0 {
             0.
         } else {
             100. * self.imported as f32 / self.total as f32
@@ -27,7 +43,8 @@ impl ImportProgress {
             (self.resolving, "reading media"),
             (self.downloading, "downloading"),
             (self.preparing, "preparing"),
-            (self.uploading, "uploading & publishing"),
+            (self.uploading, "uploading"),
+            (self.publishing, "publishing"),
             (self.retrying, "retrying"),
             (self.queued, "queued"),
         ];
@@ -39,7 +56,17 @@ impl ImportProgress {
         if active.is_empty() {
             "Finishing the sync…".into()
         } else {
-            active.join(" · ")
+            let stages = active.join(" · ");
+            if self.upload_total > 0 {
+                format!(
+                    "{stages} · {:.1} / {:.1} MB sent · {:.1} MB/s",
+                    self.upload_bytes as f64 / 1_000_000.,
+                    self.upload_total as f64 / 1_000_000.,
+                    self.upload_rate as f64 / 1_000_000.
+                )
+            } else {
+                stages
+            }
         }
     }
 }
@@ -185,6 +212,10 @@ impl Workspace {
             .filter(|item| item.source_id == slug)
         {
             progress.total += 1;
+            progress.upload_bytes += item.uploaded;
+            progress.upload_total += item.upload_total;
+            progress.upload_rate +=
+                item.bytes_per_second() * u64::from(item.phase == Phase::Uploading);
             match item.phase {
                 Phase::Complete => progress.imported += 1,
                 Phase::Queued | Phase::WaitingToPrepare | Phase::WaitingToUpload => {
@@ -194,6 +225,7 @@ impl Workspace {
                 Phase::Downloading => progress.downloading += 1,
                 Phase::Preparing => progress.preparing += 1,
                 Phase::Uploading => progress.uploading += 1,
+                Phase::Publishing => progress.publishing += 1,
                 Phase::Retrying => progress.retrying += 1,
                 Phase::Failed | Phase::Skipped => progress.not_imported += 1,
             }
@@ -267,14 +299,7 @@ impl Workspace {
                         .color(t.action)
                         .loading(progress.total == 0 && !pausing)
                         .value(progress.percent())
-                        .accessibility_label(if progress.total == 0 {
-                            "Checking the YouTube source".into()
-                        } else {
-                            format!(
-                                "{} of {} episodes imported",
-                                progress.imported, progress.total
-                            )
-                        }),
+                        .accessibility_label(progress.accessibility_label()),
                 )
                 .child(
                     div()

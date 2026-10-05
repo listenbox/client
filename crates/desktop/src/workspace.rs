@@ -1155,8 +1155,9 @@ impl Workspace {
                                             .color(t.action)
                                             .value(progress.percent())
                                             .accessibility_label(format!(
-                                                "{}: {} of {} episodes imported",
-                                                show.title, progress.imported, progress.total
+                                                "{}: {}",
+                                                show.title,
+                                                progress.accessibility_label()
                                             )),
                                         )
                                     }),
