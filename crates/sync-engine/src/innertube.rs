@@ -3,7 +3,8 @@ use crate::api::{Api, read_bounded};
 use crate::cookies::{CookieJar, SignInRequired};
 use anyhow::{Context, Result, bail, ensure};
 use sha1::{Digest, Sha1};
-use std::collections::HashSet;
+use std::{collections::HashSet, future::Future};
+use tokio_util::task::TaskTracker;
 use youtubei::{
     BrowseOptions, Client, Engine, EngineOptions, FetchRequest, FetchResponse, Format,
     GetVideoInfoOptions, Innertube, Player, Playlist, SessionOptions, UniversalCache, VideoInfo,
@@ -17,6 +18,7 @@ pub struct YouTube {
     client: Innertube,
     user_agent: String,
     playback_client: Client,
+    cookie_writes: TaskTracker,
 }
 
 pub struct PlaylistSnapshot {
@@ -75,101 +77,130 @@ pub struct Stream {
 }
 
 impl YouTube {
+    #[tracing::instrument(name = "youtube.initialize", skip_all)]
     pub async fn new(api: &Api) -> Result<Self> {
-        let jar = CookieJar::new(&api.config.directory);
-        let snapshot_jar = jar.clone();
-        let initial = tokio::task::spawn_blocking(move || snapshot_jar.snapshot()).await??;
-        let cookie = initial.header(&url::Url::parse("https://www.youtube.com/")?);
-        let playback_client = if cookie.split("; ").any(|part| {
-            part.split_once('=').is_some_and(|(name, value)| {
-                !value.is_empty()
-                    && matches!(name, "SAPISID" | "__Secure-1PAPISID" | "__Secure-3PAPISID")
-            })
-        }) {
-            Client::WebEmbedded
-        } else {
-            Client::VisionOs
-        };
-        let engine = Engine::with_options(EngineOptions::default()).await?;
-        let cancel = api.cancel.clone();
-        engine
-            .set_interrupt_handler(move || cancel.is_cancelled())
-            .await;
-        // UI diagnostics (including dynamically generated parsers) do not
-        // establish playlist loss. The listing's is_complete flag does.
-        let callback = engine
-            .value_with(|ctx| {
-                Ok(
-                    youtubei::rquickjs::Function::new(ctx, |_: youtubei::rquickjs::Object<'_>| {})?
-                        .into_value(),
-                )
-            })
-            .await?;
-        engine
-            .export(&["Parser"])
-            .await?
-            .call("setParserErrorHandler", &[callback.into()])
-            .await?;
-        let mut api = api.clone();
-        // Never forward browser credentials through a redirect.
-        api.http = Api::http_client(true)?;
-        let continuations = std::sync::Arc::new(parking_lot::Mutex::new(HashSet::new()));
-        let fetch = engine
-            .fetch_with(move |request| {
-                let api = api.clone();
-                let jar = jar.clone();
-                let continuations = continuations.clone();
-                async move {
-                    if request.url.contains("/youtubei/v1/browse")
-                        && let Some(token) = request
-                            .body
-                            .as_deref()
-                            .and_then(|body| serde_json::from_slice::<serde_json::Value>(body).ok())
-                            .and_then(|body| body["continuation"].as_str().map(str::to_owned))
-                        && !continuations.lock().insert(token)
-                    {
-                        return Err(youtubei::Error::new("Repeated YouTube continuation"));
-                    }
-                    fetch(&api, &jar, request)
-                        .await
-                        .map_err(crate::errors::youtube_error)
-                }
-            })
-            .await?;
-        let cache = UniversalCache::new(&engine, false, None).await?;
-        let client = Innertube::create_in(
-            &engine,
-            SessionOptions {
-                lang: Some("en".into()),
-                location: Some("US".into()),
-                cache: Some(cache.as_cache()),
-                fetch: Some(fetch),
-                cookie: (!cookie.is_empty()).then_some(cookie),
-                generate_session_locally: Some(false),
-                fail_fast: Some(true),
-                // Web and embedded playback need the player signature timestamp.
-                retrieve_player: Some(true),
-                retrieve_innertube_config: Some(false),
-                ..Default::default()
-            },
-        )
-        .await
-        .context("initialize YouTube")?;
-        let user_agent = match playback_client {
-            Client::VisionOs => {
+        let cookie_writes = TaskTracker::new();
+        // Closed trackers still admit tasks. Closing makes wait() resolve when
+        // the admitted writes reach zero, including after a JS promise is dropped.
+        cookie_writes.close();
+        let result = api
+            .wait(async {
+                let jar = CookieJar::new(&api.config.directory);
+                let snapshot_jar = jar.clone();
+                let initial =
+                    tokio::task::spawn_blocking(move || snapshot_jar.snapshot()).await??;
+                let cookie = initial.header(&url::Url::parse("https://www.youtube.com/")?);
+                let playback_client = if cookie.split("; ").any(|part| {
+                    part.split_once('=').is_some_and(|(name, value)| {
+                        !value.is_empty()
+                            && matches!(name, "SAPISID" | "__Secure-1PAPISID" | "__Secure-3PAPISID")
+                    })
+                }) {
+                    Client::WebEmbedded
+                } else {
+                    Client::VisionOs
+                };
+                let cancel = api.cancel.clone();
+                let engine = Engine::with_options(EngineOptions {
+                    interrupt_handler: Some(Box::new(move || cancel.is_cancelled())),
+                    ..Default::default()
+                })
+                .await?;
+                // UI diagnostics (including dynamically generated parsers) do not
+                // establish playlist loss. The listing's is_complete flag does.
+                let callback = engine
+                    .value_with(|ctx| {
+                        Ok(youtubei::rquickjs::Function::new(
+                            ctx,
+                            |_: youtubei::rquickjs::Object<'_>| {},
+                        )?
+                        .into_value())
+                    })
+                    .await?;
                 engine
-                    .export(&["Constants", "CLIENTS", "VISIONOS", "USER_AGENT"])
+                    .export(&["Parser"])
                     .await?
-                    .deserialize::<String>()
-                    .await?
-            }
-            _ => client.session().await?.user_agent().await?,
-        };
-        Ok(Self {
-            client,
-            user_agent,
-            playback_client,
-        })
+                    .call("setParserErrorHandler", &[callback.into()])
+                    .await?;
+                let mut api = api.clone();
+                // Never forward browser credentials through a redirect.
+                api.http = Api::http_client(true)?;
+                let continuations = std::sync::Arc::new(parking_lot::Mutex::new(HashSet::new()));
+                let writes = cookie_writes.clone();
+                let fetch = engine
+                    .fetch_with(move |request| {
+                        let api = api.clone();
+                        let jar = jar.clone();
+                        let continuations = continuations.clone();
+                        let writes = writes.clone();
+                        async move {
+                            if request.url.contains("/youtubei/v1/browse")
+                                && let Some(token) = request
+                                    .body
+                                    .as_deref()
+                                    .and_then(|body| {
+                                        serde_json::from_slice::<serde_json::Value>(body).ok()
+                                    })
+                                    .and_then(|body| {
+                                        body["continuation"].as_str().map(str::to_owned)
+                                    })
+                                && !continuations.lock().insert(token)
+                            {
+                                return Err(youtubei::Error::new("Repeated YouTube continuation"));
+                            }
+                            fetch(&api, &jar, &writes, request)
+                                .await
+                                .map_err(crate::errors::youtube_error)
+                        }
+                    })
+                    .await?;
+                let cache = UniversalCache::new(&engine, false, None).await?;
+                let client = Innertube::create_in(
+                    &engine,
+                    SessionOptions {
+                        lang: Some("en".into()),
+                        location: Some("US".into()),
+                        cache: Some(cache.as_cache()),
+                        fetch: Some(fetch),
+                        cookie: (!cookie.is_empty()).then_some(cookie),
+                        generate_session_locally: Some(false),
+                        fail_fast: Some(true),
+                        // Web and embedded playback need the player signature timestamp.
+                        retrieve_player: Some(true),
+                        retrieve_innertube_config: Some(false),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .context("initialize YouTube")?;
+                let user_agent = match playback_client {
+                    Client::VisionOs => {
+                        engine
+                            .export(&["Constants", "CLIENTS", "VISIONOS", "USER_AGENT"])
+                            .await?
+                            .deserialize::<String>()
+                            .await?
+                    }
+                    _ => client.session().await?.user_agent().await?,
+                };
+                Ok(Self {
+                    client,
+                    user_agent,
+                    playback_client,
+                    cookie_writes: cookie_writes.clone(),
+                })
+            })
+            .await;
+        cookie_writes.wait().await;
+        result
+    }
+
+    async fn wait<T>(&self, api: &Api, work: impl Future<Output = Result<T>>) -> Result<T> {
+        let result = api.wait(work).await;
+        // Cancelling JS/network waits must not detach an admitted atomic cookie
+        // replacement. Its lock wait is cancellable; an acquired commit finishes.
+        self.cookie_writes.wait().await;
+        result
     }
 
     pub async fn snapshot(&self, api: &Api, id: &str) -> Result<PlaylistSnapshot> {
@@ -179,8 +210,9 @@ impl YouTube {
 
     /// Read only the first page before creating an audio podcast. Video
     /// admission completes the same scan before checking total storage.
+    #[tracing::instrument(name = "youtube.playlist", skip_all, fields(playlist_id = id))]
     pub(crate) async fn playlist_head(&self, api: &Api, id: &str) -> Result<(String, Playlist)> {
-        api.wait(async {
+        self.wait(api, async {
             let actions = self.client.actions().await?;
             let response = actions
                 .browse(BrowseOptions {
@@ -212,13 +244,14 @@ impl YouTube {
         .await
     }
 
+    #[tracing::instrument(name = "youtube.scan", skip_all)]
     pub(crate) async fn complete_playlist(
         &self,
         api: &Api,
         mut page: Playlist,
         mut progress: impl FnMut(PlaylistScan),
     ) -> Result<PlaylistSnapshot> {
-        api.wait(async {
+        self.wait(api, async {
             let mut title = None;
             let mut artwork_url = None;
             let mut present = Vec::new();
@@ -362,7 +395,7 @@ impl YouTube {
     /// A single-video show still reconciles source metadata after publication,
     /// without resolving streams or downloading its media again.
     pub(crate) async fn video_snapshot(&self, api: &Api, id: &str) -> Result<PlaylistSnapshot> {
-        api.wait(async {
+        self.wait(api, async {
             let (source_title, artwork_url, duration_seconds) =
                 match self.player_info(id, Client::Web).await? {
                     PlayerResponse::Available(info) => {
@@ -452,8 +485,9 @@ impl YouTube {
         Ok(PlayerResponse::Available(info))
     }
 
+    #[tracing::instrument(name = "youtube.media", skip_all, fields(video_id = id))]
     pub async fn media(&self, api: &Api, id: &str, collection: &str) -> Result<Playback> {
-        api.wait(async {
+        self.wait(api, async {
             let info = match self.player_info(id, Client::Web).await? {
                 PlayerResponse::Available(info) => info,
                 PlayerResponse::Unavailable(reason) => return Ok(Playback::Unavailable(reason)),
@@ -646,7 +680,12 @@ impl YouTube {
     }
 }
 
-async fn fetch(api: &Api, jar: &CookieJar, input: FetchRequest) -> Result<FetchResponse> {
+async fn fetch(
+    api: &Api,
+    jar: &CookieJar,
+    writes: &TaskTracker,
+    input: FetchRequest,
+) -> Result<FetchResponse> {
     let url = url::Url::parse(&input.url)?;
     let host = url.host_str().unwrap_or("").to_owned();
     ensure!(
@@ -721,9 +760,16 @@ async fn fetch(api: &Api, jar: &CookieJar, input: FetchRequest) -> Result<FetchR
         .filter_map(|value| value.to_str().ok().map(str::to_owned))
         .collect::<Vec<_>>();
     let update_jar = jar.clone();
-    // Commit response cookies before reading the body. Cancellation or a body
-    // failure must not discard a rotation that YouTube already performed.
-    tokio::task::spawn_blocking(move || update_jar.update(&snapshot, &url, &updates)).await??;
+    let cancel = api.cancel.clone();
+    // Commit response cookies before reading the body. Once the writer acquires
+    // its lock, cancellation or body failure cannot discard an admitted rotation.
+    let span = tracing::Span::current();
+    writes
+        .spawn_blocking(move || {
+            let _entered = span.enter();
+            update_jar.update(&snapshot, &url, &updates, &cancel)
+        })
+        .await??;
     let status = response.status().as_u16();
     let headers = response
         .headers()

@@ -4,6 +4,7 @@ pub mod api;
 pub mod artwork;
 mod audio;
 pub mod auth;
+mod cancellation;
 #[rustfmt::skip]
 mod clientconfig;
 pub mod config;

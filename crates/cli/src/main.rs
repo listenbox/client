@@ -287,9 +287,10 @@ async fn run(cli: Cli, cancel: CancellationToken) -> Result<()> {
     match cli.command {
         Command::YoutubeCookies { command } => {
             let jar = listenbox_sync_engine::cookies::CookieJar::new(&api.config.directory);
+            let cancel = api.cancel.clone();
             tokio::task::spawn_blocking(move || match command {
-                CookieCommand::Import { file } => jar.import_file(&file),
-                CookieCommand::Remove => jar.remove(),
+                CookieCommand::Import { file } => jar.import_file(&file, &cancel),
+                CookieCommand::Remove => jar.remove(&cancel),
             })
             .await??;
             println!("YouTube cookies updated. Sync your podcast to continue.");

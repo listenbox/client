@@ -12,6 +12,7 @@ use std::{
     path::Path,
     time::{Duration, Instant},
 };
+use tracing::Instrument;
 use url::Url;
 
 enum ImportListing {
@@ -392,6 +393,8 @@ pub(crate) enum ImportOutcome {
     Skipped(String),
 }
 
+#[tracing::instrument(name = "media.transfer", skip_all,
+    fields(show_slug = work.slug, video_id = work.id, operation_id = tracing::field::Empty))]
 pub(crate) async fn import_video(
     api: &Api,
     youtube: &YouTube,
@@ -407,10 +410,12 @@ pub(crate) async fn import_video(
     } = work;
     let source_url = format!("https://www.youtube.com/watch?v={id}");
     let operation_id = journal.operation(&api.config.api_origin, slug, &source_url, collection)?;
+    tracing::Span::current().record("operation_id", operation_id.as_str());
     let directory = journal.directory(&operation_id)?;
     let saved = journal.prepared(&operation_id)?;
     let manifest = match saved {
         Some(manifest) => {
+            tracing::info!("reusing prepared media");
             eprintln!(
                 "FFmpeg preparation reused show_slug={slug} video_id={id} operation_id={operation_id}"
             );
@@ -425,6 +430,7 @@ pub(crate) async fn import_video(
                     std::fs::remove_file(path)?;
                 }
             }
+            tracing::info!(stage = "download", "waiting for transfer capacity");
             let downloading = api
                 .wait(async { Ok(transfer.acquire_stage(Stage::Download).await) })
                 .await?;
@@ -466,6 +472,7 @@ pub(crate) async fn import_video(
                 }
                 Ok(Playback::Available(media))
             }
+            .instrument(tracing::info_span!("media.download"))
             .await;
             // Range writes are joined before handing these files to FFmpeg.
             downloading.finish(&downloaded, api.cancel.is_cancelled());
@@ -473,6 +480,7 @@ pub(crate) async fn import_video(
                 Playback::Available(media) => media,
                 Playback::Unavailable(reason) => return Ok(ImportOutcome::Skipped(reason)),
             };
+            tracing::info!(stage = "prepare", "waiting for transfer capacity");
             let preparing = api
                 .wait(async { Ok(transfer.acquire_stage(Stage::Prepare).await) })
                 .await?;
@@ -485,7 +493,9 @@ pub(crate) async fn import_video(
                 media.title,
             );
             // Join the FFmpeg owner before releasing files, including after cancellation.
+            let span = tracing::info_span!("media.prepare");
             let duration = tokio::task::spawn_blocking(move || {
+                let _entered = span.enter();
                 // The actual blocking worker owns the CPU permit, including if
                 // its async caller is dropped. Normal cancellation still joins it.
                 let _preparing = preparing;
@@ -504,6 +514,9 @@ pub(crate) async fn import_video(
                         crate::media::prepare(&root, separate_audio, &cancel)
                     }
                 })();
+                tracing::info!(success = result.is_ok(), elapsed_ms = started.elapsed().as_millis() as u64,
+                    cancelled = cancel.is_cancelled(), error = ?result.as_ref().err().map(ToString::to_string),
+                    "media preparation finished");
                 eprintln!(
                     "FFmpeg preparation finished {preparation} elapsed_ms={} result={} media_duration_seconds={:?} error={:?}",
                     started.elapsed().as_millis(),
@@ -533,6 +546,7 @@ pub(crate) async fn import_video(
         }
     };
     let objects = &manifest.objects;
+    tracing::info!(stage = "upload", "waiting for transfer capacity");
     let uploading = api
         .wait(async { Ok(transfer.acquire_stage(Stage::Upload).await) })
         .await?;
@@ -626,6 +640,7 @@ pub(crate) async fn import_video(
         );
         Ok(())
     }
+    .instrument(tracing::info_span!("media.upload"))
     .await;
     uploading.finish(&result, api.cancel.is_cancelled());
     // Failure and cancellation preserve this operation for the next explicit sync.

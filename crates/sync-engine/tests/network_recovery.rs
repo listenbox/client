@@ -477,7 +477,10 @@ async fn live_network_recovery() {
     };
     let items = engine.downloads.snapshot().items;
     let client = Client::desktop(api.config.clone()).unwrap();
-    let state = client.sync_state(slug.to_owned()).await.unwrap();
+    let state = client
+        .sync_state(slug.to_owned(), CancellationToken::new())
+        .await
+        .unwrap();
     assert_eq!(
         state.last_synced.is_some(),
         result.is_ok(),

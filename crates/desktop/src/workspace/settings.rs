@@ -25,16 +25,13 @@ impl Workspace {
         if !self.cookie_busy {
             self.cookie_busy = true;
             let (jar, sender) = (self.client.cookie_jar(), self.sender.clone());
-            self.tasks.spawn_on(
-                async move {
-                    let result = tokio::task::spawn_blocking(move || jar.is_enabled())
-                        .await
-                        .map_err(anyhow::Error::from)
-                        .and_then(|result| result);
-                    let _ = sender.send(Message::CookieStatus(result));
-                },
-                self.runtime.handle(),
-            );
+            self.spawn("cookie status", async move {
+                let result = tokio::task::spawn_blocking(move || jar.is_enabled())
+                    .await
+                    .map_err(anyhow::Error::from)
+                    .and_then(|result| result);
+                let _ = sender.send(Message::CookieStatus(result));
+            });
         }
         cx.notify();
     }
@@ -49,22 +46,22 @@ impl Workspace {
         self.cookie_input
             .update(cx, |input, cx| input.set_disabled(true, cx));
         let (jar, sender) = (self.client.cookie_jar(), self.sender.clone());
-        self.tasks.spawn_on(
-            async move {
-                let result = tokio::task::spawn_blocking(move || {
-                    if remove {
-                        jar.remove()
-                    } else {
-                        jar.import(&text)
-                    }
-                })
-                .await
-                .map_err(anyhow::Error::from)
-                .and_then(|result| result);
-                let _ = sender.send(Message::CookiesSaved(!remove, result));
-            },
-            self.runtime.handle(),
-        );
+        let cancel = self.cancel.clone();
+        self.spawn("save cookies", async move {
+            let span = tracing::Span::current();
+            let result = tokio::task::spawn_blocking(move || {
+                let _entered = span.enter();
+                if remove {
+                    jar.remove(&cancel)
+                } else {
+                    jar.import(&text, &cancel)
+                }
+            })
+            .await
+            .map_err(anyhow::Error::from)
+            .and_then(|result| result);
+            let _ = sender.send(Message::CookiesSaved(!remove, result));
+        });
         cx.notify();
     }
     pub(super) fn cookies_received(

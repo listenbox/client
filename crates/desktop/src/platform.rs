@@ -108,7 +108,7 @@ pub fn install_actions(view: &Entity<Workspace>, cx: &mut App) {
     refresh_menus(cx);
 }
 
-fn application_menus() -> Vec<OwnedMenu> {
+pub(crate) fn application_menus() -> Vec<OwnedMenu> {
     let items = vec![
         MenuItem::action("Settings…", OpenSettings),
         MenuItem::action("Check for Updates…", CheckUpdates).disabled(!crate::updater::can_check()),

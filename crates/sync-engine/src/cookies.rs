@@ -14,6 +14,7 @@ use std::{
     io::Read,
     path::{Path, PathBuf},
 };
+use tokio_util::sync::CancellationToken;
 use url::Url;
 
 pub const GUIDE_URL: &str =
@@ -87,7 +88,7 @@ impl CookieJar {
     fn path(&self) -> PathBuf {
         self.directory.join("jar.json")
     }
-    fn write_lock(&self) -> Result<File> {
+    fn write_lock(&self, cancel: &CancellationToken) -> Result<File> {
         std::fs::create_dir_all(&self.directory)
             .context("Create private YouTube cookie directory")?;
         #[cfg(unix)]
@@ -102,7 +103,8 @@ impl CookieJar {
             .write(true)
             .open(self.directory.join("write.lock"))
             .context("Open YouTube cookie lock")?;
-        file.lock().context("Lock YouTube cookie updates")?;
+        crate::cancellation::file(&file, cancel, "YouTube cookies")
+            .context("Lock YouTube cookie updates")?;
         Ok(file)
     }
     fn save(&self, saved: &Snapshot) -> Result<()> {
@@ -136,12 +138,12 @@ impl CookieJar {
     pub fn is_enabled(&self) -> Result<bool> {
         Ok(self.snapshot()?.enabled)
     }
-    pub fn import_file(&self, path: &Path) -> Result<()> {
+    pub fn import_file(&self, path: &Path, cancel: &CancellationToken) -> Result<()> {
         let bytes = read_bounded(File::open(path).context("Open cookie export")?)?;
         let text = std::str::from_utf8(&bytes).context("Cookie export must be UTF-8 text")?;
-        self.import(text)
+        self.import(text, cancel)
     }
-    pub fn import(&self, text: &str) -> Result<()> {
+    pub fn import(&self, text: &str, cancel: &CancellationToken) -> Result<()> {
         let cookies = parse_netscape(text)?;
         let saved = Snapshot {
             generation: revision(),
@@ -154,11 +156,11 @@ impl CookieJar {
                 })
                 .collect(),
         };
-        let _lock = self.write_lock()?;
+        let _lock = self.write_lock(cancel)?;
         self.save(&saved)
     }
-    pub fn remove(&self) -> Result<()> {
-        let _lock = self.write_lock()?;
+    pub fn remove(&self, cancel: &CancellationToken) -> Result<()> {
+        let _lock = self.write_lock(cancel)?;
         // Persist the new generation, so already-running requests cannot restore it.
         self.save(&Snapshot {
             generation: revision(),
@@ -166,7 +168,13 @@ impl CookieJar {
         })
         .context("Remove YouTube cookies")
     }
-    pub(crate) fn update(&self, base: &Snapshot, url: &Url, headers: &[String]) -> Result<()> {
+    pub(crate) fn update(
+        &self,
+        base: &Snapshot,
+        url: &Url,
+        headers: &[String],
+        cancel: &CancellationToken,
+    ) -> Result<()> {
         if !base.enabled
             || headers.is_empty()
             || url.scheme() != "https"
@@ -191,7 +199,7 @@ impl CookieJar {
         if updates.is_empty() {
             return Ok(());
         }
-        let _lock = self.write_lock()?;
+        let _lock = self.write_lock(cancel)?;
         let mut current = self.snapshot()?;
         if current.generation != base.generation || !current.enabled {
             return Ok(());

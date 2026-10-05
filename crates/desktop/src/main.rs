@@ -4,6 +4,7 @@
 )]
 
 mod artwork;
+mod diagnostics;
 #[cfg(all(debug_assertions, feature = "hot-reload"))]
 mod hot_reload;
 mod http;
@@ -24,8 +25,8 @@ use tokio_util::{sync::CancellationToken, task::TaskTracker};
 const APP_NAME: &str = env!("LISTENBOX_APP_NAME");
 
 fn main() -> anyhow::Result<()> {
-    let runtime = Arc::new(tokio::runtime::Runtime::new()?);
     let mut args = std::env::args_os().skip(1);
+    let mut report_diagnostics = false;
     let explicit = match args.next() {
         Some(flag) if flag == "--config" => {
             Some(std::path::PathBuf::from(args.next().ok_or_else(|| {
@@ -33,7 +34,9 @@ fn main() -> anyhow::Result<()> {
             })?))
         }
         Some(flag) if flag == "--help" => {
-            println!("{APP_NAME} desktop\nUsage: listenbox-desktop [--config PATH]");
+            println!(
+                "{APP_NAME} desktop\nUsage: listenbox-desktop [--config PATH] [--diagnostics]"
+            );
             return Ok(());
         }
         Some(flag) if flag == "--version" => {
@@ -44,13 +47,29 @@ fn main() -> anyhow::Result<()> {
             );
             return Ok(());
         }
-        Some(_) => anyhow::bail!("Usage: listenbox-desktop [--config PATH]"),
+        Some(flag) if flag == "--diagnostics" => {
+            report_diagnostics = true;
+            None
+        }
+        Some(_) => anyhow::bail!("Usage: listenbox-desktop [--config PATH] [--diagnostics]"),
         None => None,
     };
+    if let Some(flag) = args.next() {
+        anyhow::ensure!(
+            flag == "--diagnostics" && !report_diagnostics,
+            "Unexpected desktop argument"
+        );
+        report_diagnostics = true;
+    }
     anyhow::ensure!(args.next().is_none(), "Unexpected desktop argument");
     #[cfg(target_os = "windows")]
     let _installation_lock = platform::InstallationLock::new()?;
     let config = Config::load(explicit.as_deref())?;
+    if report_diagnostics {
+        return diagnostics::report(&config.directory);
+    }
+    let _diagnostics = diagnostics::open(&config.directory)?;
+    let runtime = Arc::new(tokio::runtime::Runtime::new()?);
     if cfg!(debug_assertions) {
         eprintln!("Listenbox desktop profile: {}", config.directory.display());
         eprintln!(
@@ -82,12 +101,16 @@ fn main() -> anyhow::Result<()> {
             recorder.start(cx, &runtime_ui, cancel.clone(), &recorder_tasks);
         }
         let (quit_cancel, quit_tasks) = (cancel.clone(), tasks.clone());
+        let quit_runtime = runtime_ui.handle().clone();
         cx.on_app_quit(move |_| {
             quit_cancel.cancel();
             quit_tasks.close();
             let tasks = quit_tasks.clone();
+            let drain = quit_runtime.spawn(async move {
+                diagnostics::drain(&tasks, "application quit").await;
+            });
             async move {
-                tasks.wait().await;
+                let _ = drain.await;
             }
         })
         .detach();
@@ -136,7 +159,7 @@ fn main() -> anyhow::Result<()> {
     stop.cancel();
     drain.close();
     // Also cover OS termination paths: GPUI bounds its own quit observers.
-    runtime.block_on(drain.wait());
+    runtime.block_on(diagnostics::drain(&drain, "process exit"));
     #[cfg(feature = "profiling")]
     {
         recorder_drain.close();

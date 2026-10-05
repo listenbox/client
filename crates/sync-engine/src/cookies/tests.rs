@@ -16,22 +16,31 @@ fn fixture() -> (tempfile::TempDir, CookieJar) {
 #[test]
 fn validates_exports_without_disclosing_values_or_replacing_good_state() {
     let (_dir, jar) = fixture();
-    jar.import(&export("private-value").replace('\n', "\r\n"))
-        .unwrap();
+    jar.import(
+        &export("private-value").replace('\n', "\r\n"),
+        &CancellationToken::new(),
+    )
+    .unwrap();
     for input in [
         "[{\"value\":\"private-value\"}]".into(),
         export("private-value; other=oops"),
         export("private-value\rinjected"),
         export("private-value").replace("TRUE", "maybe"),
     ] {
-        let message = jar.import(&input).unwrap_err().to_string();
+        let message = jar
+            .import(&input, &CancellationToken::new())
+            .unwrap_err()
+            .to_string();
         assert!(!message.contains("private-value"));
         assert_eq!(
             jar.snapshot().unwrap().header(&url()),
             "SAPISID=private-value"
         );
     }
-    assert!(jar.import(&"x".repeat(MAX_BYTES + 1)).is_err());
+    assert!(
+        jar.import(&"x".repeat(MAX_BYTES + 1), &CancellationToken::new())
+            .is_err()
+    );
 }
 
 #[test]
@@ -44,7 +53,7 @@ fn respects_host_path_secure_expiry_and_http_only() {
         ".youtube.com\tTRUE\t/\tTRUE\t1\tOLD\texpired\n",
         ".example.com\tTRUE\t/\tTRUE\t0\tOTHER\tignored,elsewhere\n"
     );
-    jar.import(input).unwrap();
+    jar.import(input, &CancellationToken::new()).unwrap();
     let snapshot = jar.snapshot().unwrap();
     assert_eq!(snapshot.header(&url()), "HOST=only; SID=secure");
     assert_eq!(
@@ -75,7 +84,8 @@ fn respects_host_path_secure_expiry_and_http_only() {
 #[test]
 fn merges_concurrent_updates_without_stale_overwrites_or_resurrection() {
     let (_dir, jar) = fixture();
-    jar.import(&export("seed")).unwrap();
+    jar.import(&export("seed"), &CancellationToken::new())
+        .unwrap();
     let initial = jar.snapshot().unwrap();
     let gate = Arc::new(Barrier::new(3));
     std::thread::scope(|scope| {
@@ -86,7 +96,13 @@ fn merges_concurrent_updates_without_stale_overwrites_or_resurrection() {
             let (jar, initial, gate) = (jar.clone(), initial.clone(), gate.clone());
             scope.spawn(move || {
                 gate.wait();
-                jar.update(&initial, &url(), &[header.into()]).unwrap();
+                jar.update(
+                    &initial,
+                    &url(),
+                    &[header.into()],
+                    &CancellationToken::new(),
+                )
+                .unwrap();
             });
         }
         gate.wait();
@@ -97,12 +113,14 @@ fn merges_concurrent_updates_without_stale_overwrites_or_resurrection() {
         &initial,
         &url(),
         &["SAPISID=new; Domain=youtube.com; Path=/; Secure".into()],
+        &CancellationToken::new(),
     )
     .unwrap();
     jar.update(
         &initial,
         &url(),
         &["SAPISID=stale; Domain=youtube.com; Path=/; Secure".into()],
+        &CancellationToken::new(),
     )
     .unwrap();
     assert!(
@@ -116,20 +134,24 @@ fn merges_concurrent_updates_without_stale_overwrites_or_resurrection() {
         &before_delete,
         &url(),
         &["SAPISID=; Max-Age=0; Domain=youtube.com; Path=/; Secure".into()],
+        &CancellationToken::new(),
     )
     .unwrap();
     jar.update(
         &before_delete,
         &url(),
         &["SAPISID=resurrected; Domain=youtube.com; Path=/; Secure".into()],
+        &CancellationToken::new(),
     )
     .unwrap();
     assert!(!jar.snapshot().unwrap().header(&url()).contains("SAPISID="));
-    jar.import(&export("replacement")).unwrap();
+    jar.import(&export("replacement"), &CancellationToken::new())
+        .unwrap();
     jar.update(
         &initial,
         &url(),
         &["SAPISID=late; Domain=youtube.com; Path=/; Secure".into()],
+        &CancellationToken::new(),
     )
     .unwrap();
     assert_eq!(
@@ -137,11 +159,12 @@ fn merges_concurrent_updates_without_stale_overwrites_or_resurrection() {
         "SAPISID=replacement"
     );
     let before_remove = jar.snapshot().unwrap();
-    jar.remove().unwrap();
+    jar.remove(&CancellationToken::new()).unwrap();
     jar.update(
         &before_remove,
         &url(),
         &["SAPISID=late; Domain=youtube.com; Path=/; Secure".into()],
+        &CancellationToken::new(),
     )
     .unwrap();
     assert!(!jar.snapshot().unwrap().enabled);
@@ -150,8 +173,9 @@ fn merges_concurrent_updates_without_stale_overwrites_or_resurrection() {
 #[test]
 fn readers_do_not_wait_for_writer_and_ignore_uncommitted_temporary_files() {
     let (directory, jar) = fixture();
-    jar.import(&export("committed")).unwrap();
-    let _lock = jar.write_lock().unwrap();
+    jar.import(&export("committed"), &CancellationToken::new())
+        .unwrap();
+    let _lock = jar.write_lock(&CancellationToken::new()).unwrap();
     std::fs::write(directory.path().join("youtube-cookies/incomplete.tmp"), "{").unwrap();
     let (send, receive) = std::sync::mpsc::channel();
     let reader = jar.clone();
@@ -171,7 +195,8 @@ fn readers_do_not_wait_for_writer_and_ignore_uncommitted_temporary_files() {
 #[test]
 fn rejects_foreign_response_cookies_and_persists_rotation_across_reopen() {
     let (directory, jar) = fixture();
-    jar.import(&export("seed")).unwrap();
+    jar.import(&export("seed"), &CancellationToken::new())
+        .unwrap();
     let snapshot = jar.snapshot().unwrap();
     jar.update(
         &snapshot,
@@ -181,6 +206,7 @@ fn rejects_foreign_response_cookies_and_persists_rotation_across_reopen() {
             "FOREIGN=no; Domain=com; Path=/".into(),
             "OTHER=no; Domain=example.com; Path=/".into(),
         ],
+        &CancellationToken::new(),
     )
     .unwrap();
     let reopened = CookieJar::new(directory.path()).snapshot().unwrap();
@@ -215,6 +241,7 @@ fn process_writer() {
             "SAPISID=stale-process; Domain=youtube.com; Path=/; Secure".into(),
             "PROCESS=merged; Domain=youtube.com; Path=/; Secure".into(),
         ],
+        &CancellationToken::new(),
     )
     .unwrap();
 }
@@ -226,7 +253,8 @@ fn process_updates_compare_against_committed_revisions() {
         process::{Command, Stdio},
     };
     let (directory, jar) = fixture();
-    jar.import(&export("seed")).unwrap();
+    jar.import(&export("seed"), &CancellationToken::new())
+        .unwrap();
     let mut child = Command::new(std::env::current_exe().unwrap())
         .args(["--exact", "cookies::tests::process_writer", "--nocapture"])
         .env("LISTENBOX_COOKIE_TEST_PROFILE", directory.path())
@@ -256,6 +284,7 @@ fn process_updates_compare_against_committed_revisions() {
         &base,
         &url(),
         &["SAPISID=new-process; Domain=youtube.com; Path=/; Secure".into()],
+        &CancellationToken::new(),
     )
     .unwrap();
     child.stdin.take().unwrap().write_all(b"commit\n").unwrap();

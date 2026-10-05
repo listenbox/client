@@ -6,10 +6,11 @@ use rquickjs::{AsyncContext, AsyncRuntime, Ctx, Module, Persistent, Value};
 
 use crate::{Argument, Error, JsValue, Result, platform};
 
-#[derive(Clone, Debug)]
 pub struct EngineOptions {
     pub memory_limit: usize,
     pub stack_size: usize,
+    /// Installed before module evaluation, including application startup work.
+    pub interrupt_handler: Option<Box<dyn FnMut() -> bool + 'static>>,
 }
 
 impl Default for EngineOptions {
@@ -17,6 +18,7 @@ impl Default for EngineOptions {
         Self {
             memory_limit: 768 * 1024 * 1024,
             stack_size: 4 * 1024 * 1024,
+            interrupt_handler: None,
         }
     }
 }
@@ -39,6 +41,9 @@ impl Engine {
 
     pub async fn with_options(options: EngineOptions) -> Result<Self> {
         let runtime = AsyncRuntime::new()?;
+        runtime
+            .set_interrupt_handler(options.interrupt_handler)
+            .await;
         runtime.set_memory_limit(options.memory_limit).await;
         runtime.set_max_stack_size(options.stack_size).await;
         let (resolver, loader, globals) = ModuleBuilder::default()

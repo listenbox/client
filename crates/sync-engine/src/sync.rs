@@ -93,10 +93,16 @@ pub async fn inventory(api: &Api, slug: &str) -> Result<p::SyncInventory> {
 }
 
 impl Engine {
-    pub(crate) fn database(&self, config: &crate::config::Config) -> Result<Database> {
-        let mut saved = self.journal.lock();
+    pub(crate) fn database(
+        &self,
+        config: &crate::config::Config,
+        cancel: &tokio_util::sync::CancellationToken,
+    ) -> Result<Database> {
+        let mut saved = crate::cancellation::admission(cancel, "sync journal cache", || {
+            Ok(self.journal.try_lock())
+        })?;
         if saved.is_none() {
-            *saved = Some(Database::open(&config.directory)?);
+            *saved = Some(Database::open(&config.directory, cancel)?);
         }
         Ok(saved.as_ref().context("Missing sync journal")?.clone())
     }
@@ -163,7 +169,7 @@ impl Engine {
             .open(api.config.directory.join(format!("sync-{lock_key}.lock")))?;
         lock.try_lock()
             .context("Another client is already syncing this show on this computer")?;
-        let journal = self.database(&api.config)?;
+        let journal = self.database(&api.config, &api.cancel)?;
         let before = inventory(api, slug).await?;
         let collection = before
             .show

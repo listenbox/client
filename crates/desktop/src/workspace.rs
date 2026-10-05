@@ -24,6 +24,7 @@ use std::{
 };
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
+use tracing::Instrument;
 
 #[path = "workspace/episodes.rs"]
 mod episodes;
@@ -150,7 +151,7 @@ impl ErrorNotice {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Shutdown {
     Quit,
     Logout,
@@ -182,6 +183,16 @@ enum Message {
 }
 
 impl Workspace {
+    fn spawn(
+        &self,
+        operation: &'static str,
+        work: impl std::future::Future<Output = ()> + Send + 'static,
+    ) {
+        self.tasks.spawn_on(
+            work.instrument(tracing::info_span!("desktop.operation", operation)),
+            self.runtime.handle(),
+        );
+    }
     pub fn new(
         client: Client,
         runtime: Arc<tokio::runtime::Runtime>,
@@ -286,6 +297,11 @@ impl Workspace {
             return;
         }
         self.stopping = Some(mode);
+        tracing::info!(
+            ?mode,
+            pending = self.tasks.len(),
+            "desktop shutdown requested"
+        );
         self.quit_notice = None;
         self.quit_task = None;
         self.quit_guard = Default::default();
@@ -296,12 +312,17 @@ impl Workspace {
         // This join is outside the tracker it waits for. No task is aborted: each
         // worker finishes admitted file writes, FFmpeg cleanup and SQLite commits.
         self.runtime.spawn(async move {
-            tasks.wait().await;
+            crate::diagnostics::drain(&tasks, &format!("{mode:?}")).await;
             let result = if mode == Shutdown::Logout {
                 client.logout()
             } else {
                 Ok(())
             };
+            tracing::info!(
+                ?mode,
+                success = result.is_ok(),
+                "desktop shutdown completed"
+            );
             let _ = sender.send(Message::Drained(mode, result));
         });
         cx.notify();
@@ -371,12 +392,9 @@ impl Workspace {
             self.sender.clone(),
             self.cancel.child_token(),
         );
-        self.tasks.spawn_on(
-            async move {
-                let _ = sender.send(Message::Catalog(client.catalog(cancel).await));
-            },
-            self.runtime.handle(),
-        );
+        self.spawn("catalog", async move {
+            let _ = sender.send(Message::Catalog(client.catalog(cancel).await));
+        });
         cx.notify();
     }
 
@@ -391,17 +409,14 @@ impl Workspace {
             self.sender.clone(),
             self.cancel.child_token(),
         );
-        self.tasks.spawn_on(
-            async move {
-                let result = client
-                    .login(cancel, |url| {
-                        let _ = sender.send(Message::Open(url.into()));
-                    })
-                    .await;
-                let _ = sender.send(Message::Login(result));
-            },
-            self.runtime.handle(),
-        );
+        self.spawn("login", async move {
+            let result = client
+                .login(cancel, |url| {
+                    let _ = sender.send(Message::Open(url.into()));
+                })
+                .await;
+            let _ = sender.send(Message::Login(result));
+        });
         cx.notify();
     }
 
@@ -711,36 +726,33 @@ impl Workspace {
             self.sender.clone(),
             self.import_kind.clone(),
         );
-        self.tasks.spawn_on(
-            async move {
-                let created_sender = sender.clone();
-                let created_cancel = cancel.clone();
-                let (created, mut imported) = tokio::sync::oneshot::channel();
-                let mut created = Some(created);
-                let result = client
-                    .import_collection(&source, kind.clone(), cancel, move |event| match event {
-                        ImportEvent::Preparing(preparation) => {
-                            let _ = created_sender.send(Message::ImportPreparation(preparation));
+        self.spawn("import", async move {
+            let created_sender = sender.clone();
+            let created_cancel = cancel.clone();
+            let (created, mut imported) = tokio::sync::oneshot::channel();
+            let mut created = Some(created);
+            let result = client
+                .import_collection(&source, kind.clone(), cancel, move |event| match event {
+                    ImportEvent::Preparing(preparation) => {
+                        let _ = created_sender.send(Message::ImportPreparation(preparation));
+                    }
+                    ImportEvent::Created(show) => {
+                        if let Some(created) = created.take() {
+                            let _ = created.send(show.slug.clone());
                         }
-                        ImportEvent::Created(show) => {
-                            if let Some(created) = created.take() {
-                                let _ = created.send(show.slug.clone());
-                            }
-                            let _ = created_sender
-                                .send(Message::ImportCreated(show, created_cancel.clone()));
-                        }
-                    })
-                    .await;
-                // The creation callback finishes before this operation returns,
-                // so completion carries its own podcast even on a later error.
-                let _ = sender.send(Message::Imported {
-                    slug: imported.try_recv().ok(),
-                    kind,
-                    result,
-                });
-            },
-            self.runtime.handle(),
-        );
+                        let _ = created_sender
+                            .send(Message::ImportCreated(show, created_cancel.clone()));
+                    }
+                })
+                .await;
+            // The creation callback finishes before this operation returns,
+            // so completion carries its own podcast even on a later error.
+            let _ = sender.send(Message::Imported {
+                slug: imported.try_recv().ok(),
+                kind,
+                result,
+            });
+        });
         cx.notify();
     }
 
@@ -755,16 +767,13 @@ impl Workspace {
                 self.cancel.clone(),
                 self.sender.clone(),
             );
-            self.tasks.spawn_on(
-                async move {
-                    while client.next_scan(&cancel).await {
-                        if sender.send(Message::SyncDue).is_err() {
-                            break;
-                        }
+            self.spawn("automatic scan timer", async move {
+                while client.next_scan(&cancel).await {
+                    if sender.send(Message::SyncDue).is_err() {
+                        break;
                     }
-                },
-                self.runtime.handle(),
-            );
+                }
+            });
         }
         self.sync_all(true, cx);
     }
@@ -832,20 +841,17 @@ impl Workspace {
             SyncReport::Notice("Reading YouTube and Listenbox…".into()),
         );
         let (client, sender) = (self.client.clone(), self.sender.clone());
-        self.tasks.spawn_on(
-            async move {
-                let report_slug = slug.clone();
-                let report_sender = sender.clone();
-                let result = client
-                    .sync(&slug, false, cancel, move |report| {
-                        let _ = report_sender
-                            .send(Message::Report(report_slug.clone(), report.clone()));
-                    })
-                    .await;
-                let _ = sender.send(Message::Finished(slug, result));
-            },
-            self.runtime.handle(),
-        );
+        self.spawn("sync", async move {
+            let report_slug = slug.clone();
+            let report_sender = sender.clone();
+            let result = client
+                .sync(&slug, false, cancel, move |report| {
+                    let _ =
+                        report_sender.send(Message::Report(report_slug.clone(), report.clone()));
+                })
+                .await;
+            let _ = sender.send(Message::Finished(slug, result));
+        });
         cx.notify();
     }
 

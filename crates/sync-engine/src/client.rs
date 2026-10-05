@@ -43,13 +43,16 @@ impl Client {
     pub fn downloads(&self) -> DownloadManager {
         self.engine.downloads.clone()
     }
-    pub async fn sync_state(&self, slug: String) -> Result<SyncState> {
+    #[tracing::instrument(name = "journal.read", skip_all, fields(show_slug = %slug))]
+    pub async fn sync_state(&self, slug: String, cancel: CancellationToken) -> Result<SyncState> {
         if !self.has_credentials() {
             return Err(crate::api::AuthenticationRequired.into());
         }
         let (engine, config) = (self.engine.clone(), self.config.clone());
+        let span = tracing::Span::current();
         tokio::task::spawn_blocking(move || {
-            let database = engine.database(&config)?;
+            let _entered = span.enter();
+            let database = engine.database(&config, &cancel)?;
             Ok(SyncState {
                 items: database.items(&config.api_origin, &slug)?,
                 last_synced: database.last_synced(&config.api_origin, &slug)?,
@@ -57,6 +60,7 @@ impl Client {
         })
         .await?
     }
+    #[tracing::instrument(name = "auth.logout", skip_all)]
     pub fn logout(&self) -> Result<()> {
         auth::logout(&self.config)?;
         self.engine.downloads.clear();
@@ -159,6 +163,7 @@ impl Client {
             shows,
         })
     }
+    #[tracing::instrument(name = "youtube.import", skip_all)]
     pub async fn import_collection(
         &self,
         source: &str,
@@ -170,7 +175,9 @@ impl Client {
         let api = self.api(cancel)?;
         let engine = self.engine.clone();
         let runtime = tokio::runtime::Handle::current();
+        let span = tracing::Span::current();
         tokio::task::spawn_blocking(move || {
+            let _entered = span.enter();
             runtime.block_on(crate::youtube::import(
                 &api, &engine, &source, None, kind, event,
             ))
@@ -181,6 +188,7 @@ impl Client {
         self.engine.next_scan(cancel).await
     }
 
+    #[tracing::instrument(name = "youtube.sync", skip_all, fields(show_slug = slug))]
     pub async fn sync(
         &self,
         slug: &str,
@@ -192,8 +200,10 @@ impl Client {
         let engine = self.engine.clone();
         let slug = slug.to_owned();
         let runtime = tokio::runtime::Handle::current();
+        let span = tracing::Span::current();
         // YouTube's embedded JS values have one thread owner. No JS handle crosses this boundary.
         tokio::task::spawn_blocking(move || {
+            let _entered = span.enter();
             runtime.block_on(async move {
                 if watch {
                     engine.watch(&api, &slug, report).await

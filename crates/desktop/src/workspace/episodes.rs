@@ -142,29 +142,24 @@ impl Workspace {
         };
         let request = self.episode_request;
         self.source_loading = true;
+        let state_cancel = self.cancel.child_token();
         let (client, sender, slug_items) = (self.client.clone(), self.sender.clone(), slug.clone());
-        self.tasks.spawn_on(
-            async move {
-                let _ = sender.send(Message::SyncState(
-                    request,
-                    client.sync_state(slug_items).await,
-                ));
-            },
-            self.runtime.handle(),
-        );
+        self.spawn("saved sync status", async move {
+            let _ = sender.send(Message::SyncState(
+                request,
+                client.sync_state(slug_items, state_cancel).await,
+            ));
+        });
         let cancel = self.cancel.child_token();
         self.episode_cancel = Some(cancel.clone());
         self.episode_loading = true;
         let (client, sender) = (self.client.clone(), self.sender.clone());
-        self.tasks.spawn_on(
-            async move {
-                let _ = sender.send(Message::Episodes(
-                    request,
-                    client.episodes(slug, cancel).await,
-                ));
-            },
-            self.runtime.handle(),
-        );
+        self.spawn("episodes", async move {
+            let _ = sender.send(Message::Episodes(
+                request,
+                client.episodes(slug, cancel).await,
+            ));
+        });
         cx.notify();
     }
 

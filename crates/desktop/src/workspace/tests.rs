@@ -9,6 +9,215 @@ use std::{cell::Cell, rc::Rc, time::Duration};
 
 #[gpui_kit::test]
 #[ignore = "requires the parent workspace's ephemeral Listenbox services"]
+async fn live_logout_contended_lock(cx: &mut TestAppContext) {
+    use std::io::Write;
+    #[derive(Clone)]
+    struct LockEvents(tokio::sync::mpsc::UnboundedSender<()>);
+    impl Write for LockEvents {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if String::from_utf8_lossy(bytes).contains("acquiring profile lock") {
+                let _ = self.0.send(());
+            }
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let (events, mut acquiring) = tokio::sync::mpsc::unbounded_channel();
+    let subscriber = tracing_subscriber::fmt()
+        .json()
+        .with_writer(move || LockEvents(events.clone()))
+        .finish();
+    tracing::subscriber::set_global_default(subscriber).unwrap();
+    let config = Config::load(None).unwrap();
+    let mode = std::fs::read_to_string(config.directory.join("test-logout-lock")).unwrap();
+    let lock_path = if mode == "journal" {
+        config.directory.join("sync-schema.lock")
+    } else {
+        let root = config.directory.join("youtube-cookies");
+        std::fs::create_dir_all(&root).unwrap();
+        root.join("write.lock")
+    };
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .unwrap();
+    lock.lock().unwrap();
+    let client = Client::desktop(config.clone()).unwrap();
+    let runtime = Arc::new(tokio::runtime::Runtime::new().unwrap());
+    let tasks = TaskTracker::new();
+    cx.update(gpui_kit::init);
+    cx.executor().allow_parking();
+    let mut view = None;
+    let window = cx.open_window(size(px(840.), px(600.)), |window, cx| {
+        let entity = cx.new(|cx| {
+            Workspace::new(
+                client.clone(),
+                runtime.clone(),
+                CancellationToken::new(),
+                tasks.clone(),
+                window,
+                cx,
+            )
+        });
+        crate::platform::install_actions(&entity, cx);
+        view = Some(entity.clone());
+        Root::new(entity, window, cx)
+    });
+    let view = view.unwrap();
+    wait_for(cx, &view, |view| view.loaded).await;
+    if mode == "cookies" {
+        cx.update_window(window.into(), |_, window, cx| {
+            view.update(cx, |view, cx| view.open_settings(window, cx));
+        })
+        .unwrap();
+        wait_for(cx, &view, |view| !view.cookie_busy).await;
+        cx.update_window(window.into(), |_, window, cx| {
+            view.update(cx, |view, cx| {
+                view.cookie_input.update(cx, |input, cx| input.set_value(
+                    "# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSID\tfixture-session\n", window, cx));
+            });
+            window.render_frame(cx);
+            window.click("save-cookies", cx);
+        }).unwrap();
+    }
+    runtime.block_on(async {
+        tokio::time::timeout(Duration::from_secs(2), acquiring.recv())
+            .await
+            .expect("profile operation never reached lock acquisition")
+            .unwrap();
+    });
+    cx.update(|cx| cx.dispatch_action(&crate::platform::Logout));
+    let drained = runtime.block_on(async {
+        tokio::time::timeout(Duration::from_secs(2), tasks.wait())
+            .await
+            .is_ok()
+    });
+    if !drained {
+        eprintln!(
+            "logout did not cancel the contended {mode} lock; external owner is still holding it"
+        );
+        // The failing isolated driver must exit without hanging in Runtime::drop
+        // on the very worker this regression is proving cannot terminate.
+        std::process::exit(1);
+    }
+    wait_for(cx, &view, |view| view.stopping.is_none()).await;
+    assert!(!client.has_credentials());
+    assert!(tasks.is_empty());
+    assert!(
+        !config.directory.join("youtube-cookies/jar.json").exists(),
+        "cancelled lock waiter committed cookies"
+    );
+    // The contender is released only after all assertions, never to help logout.
+    drop(lock);
+}
+
+#[gpui_kit::test]
+#[ignore = "requires the parent workspace's ephemeral Listenbox services"]
+async fn live_logout_initializing(cx: &mut TestAppContext) {
+    use sha2::{Digest, Sha256};
+    let config = Config::load(None).unwrap();
+    let diagnostics = crate::diagnostics::open(&config.directory).unwrap();
+    let slug = std::fs::read_to_string(config.directory.join("test-logout-slug")).unwrap();
+    let client = Client::desktop(config.clone()).unwrap();
+    let runtime = Arc::new(tokio::runtime::Runtime::new().unwrap());
+    let tasks = TaskTracker::new();
+    let lifetime = CancellationToken::new();
+    let _stop_on_exit = lifetime.clone().drop_guard();
+    cx.update(gpui_kit::init);
+    cx.executor().allow_parking();
+    let mut view = None;
+    cx.open_window(size(px(840.), px(600.)), |window, cx| {
+        let entity = cx.new(|cx| {
+            Workspace::new(
+                client.clone(),
+                runtime.clone(),
+                lifetime,
+                tasks.clone(),
+                window,
+                cx,
+            )
+        });
+        crate::platform::install_actions(&entity, cx);
+        view = Some(entity.clone());
+        Root::new(entity, window, cx)
+    });
+    let view = view.unwrap();
+    wait_for(cx, &view, |view| view.jobs.contains_key(&slug)).await;
+    runtime.block_on(async {
+        reqwest::Client::new()
+            .get(format!(
+                "{}/__test__/youtube-initializing",
+                config.api_origin
+            ))
+            .timeout(Duration::from_secs(2))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+    });
+    cx.update(|cx| cx.dispatch_action(&crate::platform::Logout));
+    // This real-time guard bounds the drain even if the JS promise loses its
+    // wakeup. It does not advance the stalled request or cancel any child.
+    runtime.block_on(async {
+        tokio::time::timeout(Duration::from_secs(2), tasks.wait())
+            .await
+            .expect("logout did not cancel the YouTube session owner promptly");
+    });
+    wait_for(cx, &view, |view| view.stopping.is_none()).await;
+    assert!(!client.has_credentials(), "logout retained authentication");
+    assert!(cx.update(|cx| view.read(cx).catalog.shows.is_empty()));
+    let lock_key = hex::encode(Sha256::digest(format!("{}\0{slug}", config.api_origin)));
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(config.directory.join(format!("sync-{lock_key}.lock")))
+        .unwrap();
+    lock.try_lock().expect("logout left the sync owner running");
+    drop(diagnostics); // Flush the production writer before inspecting its journal.
+    let events: Vec<serde_json::Value> = std::fs::read_dir(config.directory.join("diagnostics"))
+        .unwrap()
+        .flat_map(|entry| {
+            std::fs::read_to_string(entry.unwrap().path())
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    assert!(events.iter().any(
+        |event| event["fields"]["message"] == "desktop shutdown completed"
+            && event["fields"]["success"] == true
+    ));
+    for name in [
+        "desktop.operation",
+        "youtube.initialize",
+        "http.request",
+        "auth.logout",
+    ] {
+        for message in ["new", "close"] {
+            assert!(
+                events
+                    .iter()
+                    .any(|event| event["fields"]["message"] == message
+                        && event["span"]["name"] == name),
+                "production diagnostics omitted {message} for {name}"
+            );
+        }
+    }
+    assert!(events.iter().any(
+        |event| event["fields"]["message"] == "desktop operations drained"
+            && event["fields"]["dropped_log_lines"] == 0
+    ));
+}
+
+#[gpui_kit::test]
+#[ignore = "requires the parent workspace's ephemeral Listenbox services"]
 async fn live_artwork(cx: &mut TestAppContext) {
     let runtime = Arc::new(tokio::runtime::Runtime::new().unwrap());
     let config = Config::load(None).unwrap();
@@ -795,7 +1004,7 @@ async fn live_backend(cx: &mut TestAppContext) {
         assert_eq!(window.find("pause-sync").label(), Some("Pause"));
         assert!(window.try_find("pause-transfers").is_none());
         assert_podcast_header(window, 1);
-        window.dispatch_action(native_menu_action("Settings…", cx), cx);
+        window.dispatch_action(native_menu_action("Settings…"), cx);
     })
     .unwrap();
     wait_for(cx, &workspace, |view| {
@@ -806,7 +1015,7 @@ async fn live_backend(cx: &mut TestAppContext) {
     cx.update_window(handle.into(), |_, window, cx| {
         window.click("close-settings", cx);
         assert!(!workspace.read(cx).settings_open);
-        window.dispatch_action(native_menu_action("Reload", cx), cx);
+        window.dispatch_action(native_menu_action("Reload"), cx);
     })
     .unwrap();
     wait_for(cx, &workspace, |view| {
@@ -830,7 +1039,7 @@ async fn live_backend(cx: &mut TestAppContext) {
     })
     .await;
     cx.update(|cx| {
-        let (id, action) = native_menu_command("Log out", cx);
+        let (id, action) = native_menu_command("Log out");
         if let Some(sender) = menu_events.borrow().as_ref() {
             sender.send(id).unwrap();
         } else {
@@ -845,30 +1054,33 @@ async fn live_backend(cx: &mut TestAppContext) {
     cancel.cancel();
 }
 
-fn native_menu_action(label: &str, cx: &App) -> Box<dyn Action> {
-    native_menu_command(label, cx).1
+fn native_menu_action(label: &str) -> Box<dyn Action> {
+    native_menu_command(label).1
 }
 
-fn native_menu_command(label: &str, cx: &App) -> (muda::MenuId, Box<dyn Action>) {
-    let native = crate::platform::native_menu::NativeMenu::new(cx).unwrap();
-    let item = native
-        .menu
-        .items()
+fn native_menu_command(label: &str) -> (muda::MenuId, Box<dyn Action>) {
+    // A headless GPUI test has no AppKit main thread. Drive the same owned
+    // command schema consumed by native menus; Linux also sends its stable ID
+    // through the installed native event handler in live_backend.
+    crate::platform::application_menus()
         .into_iter()
-        .filter_map(|item| match item {
-            muda::MenuItemKind::Submenu(submenu) => Some(submenu.items()),
+        .flat_map(|menu| menu.items)
+        .find_map(|item| match item {
+            gpui_kit::OwnedMenuItem::Action {
+                name,
+                action,
+                disabled,
+                ..
+            } if name == label => {
+                assert!(!disabled, "native menu command is disabled: {label}");
+                Some((
+                    muda::MenuId::new(format!("listenbox.app.{}", action.name())),
+                    action,
+                ))
+            }
             _ => None,
         })
-        .flatten()
-        .find(|item| match item {
-            muda::MenuItemKind::MenuItem(item) => item.text() == label,
-            _ => false,
-        })
-        .unwrap_or_else(|| panic!("missing native menu command: {label}"));
-    let action = native
-        .action(item.id())
-        .unwrap_or_else(|| panic!("native menu command is disabled: {label}"));
-    (item.id().clone(), action)
+        .unwrap_or_else(|| panic!("missing native menu command: {label}"))
 }
 
 fn assert_podcast_header(window: &mut Window, count: usize) {
@@ -1123,7 +1335,7 @@ async fn live_pause_imports(cx: &mut TestAppContext) {
     wait_for_import_state(cx, &view, &runtime, |view| !view.jobs.contains_key(&first)).await;
     wait_for_import_state(cx, &view, &runtime, |view| !view.jobs.contains_key(&second)).await;
     let saved = runtime
-        .block_on(client.sync_state(first.clone()))
+        .block_on(client.sync_state(first.clone(), CancellationToken::new()))
         .unwrap()
         .items;
     assert_eq!(saved.len(), 32, "pause lost durable queued work");
@@ -1154,7 +1366,7 @@ async fn live_pause_imports(cx: &mut TestAppContext) {
         );
         assert_eq!(window.find("sync-now").label(), Some("Resume"));
         assert!(window.try_find("pause-sync").is_none());
-        window.dispatch_action(native_menu_action("Reload", cx), cx);
+        window.dispatch_action(native_menu_action("Reload"), cx);
     })
     .unwrap();
     wait_for_import_state(cx, &view, &runtime, |view| !view.loading).await;
@@ -1179,7 +1391,7 @@ async fn live_pause_imports(cx: &mut TestAppContext) {
     .unwrap();
     wait_for_import_state(cx, &view, &runtime, |view| !view.jobs.contains_key(&first)).await;
     let resumed = runtime
-        .block_on(client.sync_state(first.clone()))
+        .block_on(client.sync_state(first.clone(), CancellationToken::new()))
         .unwrap()
         .items;
     assert_eq!(resumed.len(), 32);

@@ -352,6 +352,42 @@ One writer connection serializes changes; pooled read-only connections read conc
 
 Verified download ranges, prepared files, transfer UUIDs, upload sessions and acknowledged parts survive interruption. Restarting checks saved work against the live backend before resuming. An OS lock per server and show prevents simultaneous CLI and desktop work on that show. Pausing a sync joins range writes and FFmpeg, cancels network and admission waits, and preserves its work. Prepared files belong to the transfer and stay unchanged until upload completes. Their saved manifest contains names, content types and lengths; resuming or renewing upload URLs reuses it without hashing or rereading media. The server checks stored lengths, content types and HLS structure before publication.
 
+Cancellation uses a root `tokio_util::sync::CancellationToken` with child tokens
+for operations. HTTP requests, bodies, stage admission, session initialization
+and JavaScript evaluation observe it. Journal initialization and cookie writers
+use nonblocking lock attempts; cancellation wakes a parked blocking worker
+immediately, even if another process keeps its lock forever. After acquiring a
+write lock, the owner finishes its atomic commit. YouTube operations track and
+join cookie commits even when their enclosing JavaScript promise is cancelled.
+Logout removes authentication only after all admitted owners have drained.
+
+## Production desktop diagnostics
+
+Release and debug desktops write JSON lines under `<profile>/diagnostics/`.
+Logs rotate hourly and retain at most 48 files. A bounded background writer
+keeps disk I/O off UI and worker threads. Each session records PID, version,
+source commit, named operation start/end spans, profile lock waits, media stages,
+HTTP status/elapsed time and API trace IDs. Request logs omit credentials,
+query strings and external URL paths. Profile directories are private on Unix.
+
+Shutdown records pending task counts and emits a warning each second until the
+owners finish. Inspect unmatched operation spans and their nested lock, HTTP or
+media spans to locate a stalled operation. A nonzero `dropped_log_lines` means
+the journal was overloaded; missing close events alone then cannot establish
+that an operation remains running. Native CPU sampling can supplement the
+journal for a worker stuck inside a native call.
+
+Read recent diagnostics without starting the GUI or taking sync locks:
+
+```sh
+/Applications/Listenbox.app/Contents/MacOS/listenbox-desktop --diagnostics
+```
+
+This prints the newest two log files, bounded to 100 lines and 256 KiB per file.
+`LISTENBOX_PROFILE_DIR` selects the profile as usual; `RUST_LOG` controls the
+logging filter when launching the desktop. API trace IDs can be investigated
+with the parent workspace's production trace tooling (or local Spaniel for dev).
+
 Downloads, native media preparation and uploads have separate admission budgets shared across podcasts in one engine. An episode releases its download permit before waiting for preparation, and releases preparation capacity before waiting for upload. Preparation runs at most one fewer than the available logical CPUs, bounded between one and four workers. At most 28 episodes can be in flight, so a slow downstream stage eventually applies backpressure instead of accumulating an unbounded directory of prepared media. Each download still uses up to four 1 MiB range requests.
 
 Download and upload budgets start at two episodes and can grow to 16 and eight respectively. The network controller samples five-second windows, probes only one direction at a time, and excludes windows with changing receiver populations. It keeps an extra slot only when the product of relative download/upload throughput improves by at least five percent; this uses proportional-fair log-rate utility rather than letting a fast downlink dominate a slow uplink's byte count. An idle direction is excluded. An inconclusive or harmful probe is rolled back. Stable stalls, substantial throughput drops and real transport failures reduce the affected budget, letting existing transfers drain without cancelling them. This is application-level admission tuning; TCP still owns congestion control, and streaming upload measurements observe bytes consumed by the HTTP client rather than remote acknowledgements.

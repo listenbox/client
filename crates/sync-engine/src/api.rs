@@ -8,6 +8,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio_util::sync::CancellationToken;
+use tracing::Instrument;
 
 #[derive(Debug)]
 pub struct AuthenticationRequired;
@@ -116,10 +117,10 @@ impl Api {
         let request = request
             .map_err(|error| error.without_url())
             .context("build HTTP request")?;
-        let diagnostic = (cfg!(debug_assertions)
-            && !request.url().host_str().is_some_and(|host| {
-                host == "googlevideo.com" || host.ends_with(".googlevideo.com")
-            }))
+        let diagnostic = (!request
+            .url()
+            .host_str()
+            .is_some_and(|host| host == "googlevideo.com" || host.ends_with(".googlevideo.com")))
         .then(|| {
             let origin = request.url().origin().ascii_serialization();
             // Signed media URLs may contain credentials in their paths and query strings.
@@ -133,6 +134,11 @@ impl Api {
             format!("{} {origin}{path}", request.method())
         });
         let started = Instant::now();
+        let span = diagnostic
+            .as_ref()
+            .map_or_else(tracing::Span::none, |request| {
+                tracing::info_span!("http.request", request)
+            });
         let result = self
             .wait(async {
                 client
@@ -141,6 +147,7 @@ impl Api {
                     .map_err(|error| error.without_url())
                     .context("send HTTP request")
             })
+            .instrument(span)
             .await;
         if let Some(diagnostic) = diagnostic {
             let elapsed = started.elapsed().as_millis();
@@ -152,12 +159,22 @@ impl Api {
                         .and_then(|value| value.to_str().ok())
                         .filter(|value| crate::config::check_trace(value).is_ok())
                         .unwrap_or("-");
-                    eprintln!(
-                        "HTTP {diagnostic} -> {} ({elapsed}ms) trace_id={trace}",
-                        response.status().as_u16()
-                    );
+                    if cfg!(debug_assertions) {
+                        eprintln!(
+                            "HTTP {diagnostic} -> {} ({elapsed}ms) trace_id={trace}",
+                            response.status().as_u16()
+                        );
+                    }
+                    tracing::info!(request = %diagnostic, status = response.status().as_u16(),
+                        elapsed_ms = elapsed as u64, trace_id = trace, "HTTP completed");
                 }
-                Err(error) => eprintln!("HTTP {diagnostic} -> failed ({elapsed}ms): {error:#}"),
+                Err(error) => {
+                    if cfg!(debug_assertions) {
+                        eprintln!("HTTP {diagnostic} -> failed ({elapsed}ms): {error:#}");
+                    }
+                    tracing::info!(request = %diagnostic, elapsed_ms = elapsed as u64,
+                        cancelled = self.cancel.is_cancelled(), error = %crate::redact(&format!("{error:#}")), "HTTP failed");
+                }
             }
         }
         result

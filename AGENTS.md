@@ -37,6 +37,12 @@
 - Debug builds automatically log HTTP method, route, status, elapsed time, and
   trace ID to stderr. Inspect local traces from the parent repository
   with `aube node scripts/spaniel.ts <trace-id>`.
+- All desktop builds persist operation, lock, media and HTTP diagnostics under
+  `<profile>/diagnostics/`. Run the desktop executable with `--diagnostics` to
+  read a bounded tail without opening the UI. During logout, inspect unmatched
+  operation spans and drain warnings; a nonzero `dropped_log_lines` means missing
+  events cannot establish task liveness. Preserve the distinction between
+  cancellable admission and owned atomic writes that must drain before logout.
 - Verify shared behavior through the parent repository's integrated API E2E
   targets; build the desktop with `moon run desktop:build`.
 

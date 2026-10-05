@@ -36,7 +36,7 @@ fn configure(connection: &Connection) -> Result<()> {
 }
 
 impl Database {
-    pub fn open(directory: &Path) -> Result<Self> {
+    pub fn open(directory: &Path, cancel: &tokio_util::sync::CancellationToken) -> Result<Self> {
         std::fs::create_dir_all(directory)?;
         // CLI and desktop may initialize different shows concurrently. Schema
         // inspection and migration are one operation, protected across processes.
@@ -46,7 +46,7 @@ impl Database {
             .read(true)
             .write(true)
             .open(directory.join("sync-schema.lock"))?;
-        initialization.lock()?;
+        crate::cancellation::file(&initialization, cancel, "sync journal")?;
         let path = directory.join("sync.sqlite");
         let mut connection = Connection::open(&path)?;
         configure(&connection)?;
@@ -348,7 +348,11 @@ mod tests {
     #[test]
     fn readers_see_committed_snapshots_while_the_only_writer_is_busy() {
         let directory = tempfile::tempdir().unwrap();
-        let db = Database::open(directory.path()).unwrap();
+        let db = Database::open(
+            directory.path(),
+            &tokio_util::sync::CancellationToken::new(),
+        )
+        .unwrap();
         let operation = db
             .operation(
                 "https://api.test",
@@ -411,11 +415,14 @@ mod tests {
         );
         drop(db);
         assert_eq!(
-            Database::open(directory.path())
-                .unwrap()
-                .range_hash(&operation, "media", 0)
-                .unwrap()
-                .as_deref(),
+            Database::open(
+                directory.path(),
+                &tokio_util::sync::CancellationToken::new()
+            )
+            .unwrap()
+            .range_hash(&operation, "media", 0)
+            .unwrap()
+            .as_deref(),
             Some("pending")
         );
     }
