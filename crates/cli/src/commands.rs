@@ -96,6 +96,7 @@ pub async fn shows(api: &Api, command: ShowCommand) -> Result<()> {
                 .create_show(p::CreateShowParams {
                     body: p::CreateShow {
                         id,
+                        team_id: api.team_id().await?,
                         title,
                         slug: slug.clone(),
                         language,

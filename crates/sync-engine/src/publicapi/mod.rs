@@ -894,6 +894,8 @@ pub struct CreateShow {
     pub slug: ShowSlug,
     #[serde(rename = "source_kind")]
     pub source_kind: ShowSourceKind,
+    #[serde(rename = "team_id")]
+    pub team_id: TeamID,
     #[serde(rename = "title")]
     pub title: NonEmptyString,
     #[serde(rename = "youtube_url", default, skip_serializing_if = "Option::is_none")]
@@ -1024,6 +1026,7 @@ pub enum CreateShowResponse {
     Status401(()),
     Status402(()),
     Status403(()),
+    Status404(()),
     Status409(()),
     Status422(()),
     Status502(()),
@@ -1037,6 +1040,7 @@ impl Response for CreateShowResponse {
             401 => Self::Status401(()),
             402 => Self::Status402(()),
             403 => Self::Status403(()),
+            404 => Self::Status404(()),
             409 => Self::Status409(()),
             422 => Self::Status422(()),
             502 => Self::Status502(()),
@@ -1050,6 +1054,7 @@ impl Response for CreateShowResponse {
             Self::Status401(_) => 401,
             Self::Status402(_) => 402,
             Self::Status403(_) => 403,
+            Self::Status404(_) => 404,
             Self::Status409(_) => 409,
             Self::Status422(_) => 422,
             Self::Status502(_) => 502,
@@ -1064,6 +1069,7 @@ impl Response for CreateShowResponse {
             Self::Status401(_) => Ok(Vec::new()),
             Self::Status402(_) => Ok(Vec::new()),
             Self::Status403(_) => Ok(Vec::new()),
+            Self::Status404(_) => Ok(Vec::new()),
             Self::Status409(_) => Ok(Vec::new()),
             Self::Status422(_) => Ok(Vec::new()),
             Self::Status502(_) => Ok(Vec::new()),
@@ -2051,6 +2057,11 @@ impl Response for GetEpisodeUploadSessionResponse {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct GetImportCapacityParams {
+    pub team_id: TeamID,
+}
+
 #[derive(Debug)]
 pub enum GetImportCapacityResponse {
     Status200(ImportCapacity),
@@ -2358,6 +2369,11 @@ impl Response for ImportRSSRunEventsResponse {
 }
 
 pub type ImportRunID = std::string::String;
+
+#[derive(Clone, Debug)]
+pub struct ListClientTeamsParams {
+    pub writable_only: std::option::Option<bool>,
+}
 
 #[derive(Debug)]
 pub enum ListClientTeamsResponse {
@@ -4478,10 +4494,11 @@ impl<T: Transport> Client<T> {
         let request = request.json(&params.body);
         self.transport.execute(request, self.body_limit).await
     }
-    pub async fn get_import_capacity(&self) -> Result<GetImportCapacityResponse, T::Error> {
+    pub async fn get_import_capacity(&self, params: GetImportCapacityParams) -> Result<GetImportCapacityResponse, T::Error> {
         let path = "/s/import-capacity".to_owned();
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
+        let request = request.query(&[("team_id", &params.team_id)]);
         self.transport.execute(request, self.body_limit).await
     }
     pub async fn import_rss(&self, params: ImportRSSParams) -> Result<ImportRSSResponse, T::Error> {
@@ -4668,10 +4685,11 @@ impl<T: Transport> Client<T> {
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         self.transport.execute(request, self.body_limit).await
     }
-    pub async fn list_client_teams(&self) -> Result<ListClientTeamsResponse, T::Error> {
+    pub async fn list_client_teams(&self, params: ListClientTeamsParams) -> Result<ListClientTeamsResponse, T::Error> {
         let path = "/s/teams".to_owned();
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
+        let request = match params.writable_only { Some(value) => request.query(&[("writable_only", value)]), None => request };
         self.transport.execute(request, self.body_limit).await
     }
     pub async fn whoami(&self) -> Result<WhoamiResponse, T::Error> {

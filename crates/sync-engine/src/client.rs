@@ -139,7 +139,9 @@ impl Client {
         }
         let client = api.client();
         let (teams, shows, account) = tokio::try_join!(
-            client.list_client_teams(),
+            client.list_client_teams(p::ListClientTeamsParams {
+                writable_only: Some(true)
+            }),
             client.list_shows(p::ListShowsParams {
                 youtube_imports_only: Some(true)
             }),
@@ -157,9 +159,14 @@ impl Client {
             p::WhoamiResponse::Status200(account) => account,
             response => return Err(api.response_error(response).await),
         };
+        let import_team = teams
+            .iter()
+            .find(|team| team.id == account.team_id)
+            .or_else(|| teams.first())
+            .map(|team| team.id.clone());
         Ok(Catalog {
             teams,
-            import_team: Some(account.team_id),
+            import_team,
             shows,
         })
     }
@@ -167,11 +174,13 @@ impl Client {
     pub async fn import_collection(
         &self,
         source: &str,
+        team: &str,
         kind: p::ShowSourceKind,
         cancel: CancellationToken,
         event: impl FnMut(crate::youtube::ImportEvent) + Send + 'static,
     ) -> Result<(p::Show, Report)> {
         let source = crate::youtube::collection_source(source)?;
+        let team = team.to_owned();
         let api = self.api(cancel)?;
         let engine = self.engine.clone();
         let runtime = tokio::runtime::Handle::current();
@@ -179,7 +188,7 @@ impl Client {
         tokio::task::spawn_blocking(move || {
             let _entered = span.enter();
             runtime.block_on(crate::youtube::import(
-                &api, &engine, &source, None, kind, event,
+                &api, &engine, &source, &team, None, kind, event,
             ))
         })
         .await?

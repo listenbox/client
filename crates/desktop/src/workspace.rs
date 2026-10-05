@@ -14,7 +14,7 @@ use listenbox_sync_engine::{
     api::PaymentRequired,
     client::{Catalog, Client, SyncState},
     downloads::{Phase, Snapshot},
-    publicapi::{Show, ShowSourceKind},
+    publicapi::{ClientTeam, Show, ShowSourceKind},
     sync::Report,
     youtube::{ImportEvent, ImportPreparation, ImportStage},
 };
@@ -60,7 +60,7 @@ pub struct Workspace {
     loaded: bool,
     loading: bool,
     authorization: Option<Authorization>,
-    creating: Option<ImportPreparation>,
+    creating: Option<CreatingImport>,
     auto_sync: bool,
     import_open: bool,
     import_kind: ShowSourceKind,
@@ -85,6 +85,11 @@ pub struct Workspace {
 struct Authorization {
     cancel: CancellationToken,
     url: Option<String>,
+}
+
+struct CreatingImport {
+    team: ClientTeam,
+    preparation: ImportPreparation,
 }
 
 #[derive(Debug)]
@@ -172,6 +177,7 @@ enum Message {
     ImportCreated(Show, CancellationToken),
     Imported {
         slug: Option<String>,
+        team: String,
         kind: ShowSourceKind,
         result: anyhow::Result<(Show, Report)>,
     },
@@ -544,6 +550,13 @@ impl Workspace {
                             .update(cx, |cache, cx| cache.retain(&urls, window, cx));
                         self.loaded = true;
                         self.catalog = catalog;
+                        if self
+                            .team
+                            .as_ref()
+                            .is_some_and(|id| !self.catalog.teams.iter().any(|team| &team.id == id))
+                        {
+                            self.team = None;
+                        }
                         if !self
                             .catalog
                             .shows
@@ -592,8 +605,8 @@ impl Workspace {
                 }
             }
             Message::ImportPreparation(preparation) => {
-                if self.creating.is_some() {
-                    self.creating = Some(preparation);
+                if let Some(creating) = &mut self.creating {
+                    creating.preparation = preparation;
                 }
             }
             Message::ImportCreated(show, cancel) => {
@@ -613,7 +626,12 @@ impl Workspace {
                     SyncReport::Notice("Importing the first episodes…".into()),
                 );
             }
-            Message::Imported { slug, kind, result } => {
+            Message::Imported {
+                slug,
+                team,
+                kind,
+                result,
+            } => {
                 if slug.is_none() {
                     self.creating = None;
                 }
@@ -651,7 +669,7 @@ impl Workspace {
                         self.error = Some(ErrorNotice::import(
                             error,
                             &self.client,
-                            self.catalog.import_team.as_deref(),
+                            Some(&team),
                             slug.is_some(),
                             &kind,
                         ));
@@ -741,10 +759,26 @@ impl Workspace {
         self.error = error;
     }
 
+    fn import_team(&self) -> Option<&ClientTeam> {
+        self.team
+            .as_ref()
+            .or(self.catalog.import_team.as_ref())
+            .and_then(|id| self.catalog.teams.iter().find(|team| &team.id == id))
+    }
+
     fn import_collection(&mut self, cx: &mut Context<Self>) {
         if !self.loaded || self.creating.is_some() || self.stopping.is_some() {
             return;
         }
+        let Some(team) = self.import_team().cloned() else {
+            self.error = Some(
+                "Choose a team with write access to create a podcast."
+                    .to_owned()
+                    .into(),
+            );
+            cx.notify();
+            return;
+        };
         let source = self.source.read(cx).value().to_string();
         let source = match listenbox_sync_engine::youtube::collection_source(&source) {
             Ok(source) => source,
@@ -754,7 +788,10 @@ impl Workspace {
                 return;
             }
         };
-        self.creating = Some(ImportPreparation::default());
+        self.creating = Some(CreatingImport {
+            team: team.clone(),
+            preparation: ImportPreparation::default(),
+        });
         self.error = None;
         let cancel = self.cancel.child_token();
         let (client, sender, kind) = (
@@ -767,24 +804,29 @@ impl Workspace {
             let created_cancel = cancel.clone();
             let (created, mut imported) = tokio::sync::oneshot::channel();
             let mut created = Some(created);
-            let result = client
-                .import_collection(&source, kind.clone(), cancel, move |event| match event {
-                    ImportEvent::Preparing(preparation) => {
-                        let _ = created_sender.send(Message::ImportPreparation(preparation));
-                    }
-                    ImportEvent::Created(show) => {
-                        if let Some(created) = created.take() {
-                            let _ = created.send(show.slug.clone());
+            let result =
+                client
+                    .import_collection(&source, &team.id, kind.clone(), cancel, move |event| {
+                        match event {
+                            ImportEvent::Preparing(preparation) => {
+                                let _ =
+                                    created_sender.send(Message::ImportPreparation(preparation));
+                            }
+                            ImportEvent::Created(show) => {
+                                if let Some(created) = created.take() {
+                                    let _ = created.send(show.slug.clone());
+                                }
+                                let _ = created_sender
+                                    .send(Message::ImportCreated(show, created_cancel.clone()));
+                            }
                         }
-                        let _ = created_sender
-                            .send(Message::ImportCreated(show, created_cancel.clone()));
-                    }
-                })
-                .await;
+                    })
+                    .await;
             // The creation callback finishes before this operation returns,
             // so completion carries its own podcast even on a later error.
             let _ = sender.send(Message::Imported {
                 slug: imported.try_recv().ok(),
+                team: team.id,
                 kind,
                 result,
             });
@@ -1021,7 +1063,12 @@ impl Workspace {
                             )
                             .child(Icon::new(assets::IconName::Plus).small()),
                     )
-                    .disabled(!self.loaded || self.creating.is_some() || self.stopping.is_some())
+                    .disabled(
+                        !self.loaded
+                            || self.import_team().is_none()
+                            || self.creating.is_some()
+                            || self.stopping.is_some(),
+                    )
                     .on_click(cx.listener(|view, _, window, cx| {
                         view.settings_open = false;
                         view.cookie_input = settings::cookie_input(window, cx);
@@ -1154,13 +1201,14 @@ impl Workspace {
         let t = Tokens::current(cx);
         let busy = self.creating.is_some() || self.stopping.is_some();
         let team = self
-            .catalog
-            .import_team
+            .creating
             .as_ref()
-            .and_then(|id| self.catalog.teams.iter().find(|team| &team.id == id))
-            .map(|team| team.name.as_str())
-            .unwrap_or("your authorized team");
-        if let Some(preparation) = &self.creating {
+            .map(|creating| &creating.team)
+            .or_else(|| self.import_team());
+        let destination = team
+            .map(|team| format!("Creates a new podcast in {}.", team.name))
+            .unwrap_or_else(|| "Choose a team with write access to create a podcast.".into());
+        if let Some(creating) = &self.creating {
             return div()
                 .w_full()
                 .min_w_0()
@@ -1186,11 +1234,15 @@ impl Workspace {
                         )
                         .child(
                             div()
+                                .id("import-team")
+                                .role(Role::Label)
+                                .aria_label(destination.clone())
                                 .text_color(t.muted)
-                                .child(format!("Creates a new podcast in {team}.")),
+                                .child(destination)
+                                .test_support(),
                         ),
                 )
-                .child(self.creation_status(preparation, cx))
+                .child(self.creation_status(&creating.preparation, cx))
                 .child(
                     div()
                         .w_full()
@@ -1234,12 +1286,12 @@ impl Workspace {
                         .map(|button| if self.import_kind == ShowSourceKind::Video { button.primary() } else { button.outline() }).disabled(busy)
                         .on_click(cx.listener(|view, _, _, cx| { view.import_kind = ShowSourceKind::Video; cx.notify(); })))))
             .child(div().w_full().border_t_1().border_color(t.divider).pt_4().flex().flex_col().gap_2()
-                .child(format!("Creates a new podcast in {team}."))
+                .child(div().id("import-team").role(Role::Label).aria_label(destination.clone()).child(destination).test_support())
                 .child(div().text_size(px(12.)).text_color(t.muted)
                     .child(if self.import_kind == ShowSourceKind::Video { "A video plan with enough storage is required. Playlists keep their order; channels show newest uploads first. Removed videos leave the podcast on the next complete sync." } else { "A paid podcast plan is required. Playlists keep their order; channels show newest uploads first. Removed videos leave the podcast on the next complete sync." })))
             .child(div().flex().items_center().gap_3()
                 .child(Button::new("start-import").primary().label("Create podcast & import")
-                    .disabled(busy).on_click(cx.listener(|view, _, _, cx| view.import_collection(cx))))
+                    .disabled(busy || team.is_none()).on_click(cx.listener(|view, _, _, cx| view.import_collection(cx))))
                 .when(self.show().is_some(), |row| row.child(Button::new("cancel-import").ghost().label("Cancel")
                     .on_click(cx.listener(|view, _, _, cx| { view.import_open = false; view.error = None; cx.notify(); })))));
         form.into_any_element()

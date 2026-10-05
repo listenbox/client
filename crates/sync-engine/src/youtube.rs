@@ -161,6 +161,7 @@ pub async fn import(
     api: &Api,
     engine: &crate::sync::Engine,
     source: &str,
+    team: &str,
     requested_slug: Option<&str>,
     kind: p::ShowSourceKind,
     mut event: impl FnMut(ImportEvent),
@@ -214,7 +215,12 @@ pub async fn import(
         }
         Ok(())
     };
-    let (_, capacity) = tokio::try_join!(duplicate, client.get_import_capacity())?;
+    let (_, capacity) = tokio::try_join!(
+        duplicate,
+        client.get_import_capacity(p::GetImportCapacityParams {
+            team_id: team.to_owned()
+        })
+    )?;
     let capacity = match capacity {
         p::GetImportCapacityResponse::Status200(value) => value,
         response => return Err(api.response_error(response).await),
@@ -322,6 +328,7 @@ pub async fn import(
     }
     let mut body = p::CreateShow {
         id: format!("shw_{}", &uuid::Uuid::new_v4().simple().to_string()[..16]),
+        team_id: team.to_owned(),
         title,
         slug,
         source_kind: kind,

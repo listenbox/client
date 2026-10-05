@@ -103,6 +103,13 @@ impl Api {
         .with_transport(self)
     }
 
+    pub async fn team_id(&self) -> Result<String> {
+        match self.client().whoami().await? {
+            p::WhoamiResponse::Status200(account) => Ok(account.team_id),
+            response => Err(self.response_error(response).await),
+        }
+    }
+
     pub async fn wait<T>(&self, work: impl Future<Output = Result<T>>) -> Result<T> {
         tokio::select! {
             biased;

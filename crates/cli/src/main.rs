@@ -310,7 +310,8 @@ async fn run(cli: Cli, cancel: CancellationToken) -> Result<()> {
                 } => auth::status(&api).await,
                 Command::Import { slug, source_url } => {
                     if youtube::is_source(&source_url) {
-                        youtube::import(&api, &listenbox_sync_engine::sync::Engine::default(), &source_url, slug.as_deref(), listenbox_sync_engine::publicapi::ShowSourceKind::Video, |event| {
+                        let team = api.team_id().await?;
+                        youtube::import(&api, &listenbox_sync_engine::sync::Engine::default(), &source_url, &team, slug.as_deref(), listenbox_sync_engine::publicapi::ShowSourceKind::Video, |event| {
                             if let youtube::ImportEvent::Created(show) = event {
                                 eprintln!("Created podcast {:?}. Resume with shows sync youtube --show {}", show.slug, show.slug);
                             }

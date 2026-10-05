@@ -1760,8 +1760,9 @@ async fn live_video_creation_progress(cx: &mut TestAppContext) {
     .unwrap();
     wait_for(cx, &view, |view| {
         view.creating.as_ref().is_some_and(|preparation| {
-            preparation.stage == ImportStage::ScanningPlaylist
+            preparation.preparation.stage == ImportStage::ScanningPlaylist
                 && preparation
+                    .preparation
                     .scan
                     .as_ref()
                     .is_some_and(|scan| scan.videos == 2)
@@ -1769,7 +1770,7 @@ async fn live_video_creation_progress(cx: &mut TestAppContext) {
     })
     .await;
     cx.update(|cx| {
-        let preparation = view.read(cx).creating.as_ref().unwrap();
+        let preparation = &view.read(cx).creating.as_ref().unwrap().preparation;
         let scan = preparation.scan.as_ref().unwrap();
         assert_eq!(scan.estimated_seconds, 900);
         assert_eq!(scan.unknown_durations, 1);
@@ -1865,9 +1866,9 @@ async fn live_video_creation_progress(cx: &mut TestAppContext) {
     }
     import_gate(&runtime, &api, "creation-requested");
     wait_for(cx, &view, |view| {
-        view.creating
-            .as_ref()
-            .is_some_and(|preparation| preparation.stage == ImportStage::CreatingPodcast)
+        view.creating.as_ref().is_some_and(|preparation| {
+            preparation.preparation.stage == ImportStage::CreatingPodcast
+        })
     })
     .await;
     cx.update_window(handle.into(), |_, window, cx| {
@@ -1878,6 +1879,7 @@ async fn live_video_creation_progress(cx: &mut TestAppContext) {
             .creating
             .as_ref()
             .unwrap()
+            .preparation
             .scan
             .as_ref()
             .unwrap();
@@ -1937,6 +1939,201 @@ async fn live_video_creation_progress(cx: &mut TestAppContext) {
     })
     .unwrap();
     cancel.cancel();
+}
+
+#[gpui_kit::test]
+#[ignore = "requires the parent workspace's ephemeral Listenbox services"]
+async fn live_team_import(cx: &mut TestAppContext) {
+    let config = Config::load(None).unwrap();
+    let values: HashMap<String, String> = serde_json::from_slice(
+        &std::fs::read(config.directory.join("test-team-import.json")).unwrap(),
+    )
+    .unwrap();
+    let origin = config.api_origin.clone();
+    let dashboard = config.dashboard_origin.clone();
+    let client = Client::desktop(config).unwrap();
+    let runtime = Arc::new(tokio::runtime::Runtime::new().unwrap());
+    let cancel = CancellationToken::new();
+    let _stop_on_exit = cancel.clone().drop_guard();
+    cx.update(gpui_kit::init);
+    cx.executor().allow_parking();
+    let mut view = None;
+    let handle = cx.open_window(size(px(1080.), px(760.)), |window, cx| {
+        tokens::apply(window, cx);
+        let entity = cx.new(|cx| {
+            Workspace::new(
+                client,
+                runtime.clone(),
+                cancel,
+                TaskTracker::new(),
+                window,
+                cx,
+            )
+        });
+        view = Some(entity.clone());
+        Root::new(entity, window, cx)
+    });
+    let view = view.unwrap();
+    wait_for_import_state(cx, &view, &runtime, |view| !view.loading).await;
+    if values["mode"] == "readonly" {
+        cx.update_window(handle.into(), |_, window, cx| {
+            assert!(view.read(cx).loaded, "{:?}", view.read(cx).error);
+            assert!(view.read(cx).catalog.teams.is_empty());
+            assert!(view.read(cx).catalog.import_team.is_none());
+            window.render_frame(cx);
+            window.click("new-import", cx);
+            window.click("start-import", cx);
+            assert!(view.read(cx).creating.is_none());
+            assert_eq!(
+                window.find("import-team").label(),
+                Some("Choose a team with write access to create a podcast.")
+            );
+        })
+        .unwrap();
+        return;
+    }
+    cx.update_window(handle.into(), |_, window, cx| {
+        assert!(view.read(cx).loaded, "{:?}", view.read(cx).error);
+        window.render_frame(cx);
+        window.click("team-picker", cx);
+        if values["mode"] == "picker" {
+            for id in [&values["reader"], &values["direct"]] {
+                assert!(
+                    window
+                        .try_find(SharedString::from(format!("team-{id}")))
+                        .is_none(),
+                    "team without podcast creation permission appeared in the picker: {id}"
+                );
+            }
+        }
+        for id in [&values["original"], &values["destination"]] {
+            assert!(
+                window
+                    .try_find(SharedString::from(format!("team-{id}")))
+                    .is_some()
+            );
+        }
+        window.click(
+            SharedString::from(format!("team-{}", values["destination"])),
+            cx,
+        );
+        assert_eq!(view.read(cx).team.as_ref(), Some(&values["destination"]));
+    })
+    .unwrap();
+    if values["mode"] == "picker" {
+        return;
+    }
+    let destination_label = cx.update(|cx| {
+        let team = view
+            .read(cx)
+            .catalog
+            .teams
+            .iter()
+            .find(|team| team.id == values["destination"])
+            .unwrap();
+        format!("Creates a new podcast in {}.", team.name)
+    });
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.click("new-import", cx);
+        assert_eq!(
+            window.find("import-team").label(),
+            Some(destination_label.as_str())
+        );
+        window.click("youtube-url", cx);
+        window.input(&values["source"], cx);
+        window.click("start-import", cx);
+        assert!(view.read(cx).creating.is_some(), "import never started");
+    })
+    .unwrap();
+    if values["mode"] == "payment" {
+        wait_for_import_state(cx, &view, &runtime, |view| {
+            view.creating.is_none() && !view.loading
+        })
+        .await;
+        cx.update_window(handle.into(), |_, window, cx| {
+            assert!(
+                view.read(cx)
+                    .error
+                    .as_ref()
+                    .is_some_and(|error| error.message.starts_with("Could not create podcast."))
+            );
+            assert!(view.read(cx).catalog.shows.is_empty());
+            window.render_frame(cx);
+            window.click("upgrade-plan", cx);
+        })
+        .unwrap();
+        assert_eq!(
+            cx.opened_url(),
+            Some(format!("{dashboard}/{}/upgrade", values["destination"]))
+        );
+        return;
+    }
+    let http = reqwest::Client::new();
+    let gate = |path: &str| {
+        runtime.block_on(async {
+            http.get(format!("{origin}/__test__/team-import/{path}"))
+                .timeout(Duration::from_secs(3))
+                .send()
+                .await
+                .unwrap()
+                .error_for_status()
+                .unwrap();
+        });
+    };
+    gate("requested");
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click("team-picker", cx);
+        window.click(
+            SharedString::from(format!("team-{}", values["original"])),
+            cx,
+        );
+        assert_eq!(view.read(cx).team.as_ref(), Some(&values["original"]));
+        assert!(view.read(cx).creating.is_some());
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("import-team").label(),
+            Some(destination_label.as_str())
+        );
+    })
+    .unwrap();
+    gate("release");
+    wait_for_import_state(cx, &view, &runtime, |view| {
+        view.creating.is_none()
+            && view.jobs.is_empty()
+            && (!view.reports.is_empty() || view.error.is_some())
+            && !view.loading
+    })
+    .await;
+    cx.update(|cx| {
+        let state = view.read(cx);
+        if values["mode"] == "revoked" {
+            assert!(
+                state
+                    .error
+                    .as_ref()
+                    .is_some_and(|error| error.message.contains("permission denied")),
+                "{:?}",
+                state.error
+            );
+            assert!(state.catalog.shows.is_empty());
+            assert!(state.jobs.is_empty());
+            return;
+        }
+        assert!(state.error.is_none(), "{:?}", state.error);
+        let show = state.show().expect("imported podcast was not selected");
+        assert_eq!(
+            show.team_id, values["destination"],
+            "import ignored the selected team"
+        );
+        assert_eq!(show.youtube_linkage(), Some(values["source"].as_str()));
+        assert!(
+            state
+                .reports
+                .values()
+                .any(|report| matches!(report, SyncReport::Summary(report) if report.added == 1))
+        );
+    });
 }
 
 #[gpui_kit::test]

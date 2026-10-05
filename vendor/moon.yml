@@ -16,9 +16,8 @@ tasks:
   install:
     command: aube install --frozen-lockfile --ignore-scripts
     inputs: [package.json, youtubejs/package.json, aube-workspace.yaml, aube-lock.yaml]
-    outputs: [node_modules, youtubejs/node_modules]
     options:
-      cache: local
+      cache: false
       internal: true
       outputStyle: buffer-only-failure
   bundle:
