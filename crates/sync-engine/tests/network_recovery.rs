@@ -46,10 +46,12 @@ async fn downloading_gate(
             .collect();
         if downloading.len() == count
             && downloading.iter().all(|item| {
-                item.ranges
-                    .iter()
-                    .filter(|range| range.start > 0)
-                    .all(|range| range.phase == RangePhase::Complete)
+                !item.ranges.is_empty()
+                    && item
+                        .ranges
+                        .iter()
+                        .filter(|range| range.start > 0)
+                        .all(|range| range.phase == RangePhase::Complete)
             })
         {
             return;
@@ -142,15 +144,20 @@ async fn live_download_adaptation() {
         engine.once(&api, slug).await
     };
     let monitor = async {
-        while engine
-            .downloads
-            .snapshot()
-            .items
-            .iter()
-            .filter(|item| item.phase == Phase::Uploading)
-            .count()
-            != 2
-        {
+        loop {
+            let snapshot = engine.downloads.snapshot();
+            let uploading: Vec<_> = snapshot
+                .items
+                .iter()
+                .filter(|item| item.phase == Phase::Uploading)
+                .collect();
+            if uploading.len() == 2
+                && uploading
+                    .iter()
+                    .all(|item| item.upload_total > 0 && item.uploaded == item.upload_total)
+            {
+                break;
+            }
             changes.changed().await.unwrap();
         }
         downloading_gate(&engine.downloads, &mut changes, 2).await;
