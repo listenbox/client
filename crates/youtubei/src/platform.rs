@@ -57,6 +57,30 @@ fn create_require<'js>(ctx: Ctx<'js>, filename: String) -> rquickjs::Result<Func
 }
 
 pub(crate) fn globals(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
+    // Player scripts use self-referential arrays. Browsers stringify repeated
+    // join receivers as empty strings; QuickJS otherwise recurses indefinitely.
+    ctx.eval::<(), _>(
+        r#"
+        (function () {
+            "use strict";
+            const nativeJoin = Array.prototype.join;
+            const joining = new WeakSet();
+            Array.prototype.join = function join(separator) {
+                if (this === null || this === undefined)
+                    return nativeJoin.call(this, separator);
+                const receiver = Object(this);
+                if (joining.has(receiver))
+                    return "";
+                joining.add(receiver);
+                try {
+                    return nativeJoin.call(receiver, separator);
+                } finally {
+                    joining.delete(receiver);
+                }
+            };
+        })();
+        "#,
+    )?;
     ctx.globals()
         .set("structuredClone", Func::from(clone_value))?;
     let console = Object::new(ctx.clone())?;

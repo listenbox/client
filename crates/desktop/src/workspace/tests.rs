@@ -7,6 +7,45 @@ use gpui_kit::test::TestWindowExt;
 use listenbox_sync_engine::config::Config;
 use std::{cell::Cell, rc::Rc, time::Duration};
 
+#[test]
+#[ignore = "requires the parent API's isolated YouTube player"]
+fn live_player_runtime() {
+    let config = Config::load(None).unwrap();
+    let slug = std::fs::read_to_string(config.directory.join("test-player-slug")).unwrap();
+    let imported = config.directory.join("test-player-imported").exists();
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime.block_on(async {
+        let client = Client::desktop(config).unwrap();
+        client
+            .sync(&slug, false, CancellationToken::new(), move |report| {
+                assert_eq!(report.added, if imported { 1 } else { 0 });
+                assert_eq!(report.skipped, if imported { 0 } else { 1 });
+            })
+            .await
+            .unwrap();
+        let snapshot = client.downloads().snapshot();
+        assert_eq!(snapshot.items.len(), 1);
+        let item = &snapshot.items[0];
+        assert_eq!(
+            item.phase,
+            if imported {
+                Phase::Complete
+            } else {
+                Phase::Skipped
+            }
+        );
+        if !imported {
+            assert!(
+                item.reason
+                    .as_deref()
+                    .unwrap()
+                    .contains("RangeError: Maximum call stack size exceeded")
+            );
+        }
+        client.catalog(CancellationToken::new()).await.unwrap();
+    });
+}
+
 #[gpui_kit::test]
 #[ignore = "requires the parent API's acknowledged-body upload gate"]
 async fn live_upload_progress(cx: &mut TestAppContext) {

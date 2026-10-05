@@ -8,6 +8,7 @@ use crate::{Argument, Error, JsValue, Result, platform};
 
 pub struct EngineOptions {
     pub memory_limit: usize,
+    /// JavaScript's native stack budget, below the hosting thread's stack size.
     pub stack_size: usize,
     /// Installed before module evaluation, including application startup work.
     pub interrupt_handler: Option<Box<dyn FnMut() -> bool + 'static>>,
@@ -17,7 +18,9 @@ impl Default for EngineOptions {
     fn default() -> Self {
         Self {
             memory_limit: 768 * 1024 * 1024,
-            stack_size: 4 * 1024 * 1024,
+            // Tokio workers have a 2 MiB native stack. Leave room for Rust,
+            // native callbacks, and unwinding a JavaScript stack exception.
+            stack_size: 1024 * 1024,
             interrupt_handler: None,
         }
     }
