@@ -1,4 +1,4 @@
-//! Build a relocatable application bundle and DMG. No build-machine config is packaged.
+//! Build a relocatable application bundle and optional DMG. No build-machine config is packaged.
 use std::{env, error::Error, fs, path::Path, process::Command, thread, time::Duration};
 
 fn run(command: &mut Command) -> Result<(), Box<dyn Error>> {
@@ -60,6 +60,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     if !cfg!(target_os = "macos") {
         return Err("DMGs require macOS".into());
     }
+    let mut args = env::args().skip(1);
+    let local = match args.next().as_deref() {
+        None => false,
+        Some("--local") => true,
+        Some(_) => return Err("Usage: package-macos [--local]".into()),
+    };
+    if args.next().is_some() {
+        return Err("Usage: package-macos [--local]".into());
+    }
     let manifest = fs::read_to_string("Cargo.toml")?;
     let version = manifest
         .lines()
@@ -74,7 +83,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     {
         return Err("invalid version".into());
     }
-    let production = env::var("LISTENBOX_PRODUCTION_RELEASE").as_deref() == Ok("1");
+    let production = !local && env::var("LISTENBOX_PRODUCTION_RELEASE").as_deref() == Ok("1");
     let updater_key = if production {
         env::var("LISTENBOX_UPDATE_PUBLIC_KEY")?
     } else {
@@ -92,9 +101,18 @@ fn main() -> Result<(), Box<dyn Error>> {
     } else {
         String::new()
     };
-    let dist = Path::new("crates/desktop/dist/macos");
-    let binary = Path::new("crates/desktop/dist/release/listenbox-desktop");
-    require_arm64(binary)?;
+    let dist = Path::new(if local {
+        "crates/desktop/dist/macos-local"
+    } else {
+        "crates/desktop/dist/macos"
+    });
+    let release = Path::new(if local {
+        "crates/desktop/dist/release-local"
+    } else {
+        "crates/desktop/dist/release"
+    });
+    let binary = release.join("listenbox-desktop");
+    require_arm64(&binary)?;
     let staging = dist.join("image");
     if staging.exists() {
         fs::remove_dir_all(&staging)?;
@@ -136,7 +154,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         fs::copy(source, contents.join("Resources").join(target))?;
     }
     fs::copy(
-        "crates/desktop/dist/release/FFmpeg-NOTICE.txt",
+        release.join("FFmpeg-NOTICE.txt"),
         contents.join("Resources/FFmpeg-NOTICE.txt"),
     )?;
     fs::write(
@@ -167,7 +185,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         .arg(contents.join("Info.plist")))?;
     // Ad-hoc signing makes local arm64 bundles executable. Distribution signing
     // is explicit: a Developer ID identity may be supplied by the release job.
-    let identity = env::var("LISTENBOX_SIGNING_IDENTITY").unwrap_or_else(|_| "-".into());
+    let identity = if local {
+        "-".into()
+    } else {
+        env::var("LISTENBOX_SIGNING_IDENTITY").unwrap_or_else(|_| "-".into())
+    };
     if production && !identity.starts_with("Developer ID Application: ") {
         return Err("Production packaging requires a Developer ID Application identity".into());
     }
@@ -221,6 +243,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         run(Command::new("spctl")
             .args(["--assess", "--type", "execute", "--verbose=2"])
             .arg(&app))?;
+    }
+    if local {
+        println!("{}", app.display());
+        return Ok(());
     }
     #[cfg(unix)]
     std::os::unix::fs::symlink("/Applications", staging.join("Applications"))?;

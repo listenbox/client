@@ -264,10 +264,12 @@ Open the Apple Silicon DMG from the [desktop release](https://github.com/listenb
 To build and reinstall the release locally, run this from either the parent monorepo or the client checkout:
 
 ```sh
-moonx desktop:macos-reinstall
+moon run desktop:macos-reinstall
 ```
 
-This reuses the release/DMG packaging, verifies the staged app, gracefully stops the copy running from `/Applications/Listenbox.app`, and atomically replaces that bundle. It also handles a first install. A failed build, copy, signature check, or shutdown leaves the installed bundle intact. The task never force-kills the app, changes its profile or credentials, or starts it afterward; open Listenbox from Applications when ready. Installation always runs, even with cached build outputs.
+This builds the current local source in Cargo's release profile, packages an ad-hoc signed app, verifies it, gracefully stops the copy running from `/Applications/Listenbox.app`, and atomically replaces that bundle. It uses production services and the existing `~/Library/Application Support/Listenbox/` profile, including credentials and resumable work. No GitHub release or version bump is needed; the app retains the workspace version. It skips native updater dependencies, notarization and DMG creation, regardless of release-signing environment variables. Use this same command again after editing the source.
+
+It also handles a first install. A failed build, copy, signature check, or shutdown leaves the installed bundle intact. The task never force-kills the app, changes its profile or credentials, or starts it afterward; open Listenbox from Applications when ready. Installation always runs, even with cached build outputs. Local reinstalls have no automatic updater; use a published release to restore native updates.
 
 ## Import and sync
 

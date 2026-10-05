@@ -115,6 +115,25 @@ tasks:
     options:
       os: [linux, macos]
       runInCI: false
+  build-release-local:
+    description: Build the local production desktop without native updater dependencies.
+    extends: build-release
+    deps: [client:prerequisites]
+    env:
+      LISTENBOX_PRODUCTION_RELEASE: '0'
+    script: |-
+      set -euo pipefail
+      cd ../..
+      kache cargo -- build --locked --release -p listenbox-desktop
+      mkdir -p crates/desktop/dist/release-local
+      cp target/release/listenbox-desktop crates/desktop/dist/release-local/listenbox-desktop
+      cp .cache/ffmpeg/NOTICE.txt crates/desktop/dist/release-local/FFmpeg-NOTICE.txt
+      crates/desktop/dist/release-local/listenbox-desktop --help
+    outputs: [dist/release-local/listenbox-desktop, dist/release-local/FFmpeg-NOTICE.txt]
+    options:
+      mergeDeps: replace
+      mergeOutputs: replace
+      os: macos
   dmg:
     description: Package the production Apple Silicon desktop executable as a macOS DMG.
     deps: [client:updaters, ~:build-release]
@@ -131,15 +150,20 @@ tasks:
       cache: false
       runInCI: false
   macos-reinstall:
-    description: Build the release and replace /Applications/Listenbox.app after gracefully stopping the installed copy.
-    deps: [~:dmg]
-    inputs: [project://client?group=macos-install-tools]
+    description: Build locally for production services and replace /Applications/Listenbox.app without creating a DMG.
+    deps: [~:build-release-local]
+    inputs: [project://client?group=macos-install-tools, project://client?group=sources, project://client?group=notices]
+    env:
+      LISTENBOX_PRODUCTION_RELEASE: '0'
+      LISTENBOX_SIGNING_IDENTITY: '-'
     script: |-
       set -euo pipefail
       cd ../..
       mkdir -p .cache
+      kache rustc --crate-name package_macos --edition 2024 --out-dir .cache tools/package-macos.rs
+      .cache/package_macos --local
       xcrun swiftc -warnings-as-errors -parse-as-library tools/reinstall-macos.swift -o .cache/reinstall-macos
-      .cache/reinstall-macos crates/desktop/dist/macos/image/Listenbox.app /Applications/Listenbox.app
+      .cache/reinstall-macos crates/desktop/dist/macos-local/image/Listenbox.app /Applications/Listenbox.app
     options:
       os: macos
       cache: false
