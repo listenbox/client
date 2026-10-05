@@ -4702,7 +4702,7 @@ checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
 
 [[package]]
 name = "listenbox"
-version = "0.1.6"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -4720,7 +4720,7 @@ dependencies = [
 
 [[package]]
 name = "listenbox-desktop"
-version = "0.1.6"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "cc",
@@ -4749,7 +4749,7 @@ dependencies = [
 
 [[package]]
 name = "listenbox-sync-engine"
-version = "0.1.6"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
