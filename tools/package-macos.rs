@@ -1,5 +1,5 @@
 //! Build a relocatable application bundle and DMG. No build-machine config is packaged.
-use std::{env, error::Error, fs, path::Path, process::Command};
+use std::{env, error::Error, fs, path::Path, process::Command, thread, time::Duration};
 
 fn run(command: &mut Command) -> Result<(), Box<dyn Error>> {
     let status = command.status()?;
@@ -19,6 +19,41 @@ fn require_arm64(path: &Path) -> Result<(), Box<dyn Error>> {
         return Err(format!("{} must be arm64, found {}", path.display(), actual.trim()).into());
     }
     Ok(())
+}
+
+fn verify_dmg(path: &Path) -> Result<(), Box<dyn Error>> {
+    let mut attempt = 1;
+    loop {
+        let output = Command::new("hdiutil")
+            .arg("verify")
+            .arg(path)
+            .env("LC_ALL", "C")
+            .output()?;
+        print!("{}", String::from_utf8_lossy(&output.stdout));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        eprint!("{stderr}");
+        if output.status.success() {
+            return Ok(());
+        }
+        // A newly created image can still be write-locked when create exits.
+        // Retry only that lock failure, never a bad checksum.
+        if attempt == 5
+            || !stderr.contains("hdiutil: verify failed - Resource temporarily unavailable")
+        {
+            return Err(format!(
+                "hdiutil verify {} failed: {}: {stderr}",
+                path.display(),
+                output.status
+            )
+            .into());
+        }
+        eprintln!(
+            "DMG is still locked; retrying verification ({}/5)",
+            attempt + 1
+        );
+        thread::sleep(Duration::from_millis(500 * attempt));
+        attempt += 1;
+    }
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -195,7 +230,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .arg(&staging)
         .args(["-ov", "-format", "UDZO"])
         .arg(&dmg))?;
-    run(Command::new("hdiutil").arg("verify").arg(&dmg))?;
+    verify_dmg(&dmg)?;
     if production {
         run(Command::new("codesign")
             .args(["--force", "--sign", &identity, "--timestamp"])
