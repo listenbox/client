@@ -2115,6 +2115,24 @@ async fn live_team_import(cx: &mut TestAppContext) {
         window.render_frame(cx);
         window.click("team-picker", cx);
         if values["mode"] == "picker" {
+            assert_eq!(
+                window
+                    .find(SharedString::from(format!(
+                        "team-plan-{}",
+                        values["original"]
+                    )))
+                    .label(),
+                Some("Audio"),
+            );
+            assert_eq!(
+                window
+                    .find(SharedString::from(format!(
+                        "team-plan-{}",
+                        values["destination"]
+                    )))
+                    .label(),
+                Some("Video HD"),
+            );
             for id in [&values["reader"], &values["direct"]] {
                 assert!(
                     window
@@ -2136,6 +2154,10 @@ async fn live_team_import(cx: &mut TestAppContext) {
             cx,
         );
         assert_eq!(view.read(cx).team.as_ref(), Some(&values["destination"]));
+        if values["mode"] == "picker" {
+            window.render_frame(cx);
+            assert_eq!(window.find("selected-team-plan").label(), Some("Video HD"));
+        }
     })
     .unwrap();
     if values["mode"] == "picker" {

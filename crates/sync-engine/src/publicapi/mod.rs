@@ -350,6 +350,8 @@ pub struct ClientTeam {
     pub id: TeamID,
     #[serde(rename = "name")]
     pub name: NonEmptyString,
+    #[serde(rename = "plan_family", default, skip_serializing_if = "Option::is_none")]
+    pub plan_family: std::option::Option<TeamPlanFamily>,
 }
 
 #[derive(Clone, Debug)]
@@ -2373,6 +2375,7 @@ pub type ImportRunID = std::string::String;
 #[derive(Clone, Debug)]
 pub struct ListClientTeamsParams {
     pub writable_only: std::option::Option<bool>,
+    pub include_plan_family: std::option::Option<bool>,
 }
 
 #[derive(Debug)]
@@ -3783,6 +3786,18 @@ pub struct TeamMemberCollection {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TeamPlanFamily {
+    #[serde(rename = "free")]
+    Free,
+    #[serde(rename = "audio")]
+    Audio,
+    #[serde(rename = "video_hd")]
+    VideoHd,
+    #[serde(rename = "video_4k")]
+    Video4k,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TeamRole {
     #[serde(rename = "owner")]
     Owner,
@@ -4747,6 +4762,7 @@ impl<T: Transport> Client<T> {
         let request = self.http.request(reqwest::Method::GET, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         let request = match params.writable_only { Some(value) => request.query(&[("writable_only", value)]), None => request };
+        let request = match params.include_plan_family { Some(value) => request.query(&[("include_plan_family", value)]), None => request };
         self.transport.execute(request, self.body_limit).await
     }
     pub async fn whoami(&self) -> Result<WhoamiResponse, T::Error> {

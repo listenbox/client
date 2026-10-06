@@ -14,7 +14,7 @@ use listenbox_sync_engine::{
     api::PaymentRequired,
     client::{Catalog, Client, SyncState},
     downloads::{Phase, Snapshot},
-    publicapi::{ClientTeam, Show, ShowSourceKind},
+    publicapi::{ClientTeam, Show, ShowSourceKind, TeamPlanFamily},
     sync::Report,
     youtube::{ImportEvent, ImportPreparation, ImportStage},
 };
@@ -192,6 +192,57 @@ enum Message {
         anyhow::Result<Vec<listenbox_sync_engine::publicapi::EpisodeListItem>>,
     ),
     SyncState(u64, anyhow::Result<SyncState>),
+}
+
+fn team_plan_badge(id: impl Into<ElementId>, family: &TeamPlanFamily, cx: &App) -> AnyElement {
+    let t = Tokens::current(cx);
+    let paid = !matches!(family, TeamPlanFamily::Free);
+    let label = match family {
+        TeamPlanFamily::Free => "Free",
+        TeamPlanFamily::Audio => "Audio",
+        TeamPlanFamily::VideoHd => "Video HD",
+        TeamPlanFamily::Video4k => "Video 4K",
+    };
+    let badge = div()
+        .id(id)
+        .role(Role::Label)
+        .aria_label(label)
+        .test_support()
+        .flex()
+        .items_center()
+        .justify_center()
+        .flex_shrink_0()
+        .h(px(22.))
+        .px(px(10.))
+        .gap(px(4.))
+        .rounded_full()
+        .border_1()
+        .border_color(if paid {
+            t.action_ink.opacity(0.15)
+        } else {
+            t.border
+        })
+        .bg(if paid { t.plan } else { t.rail })
+        .text_color(if paid { t.action_ink } else { t.ink })
+        .text_size(px(12.))
+        .line_height(relative(1.))
+        .font_weight(FontWeight::BOLD);
+    if matches!(family, TeamPlanFamily::Video4k) {
+        badge
+            .child(div().text_color(t.action_ink.opacity(0.85)).child("Video"))
+            .child(
+                div()
+                    .rounded(px(3.))
+                    .bg(t.action_ink.opacity(0.12))
+                    .px(px(6.))
+                    .text_size(px(11.))
+                    .font_weight(FontWeight::BLACK)
+                    .child("4K"),
+            )
+            .into_any_element()
+    } else {
+        badge.child(label).into_any_element()
+    }
 }
 
 impl Workspace {
@@ -952,10 +1003,11 @@ impl Workspace {
 
     fn sidebar(&self, cx: &mut Context<Self>) -> AnyElement {
         let t = Tokens::current(cx);
-        let team_name = self
+        let selected_team = self
             .team
             .as_ref()
-            .and_then(|id| self.catalog.teams.iter().find(|team| &team.id == id))
+            .and_then(|id| self.catalog.teams.iter().find(|team| &team.id == id));
+        let team_name = selected_team
             .map(|team| team.name.clone())
             .unwrap_or_else(|| "All teams".into());
         let rail = div()
@@ -994,6 +1046,12 @@ impl Workspace {
                                     .text_size(px(tokens::TITLE))
                                     .font_weight(FontWeight::BOLD)
                                     .child(team_name),
+                            )
+                            .when_some(
+                                selected_team.and_then(|team| team.plan_family.as_ref()),
+                                |row, family| {
+                                    row.child(team_plan_badge("selected-team-plan", family, cx))
+                                },
                             )
                             .child(
                                 Icon::new(if self.team_picker {
@@ -1042,7 +1100,21 @@ impl Workspace {
                         .h(px(tokens::CONTROL_HEIGHT))
                         .px(px(tokens::NAV_ROW_INSET))
                         .accessibility_label(team.name.clone())
-                        .child(div().w_full().truncate().child(team.name.clone()))
+                        .child(
+                            div()
+                                .w_full()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .child(div().flex_1().min_w_0().truncate().child(team.name.clone()))
+                                .when_some(team.plan_family.as_ref(), |row, family| {
+                                    row.child(team_plan_badge(
+                                        SharedString::from(format!("team-plan-{}", team.id)),
+                                        family,
+                                        cx,
+                                    ))
+                                }),
+                        )
                         .on_click(cx.listener(move |view, _, window, cx| {
                             view.team = Some(id.clone());
                             view.team_picker = false;

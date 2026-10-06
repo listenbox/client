@@ -153,7 +153,8 @@ impl Client {
         let client = api.client();
         let (teams, shows, account) = tokio::try_join!(
             client.list_client_teams(p::ListClientTeamsParams {
-                writable_only: Some(true)
+                writable_only: Some(true),
+                include_plan_family: Some(true),
             }),
             client.list_shows(p::ListShowsParams {
                 youtube_imports_only: Some(true)
