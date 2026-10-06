@@ -1027,7 +1027,7 @@ pub enum CreateShowResponse {
     Status402(()),
     Status403(()),
     Status404(()),
-    Status409(()),
+    Status409(PodcastCreationConflict),
     Status422(()),
     Status502(()),
     Unexpected(reqwest::Response),
@@ -1041,7 +1041,7 @@ impl Response for CreateShowResponse {
             402 => Self::Status402(()),
             403 => Self::Status403(()),
             404 => Self::Status404(()),
-            409 => Self::Status409(()),
+            409 => Self::Status409(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             422 => Self::Status422(()),
             502 => Self::Status502(()),
             _ => Self::Unexpected(response),
@@ -1070,7 +1070,7 @@ impl Response for CreateShowResponse {
             Self::Status402(_) => Ok(Vec::new()),
             Self::Status403(_) => Ok(Vec::new()),
             Self::Status404(_) => Ok(Vec::new()),
-            Self::Status409(_) => Ok(Vec::new()),
+            Self::Status409(body) => serde_json::to_vec(&body).map_err(Error::Decode),
             Self::Status422(_) => Ok(Vec::new()),
             Self::Status502(_) => Ok(Vec::new()),
             Self::Unexpected(response) => read_body(response, 64 << 10).await,
@@ -2272,7 +2272,7 @@ pub enum ImportRSSResponse {
     Status401(()),
     Status402(RSSImportEntitlementError),
     Status403(()),
-    Status409(()),
+    Status409(PodcastCreationConflict),
     Unexpected(reqwest::Response),
 }
 impl Response for ImportRSSResponse {
@@ -2283,7 +2283,7 @@ impl Response for ImportRSSResponse {
             401 => Self::Status401(()),
             402 => Self::Status402(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             403 => Self::Status403(()),
-            409 => Self::Status409(()),
+            409 => Self::Status409(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             _ => Self::Unexpected(response),
         })
     }
@@ -2306,7 +2306,7 @@ impl Response for ImportRSSResponse {
             Self::Status401(_) => Ok(Vec::new()),
             Self::Status402(body) => serde_json::to_vec(&body).map_err(Error::Decode),
             Self::Status403(_) => Ok(Vec::new()),
-            Self::Status409(_) => Ok(Vec::new()),
+            Self::Status409(body) => serde_json::to_vec(&body).map_err(Error::Decode),
             Self::Unexpected(response) => read_body(response, 64 << 10).await,
         };
         match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
@@ -2679,6 +2679,27 @@ pub struct PendingTeamInvitation {
     pub invited_at: UnixMillis,
     #[serde(rename = "role")]
     pub role: AssignableTeamRole,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "code", deny_unknown_fields)]
+pub enum PodcastCreationConflict {
+    #[serde(rename = "show_already_imported")]
+    ShowAlreadyImported {
+        #[serde(rename = "message")]
+        message: NonEmptyString,
+        #[serde(rename = "show_id")]
+        show_id: ShowID,
+        #[serde(rename = "show_slug")]
+        show_slug: ShowSlug,
+        #[serde(rename = "team_id")]
+        team_id: TeamID,
+    },
+    #[serde(rename = "show_identity_conflict")]
+    ShowIdentityConflict {
+        #[serde(rename = "message")]
+        message: NonEmptyString,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -3406,6 +3427,27 @@ pub enum ShowAccessSource {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct ShowAlreadyImported {
+    #[serde(rename = "code")]
+    pub code: ShowAlreadyImportedCode,
+    #[serde(rename = "message")]
+    pub message: NonEmptyString,
+    #[serde(rename = "show_id")]
+    pub show_id: ShowID,
+    #[serde(rename = "show_slug")]
+    pub show_slug: ShowSlug,
+    #[serde(rename = "team_id")]
+    pub team_id: TeamID,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ShowAlreadyImportedCode {
+    #[serde(rename = "show_already_imported")]
+    ShowAlreadyImported,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ShowDeletionCompletedEvent {
     #[serde(rename = "show_deletion_run_id")]
     pub show_deletion_run_id: ShowDeletionRunID,
@@ -3625,6 +3667,21 @@ pub enum ShowDeletionTerminalEventFailedType {
 }
 
 pub type ShowID = std::string::String;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ShowIdentityConflict {
+    #[serde(rename = "code")]
+    pub code: ShowIdentityConflictCode,
+    #[serde(rename = "message")]
+    pub message: NonEmptyString,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ShowIdentityConflictCode {
+    #[serde(rename = "show_identity_conflict")]
+    ShowIdentityConflict,
+}
 
 pub type ShowInvitationID = std::string::String;
 

@@ -175,6 +175,7 @@ enum Message {
     Login(anyhow::Result<()>),
     ImportPreparation(ImportPreparation),
     ImportCreated(Show, CancellationToken),
+    ImportExisting(Show),
     Imported {
         slug: Option<String>,
         team: String,
@@ -626,6 +627,17 @@ impl Workspace {
                     SyncReport::Notice("Importing the first episodes…".into()),
                 );
             }
+            Message::ImportExisting(show) => {
+                self.creating = None;
+                self.source
+                    .update(cx, |state, cx| state.set_value("", window, cx));
+                self.team = Some(show.team_id.clone());
+                let slug = show.slug.clone();
+                self.catalog.shows.retain(|podcast| podcast.id != show.id);
+                self.catalog.shows.push(show);
+                self.import_open = false;
+                self.select(Some(slug), window, cx);
+            }
             Message::Imported {
                 slug,
                 team,
@@ -642,7 +654,9 @@ impl Workspace {
                 });
                 match result {
                     Ok((show, report)) => {
-                        self.receive(Message::Report(show.slug, report), window, cx);
+                        if slug.is_some() {
+                            self.receive(Message::Report(show.slug, report), window, cx);
+                        }
                     }
                     Err(_) if stopped => {
                         if let Some(slug) = slug {
@@ -818,6 +832,9 @@ impl Workspace {
                                 }
                                 let _ = created_sender
                                     .send(Message::ImportCreated(show, created_cancel.clone()));
+                            }
+                            ImportEvent::Existing(show) => {
+                                let _ = created_sender.send(Message::ImportExisting(show));
                             }
                         }
                     })

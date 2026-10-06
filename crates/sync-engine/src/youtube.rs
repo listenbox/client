@@ -40,6 +40,7 @@ pub struct ImportPreparation {
 pub enum ImportEvent {
     Preparing(ImportPreparation),
     Created(p::Show),
+    Existing(p::Show),
 }
 
 pub fn is_source(source: &str) -> bool {
@@ -198,34 +199,66 @@ pub async fn import(
     let mut preparation = ImportPreparation::default();
     event(ImportEvent::Preparing(preparation.clone()));
     let client = api.client();
-    let duplicate = async {
-        if let Some(slug) = &requested_slug {
-            let shows = match client
-                .list_shows(p::ListShowsParams {
-                    youtube_imports_only: None,
-                })
-                .await?
-            {
-                p::ListShowsResponse::Status200(value) => value,
-                response => return Err(api.response_error(response).await),
-            };
-            ensure!(
-                !shows.iter().any(|show| show.slug == *slug),
-                "Podcast {slug:?} already exists. Use sync to resume an imported podcast, or choose a new slug."
-            );
-        }
-        Ok(())
+    let video_id = if collection.is_none() {
+        let id = if url.host_str() == Some("youtu.be") {
+            url.path().trim_matches('/').to_owned()
+        } else if let Some((_, id)) = url.query_pairs().find(|(key, _)| key == "v") {
+            id.into_owned()
+        } else {
+            url.path()
+                .strip_prefix("/shorts/")
+                .or_else(|| url.path().strip_prefix("/embed/"))
+                .unwrap_or("")
+                .into()
+        };
+        ensure!(
+            id.len() == 11 && valid_youtube_id(&id),
+            "invalid YouTube video ID"
+        );
+        Some(id)
+    } else {
+        None
     };
-    let (_, capacity) = tokio::try_join!(
-        duplicate,
+    let (shows, capacity) = tokio::try_join!(
+        client.list_shows(p::ListShowsParams {
+            youtube_imports_only: None
+        }),
         client.get_import_capacity(p::GetImportCapacityParams {
             team_id: team.to_owned()
         })
     )?;
+    let shows = match shows {
+        p::ListShowsResponse::Status200(shows) => shows,
+        response => return Err(api.response_error(response).await),
+    };
     let capacity = match capacity {
         p::GetImportCapacityResponse::Status200(value) => value,
         response => return Err(api.response_error(response).await),
     };
+    let collection = match collection {
+        Some(collection) => Some(resolve_channel(api, collection).await?),
+        None => None,
+    };
+    let canonical = collection
+        .clone()
+        .or_else(|| {
+            video_id
+                .as_ref()
+                .map(|id| format!("https://www.youtube.com/watch?v={id}"))
+        })
+        .context("YouTube source has no canonical identity")?;
+    if let Some(show) = shows.iter().find(|show| {
+        show.team_id == team && show.youtube.url.as_deref() == Some(canonical.as_str())
+    }) {
+        event(ImportEvent::Existing(show.clone()));
+        return Ok((show.clone(), Default::default()));
+    }
+    if let Some(slug) = &requested_slug {
+        ensure!(
+            !shows.iter().any(|show| show.slug == *slug),
+            "Podcast {slug:?} already exists. Use sync to resume an imported podcast, or choose a new slug."
+        );
+    }
     if !capacity.has_active_subscription {
         return Err(PaymentRequired(
             "A paid podcast plan is required for YouTube imports. Choose a plan, then try again."
@@ -240,10 +273,6 @@ pub async fn import(
     preparation.video_remaining_seconds =
         (kind == p::ShowSourceKind::Video).then_some(capacity.video_remaining_seconds);
     event(ImportEvent::Preparing(preparation.clone()));
-    let collection = match collection {
-        Some(collection) => Some(resolve_channel(api, collection).await?),
-        None => None,
-    };
     let youtube = YouTube::new(api).await?;
     let (title, canonical, listing) = if let Some(collection) = &collection {
         let id = collection_playlist_id(&Url::parse(collection)?)
@@ -264,22 +293,10 @@ pub async fn import(
         };
         (title, collection.clone(), listing)
     } else {
-        let id = if url.host_str() == Some("youtu.be") {
-            url.path().trim_matches('/').to_owned()
-        } else if let Some((_, id)) = url.query_pairs().find(|(key, _)| key == "v") {
-            id.into_owned()
-        } else {
-            url.path()
-                .strip_prefix("/shorts/")
-                .or_else(|| url.path().strip_prefix("/embed/"))
-                .unwrap_or("")
-                .into()
-        };
-        ensure!(
-            id.len() == 11 && valid_youtube_id(&id),
-            "invalid YouTube video ID"
-        );
-        let media = match youtube.media(api, &id, source).await? {
+        let id = video_id
+            .as_ref()
+            .context("YouTube source has no video ID")?;
+        let media = match youtube.media(api, id, source).await? {
             Playback::Available(media) => media,
             Playback::Unavailable(reason) => {
                 anyhow::bail!("YouTube playback unavailable: {reason}")
@@ -349,6 +366,19 @@ pub async fn import(
             .with_context(|| context.clone())?;
         match response {
             p::CreateShowResponse::Status201(show) => break show,
+            p::CreateShowResponse::Status409(p::PodcastCreationConflict::ShowAlreadyImported {
+                show_id,
+                team_id,
+                ..
+            }) => {
+                ensure!(
+                    team_id == team,
+                    "import conflict returned another team's podcast"
+                );
+                let existing = show_from_import_conflict(api, team, &show_id).await?;
+                event(ImportEvent::Existing(existing.clone()));
+                return Ok((existing, Default::default()));
+            }
             // A conflict confirms no show was created; an ambiguous failure cannot.
             p::CreateShowResponse::Status409(_) if title_slug => {
                 title_slug = false;
@@ -371,6 +401,23 @@ pub async fn import(
     .await
     .with_context(|| format!("Podcast {slug:?} was created. Resume it with sync."))?;
     Ok((show, report))
+}
+
+async fn show_from_import_conflict(api: &Api, team: &str, show_id: &str) -> Result<p::Show> {
+    let shows = match api
+        .client()
+        .list_shows(p::ListShowsParams {
+            youtube_imports_only: None,
+        })
+        .await?
+    {
+        p::ListShowsResponse::Status200(shows) => shows,
+        response => return Err(api.response_error(response).await),
+    };
+    shows
+        .into_iter()
+        .find(|show| show.id == show_id && show.team_id == team)
+        .context("Existing imported podcast is no longer available; reload your podcasts")
 }
 
 fn random_playlist_slug() -> String {

@@ -108,7 +108,7 @@ pub async fn shows(api: &Api, command: ShowCommand) -> Result<()> {
                 .await?;
             let show = match response {
                 p::CreateShowResponse::Status201(show) => show,
-                p::CreateShowResponse::Status409(()) => {
+                p::CreateShowResponse::Status409(_) => {
                     bail!("create show: slug {slug:?} already exists")
                 }
                 response => return Err(api.response_error(response).await),
@@ -212,7 +212,22 @@ pub async fn import_rss(api: &Api, source: &str, slug: Option<&str>) -> Result<(
         .await?;
     let created = match response {
         p::ImportRSSResponse::Status202(created) => created,
-        p::ImportRSSResponse::Status409(()) => {
+        p::ImportRSSResponse::Status409(p::PodcastCreationConflict::ShowAlreadyImported {
+            show_id,
+            show_slug,
+            team_id,
+            ..
+        }) => {
+            ensure!(
+                team_id == api.team_id().await?,
+                "RSS import conflict returned another team's podcast"
+            );
+            let location = api.config.show_url(&team_id, &show_id)?;
+            println!("{show_slug}");
+            eprintln!("Open in Listenbox: {location}");
+            return Ok(());
+        }
+        p::ImportRSSResponse::Status409(_) => {
             if let Some(slug) = slug {
                 bail!("requested slug {slug:?} conflicts");
             }

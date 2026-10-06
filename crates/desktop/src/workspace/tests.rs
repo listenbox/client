@@ -2261,6 +2261,7 @@ async fn live_import(cx: &mut TestAppContext) {
     let config = Config::load(None).unwrap();
     let source = std::fs::read_to_string(config.directory.join("test-playlist-url")).unwrap();
     let recover_scan = config.directory.join("test-import-scan-failure").exists();
+    let repeat = config.directory.join("test-repeat-import").exists();
     let client = Client::desktop(config).unwrap();
     let cancel = CancellationToken::new();
     cx.update(gpui_kit::init);
@@ -2339,6 +2340,43 @@ async fn live_import(cx: &mut TestAppContext) {
         }
         window.render_frame(cx);
         assert!(window.try_find("save-source").is_none());
+    })
+    .unwrap();
+    if repeat {
+        let original = cx.update(|cx| view.read(cx).show().unwrap().clone());
+        // Reusing an audio podcast also works when the new form requests video.
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.click("new-import", cx);
+            view.update(cx, |view, cx| {
+                view.import_kind = ShowSourceKind::Video;
+                cx.notify();
+            });
+            window.render_frame(cx);
+            window.click("youtube-url", cx);
+            window.input(&source, cx);
+            window.click("start-import", cx);
+            assert!(
+                view.read(cx).creating.is_some(),
+                "repeat import never started"
+            );
+        })
+        .unwrap();
+        wait_for(cx, &view, |view| {
+            view.creating.is_none() && !view.loading && view.jobs.is_empty()
+        })
+        .await;
+        cx.update_window(handle.into(), |_, window, cx| {
+            let state = view.read(cx);
+            assert!(state.error.is_none(), "{:?}", state.error);
+            assert!(!state.import_open, "repeat import stayed on the form");
+            assert_eq!(state.catalog.shows.len(), 1);
+            assert_eq!(state.show().unwrap().id, original.id);
+            assert_eq!(state.show().unwrap().source_kind, original.source_kind);
+            window.render_frame(cx);
+        })
+        .unwrap();
+    }
+    cx.update_window(handle.into(), |_, window, cx| {
         window.click("sync-now", cx);
         assert_eq!(view.read(cx).jobs.len(), 1);
     })
