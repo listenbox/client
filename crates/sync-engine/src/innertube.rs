@@ -488,7 +488,12 @@ impl YouTube {
     #[tracing::instrument(name = "youtube.media", skip_all, fields(video_id = id))]
     pub async fn media(&self, api: &Api, id: &str, collection: &str) -> Result<Playback> {
         self.wait(api, async {
-            let info = match self.player_info(id, Client::Web).await? {
+            let metadata_client = if matches!(self.playback_client, Client::WebEmbedded) {
+                Client::Mweb
+            } else {
+                Client::Web
+            };
+            let info = match self.player_info(id, metadata_client).await? {
                 PlayerResponse::Available(info) => info,
                 PlayerResponse::Unavailable(reason) => return Ok(Playback::Unavailable(reason)),
             };
@@ -500,14 +505,37 @@ impl YouTube {
                     "Live or upcoming video; sync after it has finished".into(),
                 ));
             }
-            // Web supplies publication metadata; native and embedded clients supply direct streams.
-            let playback = match self.player_info(id, self.playback_client).await? {
-                PlayerResponse::Available(info) => info,
-                PlayerResponse::Unavailable(reason) => return Ok(Playback::Unavailable(reason)),
+            let mut formats = info.formats().await?;
+            formats.extend(info.adaptive_formats().await?);
+            let (playback, mut formats) = if matches!(metadata_client, Client::Mweb)
+                && formats.iter().any(|format| {
+                    let f = format.info();
+                    f.url.is_some() || f.cipher.is_some() || f.signature_cipher.is_some()
+                })
+            {
+                (info, formats)
+            } else {
+                // SABR-only metadata still needs another client's direct streams.
+                let playback = match self.player_info(id, self.playback_client).await? {
+                    PlayerResponse::Available(info) => info,
+                    // Embedding refusal does not establish video unavailability.
+                    PlayerResponse::Unavailable(_)
+                        if matches!(self.playback_client, Client::WebEmbedded) =>
+                    {
+                        match self.player_info(id, Client::WebCreator).await? {
+                            PlayerResponse::Available(info) => info,
+                            PlayerResponse::Unavailable(reason) => {
+                                return Ok(Playback::Unavailable(reason));
+                            }
+                        }
+                    }
+                    PlayerResponse::Unavailable(reason) => return Ok(Playback::Unavailable(reason)),
+                };
+                let mut formats = playback.formats().await?;
+                formats.extend(playback.adaptive_formats().await?);
+                (playback, formats)
             };
-            let playback_data = playback.data().await?;
-            let mut formats = playback.formats().await?;
-            formats.extend(playback.adaptive_formats().await?);
+            let cpn = playback.cpn().await?;
             ensure!(
                 formats.iter().any(|format| {
                     let f = format.info();
@@ -640,9 +668,9 @@ impl YouTube {
                 artwork_url: thumbnail_url(data.basic_info.thumbnail),
                 description: data.basic_info.short_description.unwrap_or_default(),
                 published_at,
-                video: self.stream(video, &playback_data.cpn).await?,
+                video: self.stream(video, &cpn).await?,
                 audio: match audio {
-                    Some(format) => Some(self.stream(format, &playback_data.cpn).await?),
+                    Some(format) => Some(self.stream(format, &cpn).await?),
                     None => None,
                 },
             })))
