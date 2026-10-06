@@ -73,7 +73,7 @@ Ctrl+C or SIGTERM. The engine stops admission, drains current writes, and saves 
 
 In a terminal, a compact footer tracks imported and not-imported episode counts, the queue, active stages, and transfer rates. Totals grow as sources are read; already published episodes count as imported. Each **Not imported** episode stays above the footer with its show, YouTube URL, and failure reason. Redirected output uses plain text with one record per failure and a count summary for each successful show. Successful sibling shows continue if another show fails. A one-shot run exits nonzero for a show-level failure; watch mode keeps checking hourly. Skipped episodes are reported without failing otherwise successful syncs.
 
-Run the current release build directly from this repository:
+Build and run the CLI against production directly from this repository:
 
 ```sh
 moonx cli:prod -- youtube --help
@@ -81,7 +81,15 @@ moonx cli:prod -- youtube sync
 moonx cli:prod -- youtube sync --show field-notes --watch
 ```
 
-`moon run cli:prod -- …` also works. Moon requires `--` before CLI arguments. The target builds the release CLI, forces the production API/dashboard origins, and uses the persistent production profile shared with desktop. An explicit `LISTENBOX_PROFILE_DIR` override still selects a different profile.
+`moon run cli:prod -- …` also works. Moon requires `--` before CLI arguments. The target uses `cargo run --profile prod`, forces the production API/dashboard origins, and uses the persistent production profile shared with desktop. This Cargo profile inherits the fast, unoptimized dev build with debug assertions disabled, keeping production state and quiet diagnostics. Cargo reuses compiled artifacts on subsequent runs. An explicit `LISTENBOX_PROFILE_DIR` override still selects a different profile.
+
+Once Moon has prepared the native dependencies and generated code, the equivalent command from `apps/client` is:
+
+```sh
+kache cargo -- run --locked --profile prod -p listenbox -- --config config/prod.yaml youtube sync
+```
+
+Use `moon run cli:build-release` when you need an optimized release binary.
 
 A complete source scan can remove episodes whose videos were removed from the
 source. Playlist sync also restores source order. See the

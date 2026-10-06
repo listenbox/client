@@ -39,11 +39,11 @@ tasks:
     options:
       runInCI: false
   prod:
-    description: Run the release CLI against production; pass commands after --.
-    deps: [~:build-release]
+    description: Build and run the CLI against production quickly; pass commands after --.
+    deps: [client:prerequisites]
     preset: utility
     inputs: []
-    command: ./dist/release/listenbox --config ../../config/prod.yaml
+    command: kache cargo -- run --locked --profile prod -p listenbox -- --config ../../config/prod.yaml
     options:
       cache: false
       runInCI: false

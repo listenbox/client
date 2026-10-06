@@ -16,6 +16,12 @@ unsafe_op_in_unsafe_fn = "deny"
 [profile.dev]
 debug = 0
 
+# Fast local runs against production: use production state and quiet diagnostics
+# without paying for release optimization and LTO.
+[profile.prod]
+inherits = "dev"
+debug-assertions = false
+
 [profile.release]
 strip = true
 lto = "thin"
