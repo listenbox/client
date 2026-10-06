@@ -26,3 +26,24 @@ tasks:
     deps: [client:prerequisites]
     inputs: ['@group(sources)', 'project://client?group=sources']
     command: kache cargo -- test --locked -p listenbox
+  build-release:
+    description: Build the production CLI with the persistent desktop profile.
+    deps: [client:prerequisites]
+    inputs: ['@group(sources)', 'project://client?group=sources']
+    script: |-
+      set -euo pipefail
+      kache cargo -- build --locked --release -p listenbox
+      mkdir -p dist/release
+      cp ../../target/release/listenbox dist/release/listenbox
+    outputs: [dist/release/listenbox]
+    options:
+      runInCI: false
+  prod:
+    description: Run the release CLI against production; pass commands after --.
+    deps: [~:build-release]
+    preset: utility
+    inputs: []
+    command: ./dist/release/listenbox --config ../../config/prod.yaml
+    options:
+      cache: false
+      runInCI: false

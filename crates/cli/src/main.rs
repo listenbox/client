@@ -1,8 +1,9 @@
 mod commands;
 mod episodes;
+mod youtube;
 use anyhow::{Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use listenbox_sync_engine::{api, auth, config, youtube};
+use listenbox_sync_engine::{api, auth, config, youtube as youtube_source};
 use tokio_util::sync::CancellationToken;
 
 #[derive(Parser)]
@@ -33,10 +34,13 @@ enum Command {
         slug: Option<String>,
         source_url: String,
     },
-    /// Import or remove the YouTube session shared with Listenbox desktop
-    YoutubeCookies {
+    /// Sync YouTube podcasts and manage the session shared with desktop
+    #[command(
+        long_about = "Sync saved YouTube sources and manage the YouTube session shared with Listenbox desktop.\n\nRun `listenbox youtube sync` to sync every eligible YouTube show across all teams you can write to. Add --show <slug> for one show, or --watch to sync immediately and check again hourly. An active paid plan is required.\n\nNot imported episodes stay visible with a YouTube link and the reason. A compact footer shows live progress in a terminal; redirected output stays plain text. Ctrl+C saves resumable work, drains current writes, and exits.\n\nUse `listenbox youtube cookies import <netscape.txt>` to replace the shared session, or `listenbox youtube cookies remove` for anonymous access. Cookie commands do not require a Listenbox login."
+    )]
+    Youtube {
         #[command(subcommand)]
-        command: CookieCommand,
+        command: YoutubeCommand,
     },
     /// Manage shows by slug
     Shows {
@@ -58,7 +62,10 @@ enum Command {
 #[derive(Subcommand)]
 enum CookieCommand {
     /// Replace saved cookies with a Netscape cookies.txt export
-    Import { file: std::path::PathBuf },
+    Import {
+        #[arg(value_name = "NETSCAPE.txt")]
+        file: std::path::PathBuf,
+    },
     /// Remove the saved session and return to anonymous access
     Remove,
 }
@@ -79,11 +86,6 @@ enum ShowCommand {
         show: String,
         #[arg(long, value_parser = episode_id)]
         episode: Vec<String>,
-    },
-    /// Sync an imported podcast by slug using its saved YouTube source
-    Sync {
-        #[command(subcommand)]
-        command: SyncCommand,
     },
     Create {
         #[arg(long, value_parser = nonblank)]
@@ -106,14 +108,19 @@ enum ShowCommand {
 }
 
 #[derive(Subcommand)]
-enum SyncCommand {
-    /// No URL needed: the source was saved when the podcast was imported
-    Youtube {
+enum YoutubeCommand {
+    /// Sync all eligible YouTube shows across all teams, or a single show
+    Sync {
         #[arg(long, value_parser = slug)]
-        show: String,
-        /// Repeat in the foreground until SIGINT or SIGTERM
+        show: Option<String>,
+        /// Sync immediately, then check hourly until Ctrl+C (or SIGTERM)
         #[arg(long)]
         watch: bool,
+    },
+    /// Import or remove the YouTube session shared with Listenbox desktop
+    Cookies {
+        #[command(subcommand)]
+        command: CookieCommand,
     },
 }
 
@@ -273,7 +280,7 @@ async fn main() -> std::process::ExitCode {
         signal_cancel.cancel();
     });
     match run(cli, cancel.clone()).await {
-        Ok(()) => std::process::ExitCode::SUCCESS,
+        Ok(()) => std::process::ExitCode::from(if cancel.is_cancelled() { 130 } else { 0 }),
         Err(error) => {
             eprintln!("{error:#}");
             std::process::ExitCode::from(if cancel.is_cancelled() { 130 } else { 1 })
@@ -285,7 +292,9 @@ async fn run(cli: Cli, cancel: CancellationToken) -> Result<()> {
     let config = config::Config::load(cli.config.as_deref())?;
     let mut api = api::Api::new(config, cancel)?;
     match cli.command {
-        Command::YoutubeCookies { command } => {
+        Command::Youtube {
+            command: YoutubeCommand::Cookies { command },
+        } => {
             let jar = listenbox_sync_engine::cookies::CookieJar::new(&api.config.directory);
             let cancel = api.cancel.clone();
             tokio::task::spawn_blocking(move || match command {
@@ -293,7 +302,7 @@ async fn run(cli: Cli, cancel: CancellationToken) -> Result<()> {
                 CookieCommand::Remove => jar.remove(&cancel),
             })
             .await??;
-            println!("YouTube cookies updated. Sync your podcast to continue.");
+            println!("YouTube cookies updated. Run `listenbox youtube sync` to continue.");
             Ok(())
         }
         Command::Login => auth::login(&mut api).await,
@@ -309,17 +318,32 @@ async fn run(cli: Cli, cancel: CancellationToken) -> Result<()> {
                     command: AuthCommand::Status,
                 } => auth::status(&api).await,
                 Command::Import { slug, source_url } => {
-                    if youtube::is_source(&source_url) {
+                    if youtube_source::is_source(&source_url) {
                         let team = api.team_id().await?;
-                        youtube::import(&api, &listenbox_sync_engine::sync::Engine::default(), &source_url, &team, slug.as_deref(), listenbox_sync_engine::publicapi::ShowSourceKind::Video, |event| {
-                            if let youtube::ImportEvent::Created(show) = event {
-                                eprintln!("Created podcast {:?}. Resume with shows sync youtube --show {}", show.slug, show.slug);
-                            }
-                        }).await.map(|(show, report)| {
+                        youtube_source::import(
+                            &api,
+                            &listenbox_sync_engine::sync::Engine::default(),
+                            &source_url,
+                            &team,
+                            slug.as_deref(),
+                            listenbox_sync_engine::publicapi::ShowSourceKind::Video,
+                            |event| {
+                                if let youtube_source::ImportEvent::Created(show) = event {
+                                    eprintln!(
+                                        "Created podcast {:?}. Resume with youtube sync --show {}",
+                                        show.slug, show.slug
+                                    );
+                                }
+                            },
+                        )
+                        .await
+                        .map(|(show, report)| {
                             println!("{}", show.slug);
                             eprintln!("{} added, {} skipped", report.added, report.skipped);
                             eprintln!("100%");
-                            if let Ok(url) = api.config.show_url(&show.team_id, &show.id) { eprintln!("Open in Listenbox: {url}"); }
+                            if let Ok(url) = api.config.show_url(&show.team_id, &show.id) {
+                                eprintln!("Open in Listenbox: {url}");
+                            }
                         })
                     } else {
                         commands::import_rss(&api, &source_url, slug.as_deref()).await
@@ -328,7 +352,12 @@ async fn run(cli: Cli, cancel: CancellationToken) -> Result<()> {
                 Command::Shows { command } => commands::shows(&api, command).await,
                 Command::Episodes { command } => episodes::run(&api, command).await,
                 Command::Members { command } => commands::members(&api, command).await,
-                Command::YoutubeCookies { .. }
+                Command::Youtube {
+                    command: YoutubeCommand::Sync { show, watch },
+                } => youtube::sync(&api, show.as_deref(), watch).await,
+                Command::Youtube {
+                    command: YoutubeCommand::Cookies { .. },
+                }
                 | Command::Login
                 | Command::Auth {
                     command: AuthCommand::Logout,

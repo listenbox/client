@@ -26,7 +26,7 @@ const MAX_COOKIES: usize = 1024;
 pub struct SignInRequired;
 impl std::fmt::Display for SignInRequired {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("YouTube needs a signed-in session. Open Settings → YouTube to paste fresh cookies, or run listenbox youtube-cookies import <cookies.txt>, then sync again.")
+        f.write_str("YouTube needs a signed-in session. Open Settings → YouTube to paste fresh cookies, or run listenbox youtube cookies import <cookies.txt>, then sync again.")
     }
 }
 impl std::error::Error for SignInRequired {}
@@ -124,7 +124,7 @@ impl CookieJar {
         };
         let bytes = read_bounded(file)?;
         let snapshot: Snapshot = serde_json::from_slice(&bytes)
-            .map_err(|_| anyhow::anyhow!("Saved YouTube cookies are invalid. Replace them in Settings or with youtube-cookies import."))?;
+            .map_err(|_| anyhow::anyhow!("Saved YouTube cookies are invalid. Replace them in Settings or with youtube cookies import."))?;
         ensure!(
             snapshot.entries.len() <= MAX_COOKIES
                 && snapshot

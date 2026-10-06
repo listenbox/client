@@ -34,7 +34,7 @@ arguments.
 | `listenbox shows list` | List accessible podcast slugs. |
 | `listenbox shows create --title TITLE --slug SLUG --type TYPE --language LANGUAGE [--artwork FILE]` | Create an audio or video podcast. |
 | `listenbox shows order --show SLUG [--episode ID]...` | Read feed order, or move the supplied episodes to the front in sequence. |
-| `listenbox shows sync youtube --show SLUG [--watch]` | Sync the podcast's saved YouTube source. |
+| `listenbox youtube sync [--show SLUG] [--watch]` | Sync all eligible YouTube shows across all teams, or one saved source. |
 | `listenbox shows delete --show SLUG --yes` | Delete a podcast. |
 | `listenbox episodes list --show SLUG [--limit N]` | List episode IDs across all pages. |
 | `listenbox episodes create --show SLUG --title TITLE --file FILE [--description TEXT] [--publication MODE]` | Upload a recording as a draft or publish it when ready. |
@@ -43,8 +43,8 @@ arguments.
 | `listenbox members invite --email EMAIL --role ROLE [--show SLUG]` | Invite a team or podcast member. |
 | `listenbox members role --member USER_ID --role ROLE [--show SLUG]` | Change a member's access. |
 | `listenbox members remove --member USER_ID --yes [--show SLUG]` | Remove a member. |
-| `listenbox youtube-cookies import FILE` | Seed or replace the shared YouTube session from a Netscape export. |
-| `listenbox youtube-cookies remove` | Remove the shared YouTube session. |
+| `listenbox youtube cookies import FILE` | Seed or replace the shared YouTube session from a Netscape export. |
+| `listenbox youtube cookies remove` | Remove the shared YouTube session. |
 
 - `TYPE` is `audio` or `video`; `LANGUAGE` uses a code such as `en` or `en-US`.
   Artwork must be a square JPEG or PNG, 1400–3000 pixels per side.
@@ -61,14 +61,27 @@ arguments.
 ```sh
 listenbox import --slug field-notes 'https://www.youtube.com/playlist?list=PLAYLIST_ID'
 listenbox import --slug channel-notes 'https://www.youtube.com/@your-channel/videos'
-listenbox shows sync youtube --show field-notes
-listenbox shows sync youtube --show field-notes --watch
+listenbox youtube sync
+listenbox youtube sync --show field-notes
+listenbox youtube sync --watch
 ```
 
-Import creates a new podcast. To continue an existing import, sync its slug.
+Import creates a new podcast. Bare `youtube sync` discovers every writable YouTube import across all teams and syncs shows with an active paid plan, just like desktop. Use `--show SLUG` to restrict a run to one podcast. Watch mode discovers the catalog again on each scan, including newly imported shows.
 Synchronization requires an active paid plan; CLI YouTube imports create video
 podcasts. Watch mode syncs immediately, then hourly in the foreground, until
-SIGINT or SIGTERM. Interrupted sync work is saved for the next run.
+Ctrl+C or SIGTERM. The engine stops admission, drains current writes, and saves interrupted sync work for the next run. Ctrl+C exits with status 130.
+
+In a terminal, a compact footer tracks imported and not-imported episode counts, the queue, active stages, and transfer rates. Totals grow as sources are read; already published episodes count as imported. Each **Not imported** episode stays above the footer with its show, YouTube URL, and failure reason. Redirected output uses plain text with one record per failure and a count summary for each successful show. Successful sibling shows continue if another show fails. A one-shot run exits nonzero for a show-level failure; watch mode keeps checking hourly. Skipped episodes are reported without failing otherwise successful syncs.
+
+Run the current release build directly from this repository:
+
+```sh
+moonx cli:prod -- youtube --help
+moonx cli:prod -- youtube sync
+moonx cli:prod -- youtube sync --show field-notes --watch
+```
+
+`moon run cli:prod -- …` also works. Moon requires `--` before CLI arguments. The target builds the release CLI, forces the production API/dashboard origins, and uses the persistent production profile shared with desktop. An explicit `LISTENBOX_PROFILE_DIR` override still selects a different profile.
 
 A complete source scan can remove episodes whose videos were removed from the
 source. Playlist sync also restores source order. See the
@@ -86,8 +99,8 @@ headers are not accepted.
 Import the file with the production CLI, then sync your existing podcast:
 
 ```sh
-listenbox youtube-cookies import /path/to/cookies.txt
-listenbox shows sync youtube --show field-notes
+listenbox youtube cookies import /path/to/cookies.txt
+listenbox youtube sync --show field-notes
 ```
 
 Importing cookies does not require a Listenbox login. The export seeds the
@@ -104,7 +117,7 @@ export replaces the session for both apps.
 To return both apps to anonymous YouTube access:
 
 ```sh
-listenbox youtube-cookies remove
+listenbox youtube cookies remove
 ```
 
 Cookies stay on your computer and are sent only to YouTube. Keep exported

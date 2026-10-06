@@ -471,9 +471,11 @@ pub(crate) async fn import_video(
     let manifest = match saved {
         Some(manifest) => {
             tracing::info!("reusing prepared media");
-            eprintln!(
-                "FFmpeg preparation reused show_slug={slug} video_id={id} operation_id={operation_id}"
-            );
+            if cfg!(debug_assertions) {
+                eprintln!(
+                    "FFmpeg preparation reused show_slug={slug} video_id={id} operation_id={operation_id}"
+                );
+            }
             manifest
         }
         None => {
@@ -576,7 +578,9 @@ pub(crate) async fn import_video(
                 let _preparing = preparing;
                 // Measure execution, excluding download and blocking-pool wait time.
                 let started = Instant::now();
-                eprintln!("FFmpeg preparation started {preparation}");
+                if cfg!(debug_assertions) {
+                    eprintln!("FFmpeg preparation started {preparation}");
+                }
                 let result = (|| {
                     if audio {
                         let output = root.join("audio.m4a");
@@ -592,13 +596,15 @@ pub(crate) async fn import_video(
                 tracing::info!(success = result.is_ok(), elapsed_ms = started.elapsed().as_millis() as u64,
                     cancelled = cancel.is_cancelled(), error = ?result.as_ref().err().map(ToString::to_string),
                     "media preparation finished");
-                eprintln!(
-                    "FFmpeg preparation finished {preparation} elapsed_ms={} result={} media_duration_seconds={:?} error={:?}",
-                    started.elapsed().as_millis(),
-                    if result.is_ok() { "success" } else { "failed" },
-                    result.as_ref().ok(),
-                    result.as_ref().err().map(ToString::to_string),
-                );
+                if cfg!(debug_assertions) {
+                    eprintln!(
+                        "FFmpeg preparation finished {preparation} elapsed_ms={} result={} media_duration_seconds={:?} error={:?}",
+                        started.elapsed().as_millis(),
+                        if result.is_ok() { "success" } else { "failed" },
+                        result.as_ref().ok(),
+                        result.as_ref().err().map(ToString::to_string),
+                    );
+                }
                 result
             })
             .await??;

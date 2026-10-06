@@ -19,6 +19,7 @@ pub fn prepare_m4a(input: &Path, output: &Path, cancelled: &CancellationToken) -
         "Audio output must be a new file"
     );
     ffmpeg::init()?;
+    ffmpeg::log::set_level(ffmpeg::log::Level::Error);
     let result = convert(input, output, cancelled).and_then(|()| {
         ensure!(fast_start(output)?, "M4A fast-start validation failed");
         Ok(output.metadata()?.len())
@@ -42,10 +43,12 @@ fn convert(input: &Path, output: &Path, cancelled: &CancellationToken) -> Result
     } else {
         "transcode"
     };
-    eprintln!(
-        "FFmpeg audio mode={mode} input_codec={:?} output_codec=AAC output={output:?}",
-        parameters.id()
-    );
+    if cfg!(debug_assertions) {
+        eprintln!(
+            "FFmpeg audio mode={mode} input_codec={:?} output_codec=AAC output={output:?}",
+            parameters.id()
+        );
+    }
     let mut output = format::output_as(output, "ipod")?;
     if parameters.id() != codec::Id::AAC {
         let decoder = codec::Context::from_parameters(parameters)?

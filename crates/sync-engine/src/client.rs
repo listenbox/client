@@ -8,6 +8,7 @@ use crate::{
     sync::{Engine, Report},
 };
 use anyhow::{Result, ensure};
+use futures_util::{StreamExt, stream};
 use std::collections::HashSet;
 use tokio_util::sync::CancellationToken;
 
@@ -22,6 +23,18 @@ pub struct Catalog {
 pub struct SyncState {
     pub items: Vec<crate::downloads::Download>,
     pub last_synced: Option<std::time::SystemTime>,
+}
+
+pub enum SyncEvent {
+    ScanStarted(Vec<p::Show>),
+    ShowFinished {
+        slug: String,
+        result: Result<Report>,
+        items: Vec<crate::downloads::Download>,
+    },
+    ScanFinished {
+        failed: usize,
+    },
 }
 
 #[derive(Clone)]
@@ -195,6 +208,104 @@ impl Client {
     }
     pub async fn next_scan(&self, cancel: &CancellationToken) -> bool {
         self.engine.next_scan(cancel).await
+    }
+
+    /// Discover all writable YouTube imports across teams on every pass. Each
+    /// show uses the existing sync owner and the shared transfer budgets. Joining
+    /// the whole stream also drains owned writes after cancellation.
+    pub async fn sync_youtube(
+        &self,
+        show: Option<&str>,
+        watch: bool,
+        cancel: CancellationToken,
+        mut event: impl FnMut(SyncEvent) + Send,
+    ) -> Result<()> {
+        loop {
+            if cancel.is_cancelled() {
+                return Ok(());
+            }
+            let api = self.api(cancel.clone())?;
+            let mut shows = match api
+                .client()
+                .list_shows(p::ListShowsParams {
+                    youtube_imports_only: Some(true),
+                })
+                .await?
+            {
+                p::ListShowsResponse::Status200(shows) => shows,
+                response => return Err(api.response_error(response).await),
+            };
+            if let Some(slug) = show {
+                shows.retain(|show| show.slug == slug);
+                ensure!(
+                    !shows.is_empty(),
+                    "No accessible YouTube import with slug {slug:?}"
+                );
+            } else {
+                // Match desktop automatic sync's paid-plan admission.
+                shows.retain(|show| show.has_active_subscription);
+            }
+            // The previous pass has joined every worker. Drop display history,
+            // including sources that have since been unlinked; keep the journal.
+            self.engine.downloads.clear();
+            event(SyncEvent::ScanStarted(shows.clone()));
+            let count = shows.len().max(1);
+            let mut work = stream::iter(shows.into_iter().map(|show| {
+                let cancel = cancel.clone();
+                async move {
+                    let result = self.sync_once(&show.slug, cancel).await;
+                    (show.slug, result)
+                }
+            }))
+            .buffer_unordered(count);
+            let mut failed = 0;
+            while let Some((slug, result)) = work.next().await {
+                if result.is_err() && !cancel.is_cancelled() {
+                    failed += 1;
+                }
+                let items = self
+                    .engine
+                    .downloads
+                    .not_imported()
+                    .into_iter()
+                    .filter(|item| item.source_id == slug)
+                    .collect();
+                event(SyncEvent::ShowFinished {
+                    slug,
+                    result,
+                    items,
+                });
+            }
+            event(SyncEvent::ScanFinished { failed });
+            if cancel.is_cancelled() {
+                return Ok(());
+            }
+            if !watch {
+                ensure!(
+                    failed == 0,
+                    "{failed} show(s) could not finish syncing; see the failures above"
+                );
+                return Ok(());
+            }
+            if !self.next_scan(&cancel).await {
+                return Ok(());
+            }
+        }
+    }
+
+    async fn sync_once(&self, slug: &str, cancel: CancellationToken) -> Result<Report> {
+        let api = self.api(cancel)?;
+        let engine = self.engine.clone();
+        let slug = slug.to_owned();
+        let runtime = tokio::runtime::Handle::current();
+        let span = tracing::Span::current();
+        // No embedded JS handle crosses its owning thread. Await the worker;
+        // dropping its future would detach atomic writes during shutdown.
+        tokio::task::spawn_blocking(move || {
+            let _entered = span.enter();
+            runtime.block_on(engine.once(&api, &slug))
+        })
+        .await?
     }
 
     #[tracing::instrument(name = "youtube.sync", skip_all, fields(show_slug = slug))]

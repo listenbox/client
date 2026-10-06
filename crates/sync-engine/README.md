@@ -11,7 +11,7 @@ Both resolve the same profile and use `youtube-cookies/jar.json` beneath it.
 Neither application keeps a separate copy.
 
 Seed the jar with a Netscape `cookies.txt` export through
-`listenbox youtube-cookies import /path/to/cookies.txt`, or paste the complete
+`listenbox youtube cookies import /path/to/cookies.txt`, or paste the complete
 export into the desktop's **Settings → YouTube** and choose **Save cookies**.
 See the [CLI cookie instructions](../cli/README.md#seed-youtube-cookies) for the
 export guide and commands.
@@ -19,7 +19,7 @@ export guide and commands.
 The Netscape file is an initial seed. After importing it, the engine reads the
 saved jar for YouTube requests and persists cookie updates from YouTube
 responses. The original export can be deleted. A fresh import replaces the
-session; `listenbox youtube-cookies remove` or **Remove cookies** in desktop
+session; `listenbox youtube cookies remove` or **Remove cookies** in desktop
 settings returns future requests from both apps to anonymous access.
 
 The importer accepts UTF-8 Netscape exports starting with

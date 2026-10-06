@@ -25,44 +25,6 @@ pub async fn shows(api: &Api, command: ShowCommand) -> Result<()> {
                 println!("{id}");
             }
         }
-        ShowCommand::Sync {
-            command: crate::SyncCommand::Youtube { show, watch },
-        } => {
-            let engine = listenbox_sync_engine::sync::Engine::default();
-            let progress_stop = tokio_util::sync::CancellationToken::new();
-            let progress = tokio::spawn(print_sync_progress(
-                engine.downloads.clone(),
-                progress_stop.clone(),
-            ));
-            let report = |report: &listenbox_sync_engine::sync::Report| {
-                if report.stopped {
-                    println!(
-                        "Sync stopped by Listenbox. Progress is saved; this show is no longer importing from YouTube."
-                    );
-                    return;
-                }
-                println!(
-                    "{} added, {} removed, {} unchanged, {} skipped{}",
-                    report.added,
-                    report.removed,
-                    report.unchanged,
-                    report.skipped,
-                    if report.reordered {
-                        "; feed order updated"
-                    } else {
-                        ""
-                    }
-                )
-            };
-            let result = if watch {
-                engine.watch(api, &show, report).await
-            } else {
-                engine.once(api, &show).await.map(|value| report(&value))
-            };
-            progress_stop.cancel();
-            progress.await?;
-            result?;
-        }
         ShowCommand::List => {
             let result = match api
                 .client()
@@ -146,41 +108,6 @@ pub async fn shows(api: &Api, command: ShowCommand) -> Result<()> {
         }
     }
     Ok(())
-}
-
-async fn print_sync_progress(
-    manager: listenbox_sync_engine::downloads::DownloadManager,
-    stop: tokio_util::sync::CancellationToken,
-) {
-    use std::collections::HashMap;
-    let mut changes = manager.changes();
-    let mut printed = HashMap::new();
-    loop {
-        tokio::select! {
-            _ = stop.cancelled() => return,
-            changed = changes.changed() => if changed.is_err() { return; },
-        }
-        for item in manager.snapshot().items {
-            if item.phase == listenbox_sync_engine::downloads::Phase::Complete && item.attempt == 0
-            {
-                continue;
-            }
-            let bucket = item
-                .received()
-                .saturating_mul(10)
-                .checked_div(item.total)
-                .unwrap_or(0);
-            if printed.insert(item.id, (item.phase, bucket)) == Some((item.phase, bucket)) {
-                continue;
-            }
-            let title: String = item
-                .title
-                .chars()
-                .filter(|character| !character.is_control())
-                .collect();
-            eprintln!("{title}: {}", item.phase.label());
-        }
-    }
 }
 
 async fn upload_artwork(api: &Api, show: &str, path: &std::path::Path) -> Result<String> {

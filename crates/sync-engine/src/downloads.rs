@@ -1,6 +1,6 @@
 use parking_lot::RwLock;
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -180,6 +180,53 @@ pub struct Snapshot {
     pub preparation_slots: usize,
 }
 
+/// Whole-inventory progress, including episodes published before this scan.
+/// A terminal failure is handled work, but never an imported episode.
+#[derive(Default)]
+pub struct Progress {
+    pub total: usize,
+    pub imported: usize,
+    pub not_imported: usize,
+    pub queued: usize,
+    pub resolving: usize,
+    pub downloading: usize,
+    pub preparing: usize,
+    pub uploading: usize,
+    pub publishing: usize,
+    pub retrying: usize,
+    pub download_rate: u64,
+    pub upload_rate: u64,
+}
+
+impl Snapshot {
+    pub fn progress(&self) -> Progress {
+        let mut progress = Progress::default();
+        for item in &self.items {
+            progress.total += 1;
+            match item.phase {
+                Phase::Complete => progress.imported += 1,
+                Phase::Failed | Phase::Skipped => progress.not_imported += 1,
+                Phase::Queued | Phase::WaitingToPrepare | Phase::WaitingToUpload => {
+                    progress.queued += 1
+                }
+                Phase::Resolving => progress.resolving += 1,
+                Phase::Downloading => {
+                    progress.downloading += 1;
+                    progress.download_rate += item.bytes_per_second();
+                }
+                Phase::Preparing => progress.preparing += 1,
+                Phase::Uploading => {
+                    progress.uploading += 1;
+                    progress.upload_rate += item.bytes_per_second();
+                }
+                Phase::Publishing => progress.publishing += 1,
+                Phase::Retrying => progress.retrying += 1,
+            }
+        }
+        progress
+    }
+}
+
 impl Default for Snapshot {
     fn default() -> Self {
         Self {
@@ -196,6 +243,7 @@ impl Default for Snapshot {
 
 struct ManagerState {
     snapshot: Snapshot,
+    positions: HashMap<String, usize>,
     active: usize,
     stage_active: [usize; 3],
     stage_waiting: [usize; 3],
@@ -211,6 +259,7 @@ impl Default for ManagerState {
     fn default() -> Self {
         Self {
             snapshot: Snapshot::default(),
+            positions: HashMap::new(),
             active: 0,
             stage_active: [0; 3],
             stage_waiting: [0; 3],
@@ -225,6 +274,30 @@ impl Default for ManagerState {
 }
 
 impl ManagerState {
+    // A source can be replaced while another source is transferring. Rebuild
+    // under the same lock as inventory edits so every live handle still finds
+    // its item without scanning thousands of episodes on each network chunk.
+    fn reindex(&mut self) {
+        self.positions = self
+            .snapshot
+            .items
+            .iter()
+            .enumerate()
+            .map(|(index, item)| (item.id.clone(), index))
+            .collect();
+    }
+
+    fn item(&self, id: &str) -> Option<&Download> {
+        self.positions
+            .get(id)
+            .and_then(|&index| self.snapshot.items.get(index))
+    }
+
+    fn item_mut(&mut self, id: &str) -> Option<&mut Download> {
+        let index = *self.positions.get(id)?;
+        self.snapshot.items.get_mut(index)
+    }
+
     fn sample(&mut self, now: tokio::time::Instant) -> bool {
         let elapsed = now.duration_since(self.sampled_at);
         if elapsed < SAMPLE_INTERVAL {
@@ -277,16 +350,33 @@ impl DownloadManager {
     }
 
     pub fn remove_source(&self, source_id: &str) {
-        self.state
-            .write()
+        let mut state = self.state.write();
+        state
             .snapshot
             .items
             .retain(|item| item.source_id != source_id);
+        state.reindex();
+        drop(state);
         self.changed.send_replace(());
     }
 
     pub fn snapshot(&self) -> Snapshot {
         self.state.read().snapshot.clone()
+    }
+
+    pub fn progress(&self) -> Progress {
+        self.state.read().snapshot.progress()
+    }
+
+    pub fn not_imported(&self) -> Vec<Download> {
+        self.state
+            .read()
+            .snapshot
+            .items
+            .iter()
+            .filter(|item| matches!(item.phase, Phase::Skipped | Phase::Failed))
+            .cloned()
+            .collect()
     }
 
     fn sample(&self, now: tokio::time::Instant) {
@@ -325,6 +415,7 @@ impl DownloadManager {
                 }
                 state.snapshot.items.push(item);
             }
+            state.reindex();
             transfers
         };
         self.changed.send_replace(());
@@ -343,10 +434,7 @@ impl Transfer {
         self.manager
             .state
             .read()
-            .snapshot
-            .items
-            .iter()
-            .find(|item| item.id == self.id)
+            .item(&self.id)
             .expect("Transfer belongs to its manager")
             .clone()
     }
@@ -360,15 +448,7 @@ impl Transfer {
     }
 
     fn update(&self, update: impl FnOnce(&mut Download)) {
-        if let Some(item) = self
-            .manager
-            .state
-            .write()
-            .snapshot
-            .items
-            .iter_mut()
-            .find(|item| item.id == self.id)
-        {
+        if let Some(item) = self.manager.state.write().item_mut(&self.id) {
             update(item);
         }
         self.manager.changed.send_replace(());
@@ -455,12 +535,7 @@ impl Transfer {
 
     pub(crate) fn uploaded(&self, bytes: u64) {
         let mut state = self.manager.state.write();
-        if let Some(item) = state
-            .snapshot
-            .items
-            .iter_mut()
-            .find(|item| item.id == self.id)
-        {
+        if let Some(item) = state.item_mut(&self.id) {
             item.uploaded = (item.uploaded + bytes).min(item.upload_total);
             if let Some(rate) = &mut item.rate {
                 rate.record(bytes, Instant::now());
@@ -543,11 +618,7 @@ impl Transfer {
         let now = Instant::now();
         let mut state = self.manager.state.write();
         let mut bytes = 0;
-        if let Some(item) = state
-            .snapshot
-            .items
-            .iter_mut()
-            .find(|item| item.id == self.id)
+        if let Some(item) = state.item_mut(&self.id)
             && let Ok(index) = item
                 .ranges
                 .binary_search_by_key(&start, |range| range.start)

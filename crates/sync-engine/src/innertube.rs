@@ -741,15 +741,17 @@ impl YouTube {
             .context("YouTube video has no AVC rendition with audio at or below 1080p")?;
         let audio = separate_audio(video);
         let selected_audio = audio.unwrap_or(video).info();
-        eprintln!(
-            "YouTube media selected video_id={id} video_itag={} video_mime={:?} audio_itag={} audio_mime={:?} audio_bitrate_bps={} audio_has_video={}",
-            video.info().itag,
-            video.info().mime_type,
-            selected_audio.itag,
-            selected_audio.mime_type,
-            selected_audio.bitrate,
-            selected_audio.has_video,
-        );
+        if cfg!(debug_assertions) {
+            eprintln!(
+                "YouTube media selected video_id={id} video_itag={} video_mime={:?} audio_itag={} audio_mime={:?} audio_bitrate_bps={} audio_has_video={}",
+                video.info().itag,
+                video.info().mime_type,
+                selected_audio.itag,
+                selected_audio.mime_type,
+                selected_audio.bitrate,
+                selected_audio.has_video,
+            );
+        }
         let user_agent = if matches!(client, Client::VisionOs) {
             self.client
                 .engine()
