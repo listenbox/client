@@ -81,11 +81,11 @@ async fn receive_window(
         !before.is_empty(),
         "A throughput window needs admitted downloads"
     );
-    for (source, _) in &before {
+    futures_util::future::join_all(before.iter().map(|(source, _)| async move {
         api.http.post(format!("{mock}/__mock__/media-window"))
             .json(&serde_json::json!({ "context": source.strip_prefix("https://www.youtube.com/watch?v=").unwrap(), "bytes": credit }))
             .send().await.unwrap().error_for_status().unwrap();
-    }
+    })).await;
     loop {
         let snapshot = manager.snapshot();
         if before.iter().all(|(source, received)| {
