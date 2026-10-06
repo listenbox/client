@@ -444,41 +444,61 @@ pub(crate) async fn import_video(
                 .await?;
             let downloaded: Result<Playback> = async {
                 let playback = youtube.media(api, id, collection).await?;
-                let Playback::Available(media) = playback else {
+                let Playback::Available(mut media) = playback else {
                     return Ok(playback);
                 };
                 transfer.title(&media.title);
                 transfer.duration(media.duration_seconds);
-                if audio {
-                    download(
-                        api,
-                        media.audio.as_ref().unwrap_or(&media.video),
-                        &directory.join("source-audio"),
-                        Some(transfer),
-                        Some((journal, operation_id.as_str())),
-                    )
-                    .await?;
-                } else {
-                    download(
-                        api,
-                        &media.video,
-                        &directory.join("source-video"),
-                        Some(transfer),
-                        Some((journal, operation_id.as_str())),
-                    )
-                    .await?;
-                    if let Some(stream) = &media.audio {
-                        download(
-                            api,
-                            stream,
-                            &directory.join("source-audio"),
-                            Some(transfer),
-                            Some((journal, operation_id.as_str())),
-                        )
-                        .await?;
+                loop {
+                    let result: Result<()> = async {
+                        if audio {
+                            download(
+                                api,
+                                media.audio.as_ref().unwrap_or(&media.video),
+                                &directory.join("source-audio"),
+                                Some(transfer),
+                                Some((journal, operation_id.as_str())),
+                            )
+                            .await?;
+                        } else {
+                            download(
+                                api,
+                                &media.video,
+                                &directory.join("source-video"),
+                                Some(transfer),
+                                Some((journal, operation_id.as_str())),
+                            )
+                            .await?;
+                            if let Some(stream) = &media.audio {
+                                download(
+                                    api,
+                                    stream,
+                                    &directory.join("source-audio"),
+                                    Some(transfer),
+                                    Some((journal, operation_id.as_str())),
+                                )
+                                .await?;
+                            }
+                        }
+                        Ok(())
+                    }
+                    .await;
+                    match result {
+                        Ok(()) => return Ok(Playback::Available(media)),
+                        Err(error)
+                            if error.is::<crate::download::MediaUnavailable>()
+                                && !api.cancel.is_cancelled() =>
+                        {
+                            // download() drains all admitted writes first. The same
+                            // journal validates which ranges survive a client change.
+                            match youtube.native_media(api, id, media).await? {
+                                Some(native) => media = native,
+                                None => return Err(error),
+                            }
+                        }
+                        Err(error) => return Err(error),
                     }
                 }
-                Ok(Playback::Available(media))
             }
             .instrument(tracing::info_span!("media.download"))
             .await;

@@ -60,6 +60,7 @@ pub enum Playback {
 }
 
 pub struct Media {
+    playback_client: Client,
     pub estimated_seconds: i64,
     pub duration_seconds: Option<u64>,
     pub title: String,
@@ -507,21 +508,23 @@ impl YouTube {
             }
             let mut formats = info.formats().await?;
             formats.extend(info.adaptive_formats().await?);
-            let (playback, mut formats) = if matches!(metadata_client, Client::Mweb)
+            let mut selected_client = metadata_client;
+            let (playback, formats) = if matches!(metadata_client, Client::Mweb)
                 && formats.iter().any(|format| {
                     let f = format.info();
                     f.url.is_some() || f.cipher.is_some() || f.signature_cipher.is_some()
-                })
-            {
+                }) {
                 (info, formats)
             } else {
                 // SABR-only metadata still needs another client's direct streams.
+                selected_client = self.playback_client;
                 let playback = match self.player_info(id, self.playback_client).await? {
                     PlayerResponse::Available(info) => info,
                     // Embedding refusal does not establish video unavailability.
                     PlayerResponse::Unavailable(_)
                         if matches!(self.playback_client, Client::WebEmbedded) =>
                     {
+                        selected_client = Client::WebCreator;
                         match self.player_info(id, Client::WebCreator).await? {
                             PlayerResponse::Available(info) => info,
                             PlayerResponse::Unavailable(reason) => {
@@ -529,114 +532,34 @@ impl YouTube {
                             }
                         }
                     }
-                    PlayerResponse::Unavailable(reason) => return Ok(Playback::Unavailable(reason)),
+                    PlayerResponse::Unavailable(reason) => {
+                        return Ok(Playback::Unavailable(reason));
+                    }
                 };
                 let mut formats = playback.formats().await?;
                 formats.extend(playback.adaptive_formats().await?);
                 (playback, formats)
             };
             let cpn = playback.cpn().await?;
-            ensure!(
-                formats.iter().any(|format| {
-                    let f = format.info();
-                    f.url.is_some() || f.cipher.is_some() || f.signature_cipher.is_some()
-                }),
-                "YouTube returned no downloadable stream URLs; video resolution is not the problem"
-            );
-            formats.retain(|format| {
-                let f = format.info();
-                f.drm_families.as_ref().is_none_or(Vec::is_empty)
-                    && !f.is_type_otf
-                    && (f.url.is_some() || f.cipher.is_some() || f.signature_cipher.is_some())
-            });
-            // AAC can be copied into M4A, so prefer it before comparing bitrates.
-            let audio = formats
-                .iter()
-                .filter(|format| {
-                    let f = format.info();
-                    f.has_audio
-                        && !f.has_video
-                        && f.audio_track
-                            .as_ref()
-                            .is_none_or(|track| track.audio_is_default)
-                })
-                .max_by(|a, b| {
-                    let (a, b) = (a.info(), b.info());
-                    a.mime_type
-                        .contains("mp4a.40.")
-                        .cmp(&b.mime_type.contains("mp4a.40."))
-                        .then_with(|| a.bitrate.total_cmp(&b.bitrate))
-                });
-            let embedded_aac = |format: &Format| {
-                let f = format.info();
-                f.has_audio && f.mime_type.contains("mp4a.40.")
-            };
-            let separate_audio = |video: &Format| {
-                // Keep standalone AAC for audio-only imports and its default track.
-                // Embedded AAC avoids using a standalone stream that needs encoding.
-                if embedded_aac(video)
-                    && !audio.is_some_and(|audio| audio.info().mime_type.contains("mp4a.40."))
-                {
-                    None
-                } else {
-                    audio
-                }
-            };
-            let copyable_audio = |video: &Format| {
-                embedded_aac(video)
-                    || audio.is_some_and(|audio| audio.info().mime_type.contains("mp4a.40."))
-            };
-            let seconds = data.basic_info.duration.filter(|seconds| seconds.is_finite() && *seconds > 0.0);
-            let download_bitrate = |video: &Format| {
-                let valid_rate = |format: &Format| {
-                    if let Some(seconds) = seconds
-                        && let Some(length) = format.info().content_length.filter(|length| length.is_finite() && *length > 0.0)
-                    {
-                        return length * 8.0 / seconds;
-                    }
-                    let rate = format.info().bitrate;
-                    if rate.is_finite() && rate > 0.0 { rate } else { f64::INFINITY }
-                };
-                valid_rate(video) + separate_audio(video).map_or(0.0, valid_rate)
-            };
-            let frame_rate = |format: &Format| format.info().fps.filter(|fps| fps.is_finite() && *fps > 0.0).unwrap_or(0.0);
-            // Keep the highest AVC resolution/frame rate within the 1080p cap.
-            // Within that resolution/frame rate, avoid AAC encoding, then minimize bytes.
-            let video = formats
-                .iter()
-                .filter(|format| {
-                    let f = format.info();
-                    f.has_video
-                        && f.mime_type.contains("avc1")
-                        && f.height
-                            .is_some_and(|height| height > 0.0 && height <= 1080.0)
-                        && f.audio_track
-                            .as_ref()
-                            .is_none_or(|track| track.audio_is_default)
-                        && (f.has_audio || audio.is_some())
-                })
-                .max_by(|a, b| {
-                    a.info().height.unwrap().total_cmp(&b.info().height.unwrap())
-                        .then_with(|| frame_rate(a).total_cmp(&frame_rate(b)))
-                        .then_with(|| copyable_audio(a).cmp(&copyable_audio(b)))
-                        .then_with(|| download_bitrate(b).total_cmp(&download_bitrate(a)))
-                        .then_with(|| b.info().itag.cmp(&a.info().itag))
-                })
-                .context("YouTube video has no AVC rendition with audio at or below 1080p")?;
-            let audio = separate_audio(video);
+            let (video, audio) = self
+                .select_streams(id, formats, &cpn, data.basic_info.duration, selected_client)
+                .await?;
             ensure!(
                 data.basic_info.id.as_deref() == Some(id),
                 "YouTube metadata video ID differs from the requested video"
             );
             let published = match data.microformat {
                 Some(Microformat::PlayerMicroformat(metadata)) => {
-                    let (primary, secondary) = if collection.starts_with("https://www.youtube.com/channel/") {
-                        (metadata.upload_date, metadata.publish_date)
-                    } else {
-                        (metadata.publish_date, metadata.upload_date)
-                    };
-                    primary.filter(|date| !date.is_empty()).or(secondary.filter(|date| !date.is_empty()))
-                },
+                    let (primary, secondary) =
+                        if collection.starts_with("https://www.youtube.com/channel/") {
+                            (metadata.upload_date, metadata.publish_date)
+                        } else {
+                            (metadata.publish_date, metadata.upload_date)
+                        };
+                    primary
+                        .filter(|date| !date.is_empty())
+                        .or(secondary.filter(|date| !date.is_empty()))
+                }
                 _ => None,
             }
             .context("YouTube video has no publication date")?;
@@ -651,34 +574,202 @@ impl YouTube {
                 })
                 .context("YouTube publication date is invalid")?
                 .timestamp_millis();
-            let selected_audio = audio.unwrap_or(video).info();
-            eprintln!(
-                "YouTube media selected video_id={id} video_itag={} video_mime={:?} audio_itag={} audio_mime={:?} audio_bitrate_bps={} audio_has_video={}",
-                video.info().itag,
-                video.info().mime_type,
-                selected_audio.itag,
-                selected_audio.mime_type,
-                selected_audio.bitrate,
-                selected_audio.has_video,
-            );
             Ok(Playback::Available(Box::new(Media {
+                playback_client: selected_client,
                 estimated_seconds: known_seconds(data.basic_info.duration.unwrap_or(0.0)),
                 duration_seconds: data.basic_info.duration.and_then(duration_seconds),
                 title: data.basic_info.title.unwrap_or_else(|| id.into()),
                 artwork_url: thumbnail_url(data.basic_info.thumbnail),
                 description: data.basic_info.short_description.unwrap_or_default(),
                 published_at,
-                video: self.stream(video, &cpn).await?,
-                audio: match audio {
-                    Some(format) => Some(self.stream(format, &cpn).await?),
-                    None => None,
-                },
+                video,
+                audio,
             })))
         })
         .await
     }
 
-    async fn stream(&self, format: &Format, cpn: &str) -> Result<Stream> {
+    // Player permission is not proof that its media URLs allow a full download.
+    // Native playback is anonymous; authenticated metadata remains authoritative.
+    pub(crate) async fn native_media(
+        &self,
+        api: &Api,
+        id: &str,
+        mut media: Box<Media>,
+    ) -> Result<Option<Box<Media>>> {
+        if matches!(media.playback_client, Client::VisionOs) {
+            return Ok(None);
+        }
+        self.wait(api, async {
+            let playback = match self.player_info(id, Client::VisionOs).await {
+                Ok(PlayerResponse::Available(info)) => info,
+                Ok(PlayerResponse::Unavailable(_)) => return Ok(None),
+                // Native playback cannot access account-restricted videos.
+                Err(error) if error.is::<SignInRequired>() => return Ok(None),
+                Err(error) => return Err(error),
+            };
+            let mut formats = playback.formats().await?;
+            formats.extend(playback.adaptive_formats().await?);
+            let cpn = playback.cpn().await?;
+            let (video, audio) = self
+                .select_streams(
+                    id,
+                    formats,
+                    &cpn,
+                    media.duration_seconds.map(|seconds| seconds as f64),
+                    Client::VisionOs,
+                )
+                .await?;
+            media.video = video;
+            media.audio = audio;
+            media.playback_client = Client::VisionOs;
+            Ok(Some(media))
+        })
+        .await
+    }
+
+    async fn select_streams(
+        &self,
+        id: &str,
+        mut formats: Vec<Format>,
+        cpn: &str,
+        duration: Option<f64>,
+        client: Client,
+    ) -> Result<(Stream, Option<Stream>)> {
+        ensure!(
+            formats.iter().any(|format| {
+                let f = format.info();
+                f.url.is_some() || f.cipher.is_some() || f.signature_cipher.is_some()
+            }),
+            "YouTube returned no downloadable stream URLs; video resolution is not the problem"
+        );
+        formats.retain(|format| {
+            let f = format.info();
+            f.drm_families.as_ref().is_none_or(Vec::is_empty)
+                && !f.is_type_otf
+                && (f.url.is_some() || f.cipher.is_some() || f.signature_cipher.is_some())
+        });
+        // AAC can be copied into M4A, so prefer it before comparing bitrates.
+        let audio = formats
+            .iter()
+            .filter(|format| {
+                let f = format.info();
+                f.has_audio
+                    && !f.has_video
+                    && f.audio_track
+                        .as_ref()
+                        .is_none_or(|track| track.audio_is_default)
+            })
+            .max_by(|a, b| {
+                let (a, b) = (a.info(), b.info());
+                a.mime_type
+                    .contains("mp4a.40.")
+                    .cmp(&b.mime_type.contains("mp4a.40."))
+                    .then_with(|| a.bitrate.total_cmp(&b.bitrate))
+            });
+        let embedded_aac = |format: &Format| {
+            let f = format.info();
+            f.has_audio && f.mime_type.contains("mp4a.40.")
+        };
+        let separate_audio = |video: &Format| {
+            // Keep standalone AAC for audio-only imports and its default track.
+            // Embedded AAC avoids using a standalone stream that needs encoding.
+            if embedded_aac(video)
+                && !audio.is_some_and(|audio| audio.info().mime_type.contains("mp4a.40."))
+            {
+                None
+            } else {
+                audio
+            }
+        };
+        let copyable_audio = |video: &Format| {
+            embedded_aac(video)
+                || audio.is_some_and(|audio| audio.info().mime_type.contains("mp4a.40."))
+        };
+        let seconds = duration.filter(|seconds| seconds.is_finite() && *seconds > 0.0);
+        let download_bitrate = |video: &Format| {
+            let valid_rate = |format: &Format| {
+                if let Some(seconds) = seconds
+                    && let Some(length) = format
+                        .info()
+                        .content_length
+                        .filter(|length| length.is_finite() && *length > 0.0)
+                {
+                    return length * 8.0 / seconds;
+                }
+                let rate = format.info().bitrate;
+                if rate.is_finite() && rate > 0.0 {
+                    rate
+                } else {
+                    f64::INFINITY
+                }
+            };
+            valid_rate(video) + separate_audio(video).map_or(0.0, valid_rate)
+        };
+        let frame_rate = |format: &Format| {
+            format
+                .info()
+                .fps
+                .filter(|fps| fps.is_finite() && *fps > 0.0)
+                .unwrap_or(0.0)
+        };
+        // Keep the highest AVC resolution/frame rate within the 1080p cap.
+        // Within that resolution/frame rate, avoid AAC encoding, then minimize bytes.
+        let video = formats
+            .iter()
+            .filter(|format| {
+                let f = format.info();
+                f.has_video
+                    && f.mime_type.contains("avc1")
+                    && f.height
+                        .is_some_and(|height| height > 0.0 && height <= 1080.0)
+                    && f.audio_track
+                        .as_ref()
+                        .is_none_or(|track| track.audio_is_default)
+                    && (f.has_audio || audio.is_some())
+            })
+            .max_by(|a, b| {
+                a.info()
+                    .height
+                    .unwrap()
+                    .total_cmp(&b.info().height.unwrap())
+                    .then_with(|| frame_rate(a).total_cmp(&frame_rate(b)))
+                    .then_with(|| copyable_audio(a).cmp(&copyable_audio(b)))
+                    .then_with(|| download_bitrate(b).total_cmp(&download_bitrate(a)))
+                    .then_with(|| b.info().itag.cmp(&a.info().itag))
+            })
+            .context("YouTube video has no AVC rendition with audio at or below 1080p")?;
+        let audio = separate_audio(video);
+        let selected_audio = audio.unwrap_or(video).info();
+        eprintln!(
+            "YouTube media selected video_id={id} video_itag={} video_mime={:?} audio_itag={} audio_mime={:?} audio_bitrate_bps={} audio_has_video={}",
+            video.info().itag,
+            video.info().mime_type,
+            selected_audio.itag,
+            selected_audio.mime_type,
+            selected_audio.bitrate,
+            selected_audio.has_video,
+        );
+        let user_agent = if matches!(client, Client::VisionOs) {
+            self.client
+                .engine()
+                .export(&["Constants", "CLIENTS", "VISIONOS", "USER_AGENT"])
+                .await?
+                .deserialize::<String>()
+                .await?
+        } else {
+            self.user_agent.clone()
+        };
+        Ok((
+            self.stream(video, cpn, &user_agent).await?,
+            match audio {
+                Some(format) => Some(self.stream(format, cpn, &user_agent).await?),
+                None => None,
+            },
+        ))
+    }
+
+    async fn stream(&self, format: &Format, cpn: &str, user_agent: &str) -> Result<Stream> {
         let session = self.client.session().await?;
         let info = format.info();
         let needs_player = info.cipher.is_some()
@@ -703,7 +794,7 @@ impl YouTube {
         Ok(Stream {
             identity: format!("{}:{}:{:?}", info.itag, info.mime_type, info.content_length),
             url: url.into(),
-            user_agent: self.user_agent.clone(),
+            user_agent: user_agent.into(),
         })
     }
 }
