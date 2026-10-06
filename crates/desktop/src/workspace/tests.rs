@@ -666,6 +666,267 @@ async fn live_server_direction(cx: &mut TestAppContext) {
 // Runs against the real ephemeral Listenbox API from apps/api/e2e. Standalone
 // checks do not silently substitute a fake API; the parent explicitly invokes it.
 #[gpui_kit::test]
+fn sidebar_resizes_without_resetting_on_navigation(cx: &mut TestAppContext) {
+    let (_profile, handle, workspace) = library_workspace(cx);
+    cx.simulate_window_resize(handle.into(), size(px(1080.), px(760.)));
+    let widened = cx
+        .update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.render_frame(cx);
+            let content = window.find("workspace-content").bounds();
+            let from = point(content.left(), content.center().y);
+            window.drag(from, from + point(px(120.), px(0.)), cx);
+            let widened = window.find("workspace-content").bounds().left();
+            assert!(
+                widened > content.left() + px(80.),
+                "dragging the divider did not widen the sidebar"
+            );
+            assert!(window.find("workspace-content").bounds().size.width < content.size.width);
+            window.click("new-import", cx);
+            assert_eq!(
+                window.find("workspace-content").bounds().left(),
+                widened,
+                "changing content reset the sidebar width"
+            );
+            assert!(workspace.read(cx).import_open);
+            widened
+        })
+        .unwrap();
+    cx.simulate_window_resize(handle.into(), size(px(840.), px(600.)));
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+        let content = window.find("workspace-content").bounds();
+        let from = point(content.left(), content.center().y);
+        window.drag(from, from + point(px(1000.), px(0.)), cx);
+        let content = window.find("workspace-content").bounds();
+        assert!(
+            content.left() > widened && content.left() <= px(480.),
+            "sidebar maximum is not enforced"
+        );
+        assert!(
+            content.size.width >= px(360.),
+            "sidebar resize made content unusable"
+        );
+        assert!(content.right() <= px(840.), "resize overflowed the window");
+        let from = point(content.left(), content.center().y);
+        window.drag(from, from - point(px(1000.), px(0.)), cx);
+        let width = window.find("workspace-content").bounds().left();
+        assert!(
+            width >= px(240.) && width < widened,
+            "sidebar minimum is not enforced"
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn option_arrows_navigate_visible_podcasts_from_focused_controls(cx: &mut TestAppContext) {
+    let (_profile, handle, workspace) = library_workspace(cx);
+    let shows = workspace.read_with(cx, |view, _| {
+        view.catalog
+            .shows
+            .iter()
+            .map(|show| show.slug.clone())
+            .collect::<Vec<_>>()
+    });
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click(SharedString::from(format!("show-{}", shows[0])), cx);
+        let request = workspace.read(cx).episode_request;
+        window.press("alt-up", cx);
+        assert_eq!(
+            workspace.read(cx).episode_request,
+            request,
+            "Up at the first podcast reloaded it"
+        );
+        window.press("down", cx);
+        window.press("alt-shift-down", cx);
+        assert_eq!(
+            workspace.read(cx).selected.as_ref(),
+            Some(&shows[0]),
+            "another shortcut switched podcasts"
+        );
+        window.press("alt-down", cx);
+        assert_eq!(
+            workspace.read(cx).selected.as_ref(),
+            Some(&shows[1]),
+            "Alt/Option + Down did not select the next podcast"
+        );
+        window.press("alt-up", cx);
+        assert_eq!(workspace.read(cx).selected.as_ref(), Some(&shows[0]));
+        window.click("new-import", cx);
+        workspace.read(cx).source.focus_handle(cx).focus(window, cx);
+        window.press("alt-down", cx);
+        assert_eq!(
+            workspace.read(cx).selected.as_ref(),
+            Some(&shows[1]),
+            "input focus swallowed podcast navigation"
+        );
+        assert!(!workspace.read(cx).import_open);
+        for slug in shows.iter().skip(2) {
+            window.press("alt-down", cx);
+            assert_eq!(workspace.read(cx).selected.as_ref(), Some(slug));
+            let row = window
+                .find(SharedString::from(format!("show-{slug}")))
+                .bounds();
+            let list = window.find("podcasts").bounds();
+            assert!(
+                row.top() >= list.top() && row.bottom() <= list.bottom(),
+                "keyboard selection was left outside the sidebar viewport"
+            );
+        }
+        let request = workspace.read(cx).episode_request;
+        window.press("alt-down", cx);
+        assert_eq!(
+            workspace.read(cx).episode_request,
+            request,
+            "Down at the last podcast reloaded it"
+        );
+        for slug in shows.iter().rev().skip(1) {
+            window.press("alt-up", cx);
+            assert_eq!(workspace.read(cx).selected.as_ref(), Some(slug));
+            let row = window
+                .find(SharedString::from(format!("show-{slug}")))
+                .bounds();
+            let list = window.find("podcasts").bounds();
+            assert!(row.top() >= list.top() && row.bottom() <= list.bottom());
+        }
+        let team = workspace.read(cx).catalog.teams[0].id.clone();
+        window.click("team-picker", cx);
+        window.click(SharedString::from(format!("team-{team}")), cx);
+        let filtered = workspace
+            .read(cx)
+            .catalog
+            .shows
+            .iter()
+            .filter(|show| show.team_id == team)
+            .map(|show| show.slug.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(workspace.read(cx).selected.as_ref(), Some(&filtered[0]));
+        for slug in filtered.iter().skip(1) {
+            window.press("alt-down", cx);
+            assert_eq!(
+                workspace.read(cx).selected.as_ref(),
+                Some(slug),
+                "navigation crossed the team filter"
+            );
+        }
+        window.press("alt-down", cx);
+        assert_eq!(workspace.read(cx).selected.as_ref(), filtered.last());
+        let empty = workspace.read(cx).catalog.teams[2].id.clone();
+        window.click("team-picker", cx);
+        window.click(SharedString::from(format!("team-{empty}")), cx);
+        window.press("alt-down", cx);
+        window.press("alt-up", cx);
+        assert!(
+            workspace.read(cx).selected.is_none(),
+            "empty team selected an invisible podcast"
+        );
+        window.click("team-picker", cx);
+        window.click("all-teams", cx);
+        window.press("alt-up", cx);
+        assert_eq!(workspace.read(cx).selected.as_ref(), shows.last());
+        window.click("team-picker", cx);
+        window.click(SharedString::from(format!("team-{empty}")), cx);
+        window.click("team-picker", cx);
+        window.click("all-teams", cx);
+        window.press("alt-down", cx);
+        assert_eq!(workspace.read(cx).selected.as_ref(), Some(&shows[0]));
+        window.press("alt-down", cx);
+        assert_eq!(workspace.read(cx).selected.as_ref(), Some(&shows[1]));
+        assert!(
+            window
+                .find(SharedString::from(format!("show-{}", shows[1])))
+                .visible()
+        );
+        window.click("open-show", cx);
+        assert!(workspace.read(cx).jobs.is_empty());
+    })
+    .unwrap();
+    let expected_path = workspace.read_with(cx, |view, _| {
+        let show = &view.catalog.shows[1];
+        format!("/{}/shows/{}", show.team_id, show.id)
+    });
+    assert!(
+        cx.opened_url().unwrap().ends_with(&expected_path),
+        "the content link did not open the selected podcast"
+    );
+}
+
+fn library_workspace(
+    cx: &mut TestAppContext,
+) -> (tempfile::TempDir, WindowHandle<Root>, Entity<Workspace>) {
+    let (profile, handle, workspace) = quit_workspace(cx);
+    let teams = (1..=3)
+        .map(|n| ClientTeam {
+            id: format!("team_{n:016x}"),
+            name: format!("Library {n}"),
+            plan_family: None,
+        })
+        .collect::<Vec<_>>();
+    let shows = (0..8).map(|n| serde_json::from_value(serde_json::json!({
+        "id": format!("shw_{n:016x}"),
+        "team_id": teams[usize::from(n == 3)].id,
+        "slug": format!("podcast-{n}"), "title": format!("Podcast {n}"),
+        "language": "en", "source_kind": "audio", "has_active_subscription": false,
+        "episode_count": 0,
+        "youtube": {"destination_status": "none", "url": "https://www.youtube.com/playlist?list=PLlibrary"}
+    })).unwrap()).collect::<Vec<_>>();
+    cx.update_window(handle.into(), |_, window, cx| {
+        workspace.update(cx, |view, cx| {
+            view.receive(
+                Message::Catalog(Ok(Catalog {
+                    shows,
+                    import_team: Some(teams[0].id.clone()),
+                    teams,
+                })),
+                window,
+                cx,
+            )
+        });
+        window.render_frame(cx);
+    })
+    .unwrap();
+    (profile, handle, workspace)
+}
+
+#[gpui_kit::test]
+fn sign_in_cancel_remains_clickable_in_a_narrow_window(cx: &mut TestAppContext) {
+    let (_profile, handle, workspace) = quit_workspace(cx);
+    cx.simulate_window_resize(handle.into(), size(px(480.), px(600.)));
+    let cancel = CancellationToken::new();
+    cx.update_window(handle.into(), |_, window, cx| {
+        workspace.update(cx, |view, cx| {
+            view.authorization = Some(Authorization {
+                cancel: cancel.clone(),
+                url: None,
+            });
+            cx.notify();
+        });
+        window.render_frame(cx);
+        window.render_frame(cx);
+        window.scroll(
+            "workspace-content",
+            ScrollDelta::Pixels(point(px(0.), px(-400.))),
+            cx,
+        );
+        let button = window.find("cancel-sign-in").bounds();
+        let pane = window.find("workspace-content").bounds();
+        assert!(
+            button.left() >= pane.left() && button.right() <= px(480.),
+            "cancel button extends past the window: {button:?}, pane: {pane:?}"
+        );
+        window.click("cancel-sign-in", cx);
+    })
+    .unwrap();
+    assert!(
+        cancel.is_cancelled(),
+        "cancel control did not cancel the authorization owner"
+    );
+}
+
+#[gpui_kit::test]
 #[ignore = "requires the parent workspace's ephemeral Listenbox services"]
 async fn live_episode_scrolling(cx: &mut TestAppContext) {
     let config = Config::load(None).unwrap();

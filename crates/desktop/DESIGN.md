@@ -122,7 +122,8 @@ sequence. The `Not imported` filter appears only when failed or skipped source
 items exist, shows each item's reason or error and links its title to YouTube,
 and is hidden when the issue count reaches zero.
 
-The 240px sidebar starts directly with the team picker. The native window title
+The sidebar starts at 240px and resizes by dragging its right divider. It starts
+directly with the team picker. The native window title
 owns the app name. One menu definition is rendered by muda as the macOS app menu
 and Windows menu bar. Settings and Log out live in Listenbox; Reload lives under
 View, with ⌘R on macOS and Ctrl+R elsewhere. Linux exposes the same commands from
@@ -151,7 +152,7 @@ Use the named constants in `src/tokens.rs`, with a 4px spacing base.
 
 | Role | Size | Rule |
 | --- | --- | --- |
-| Sidebar | 240px | Fixed; the working pane takes remaining width. |
+| Sidebar | 240–480px | Starts at 240px; drag its divider to resize. The working pane retains at least 360px. |
 | Sidebar content inset | 16px | Team text, artwork, empty copy and footer share this left edge. |
 | Navigation row inset | 8px | Row hit areas extend 8px beyond their content. |
 | Sidebar action height | 36px | Stable through normal, disabled and loading states. |
@@ -170,6 +171,11 @@ inset. Do not apply one uniform gap to every level of the sidebar.
 The team choices are left aligned, truncate long names and scroll within a
 180px maximum height. Podcast titles truncate in the rail and can wrap in the
 working pane. The sidebar list and main content own separate scroll areas.
+Option + Up/Down on macOS and Alt + Up/Down on Windows and Linux select the
+previous/next podcast in the visible sidebar order, respecting the selected
+team. Navigation stops at the first and last podcast and scrolls the selected
+row into view. The shortcut works while a control or text field has focus.
+Sidebar width survives content changes within the window.
 At the 840×600 minimum window, important errors precede the form; taller content
 remains reachable by scrolling.
 

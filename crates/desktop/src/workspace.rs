@@ -5,6 +5,7 @@ use gpui_kit::component::{
     button::{Button, ButtonVariants},
     input::{Input, InputState, TextareaState},
     progress::Progress,
+    resizable::{h_resizable, resizable_panel},
     scroll::{ScrollableElement, Scrollbar, ScrollbarMode},
     spinner::Spinner,
 };
@@ -866,6 +867,42 @@ impl Workspace {
             .find(|show| Some(&show.slug) == self.selected.as_ref())
     }
 
+    fn library_shows(&self) -> impl Iterator<Item = &Show> {
+        self.catalog
+            .shows
+            .iter()
+            .filter(|show| self.team.as_ref().is_none_or(|team| team == &show.team_id))
+    }
+
+    fn select_adjacent(
+        &mut self,
+        next: bool,
+        scroll: &ScrollHandle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.loaded || self.stopping.is_some() {
+            return;
+        }
+        let shows: Vec<_> = self.library_shows().collect();
+        let current = shows
+            .iter()
+            .position(|show| self.selected.as_ref() == Some(&show.slug));
+        let index = match current {
+            Some(index) => index.checked_add_signed(if next { 1 } else { -1 }),
+            None if next => Some(0),
+            None => shows.len().checked_sub(1),
+        };
+        let Some((index, show)) =
+            index.and_then(|index| shows.get(index).map(|show| (index, show)))
+        else {
+            return;
+        };
+        self.select(Some(show.slug.clone()), window, cx);
+        scroll.scroll_to_item(index);
+        self.focus.focus(window, cx);
+    }
+
     fn reload_after_import(&mut self, cx: &mut Context<Self>) {
         let error = self.error.take();
         self.reload(cx);
@@ -1049,7 +1086,7 @@ impl Workspace {
         cx.notify();
     }
 
-    fn sidebar(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn sidebar(&self, scroll: &ScrollHandle, cx: &mut Context<Self>) -> AnyElement {
         let t = Tokens::current(cx);
         let selected_team = self
             .team
@@ -1061,11 +1098,9 @@ impl Workspace {
         let rail = div()
             .flex()
             .flex_col()
-            .w(px(tokens::SIDEBAR))
+            .size_full()
             .flex_shrink_0()
-            .bg(t.rail)
-            .border_r_1()
-            .border_color(t.divider);
+            .bg(t.rail);
         let mut navigation = div()
             .flex()
             .flex_col()
@@ -1223,14 +1258,10 @@ impl Workspace {
             .px(px(tokens::NAV_ROW_INSET))
             .flex_1()
             .min_h_0()
-            .overflow_y_scrollbar();
+            .overflow_y_scroll()
+            .track_scroll(scroll);
         let mut count = 0;
-        for show in self
-            .catalog
-            .shows
-            .iter()
-            .filter(|show| self.team.as_ref().is_none_or(|team| team == &show.team_id))
-        {
+        for show in self.library_shows() {
             count += 1;
             let slug = show.slug.clone();
             let selected = !self.import_open && self.selected.as_ref() == Some(&slug);
@@ -1328,7 +1359,7 @@ impl Workspace {
             );
         }
         rail.child(navigation)
-            .child(shows)
+            .child(shows.vertical_scrollbar(scroll).test_support())
             .child(
                 div()
                     .p(px(tokens::SIDEBAR_INSET))
@@ -1740,7 +1771,7 @@ impl Workspace {
     }
 
     fn content(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let pane = div().id("workspace-content").flex_1().min_h_0();
+        let pane = div().id("workspace-content").flex_1().min_w_0().min_h_0();
         if self.loaded && !self.settings_open && !self.import_open && self.show().is_some() {
             pane.overflow_hidden()
                 .child(self.episode_content(cx))
@@ -1771,6 +1802,12 @@ impl Workspace {
     // Keep the hotpatch boundary's return type independent of the element tree.
     fn render_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let t = Tokens::current(cx);
+        let content_min = (window.viewport_size().width - px(tokens::SIDEBAR))
+            .clamp(px(0.), px(tokens::CONTENT_MIN));
+        let podcast_scroll = window
+            .use_keyed_state("podcast-scroll", cx, |_, _| ScrollHandle::default())
+            .read(cx)
+            .clone();
         let quit_notice = if self.stopping.is_some() {
             Some(("Finishing current work…", 1.))
         } else {
@@ -1804,13 +1841,36 @@ impl Workspace {
                     view.reload(cx);
                 }),
             )
-            .capture_key_down(cx.listener(|view, event: &KeyDownEvent, _, cx| {
-                if event.keystroke.modifiers.platform && event.keystroke.key == "q" {
-                    cx.stop_propagation();
-                    if event.is_held || view.stopping.is_some() {
-                        return;
+            .capture_key_down(cx.listener({
+                let scroll = podcast_scroll.clone();
+                move |view, event: &KeyDownEvent, window, cx| {
+                    let modifiers = event.keystroke.modifiers;
+                    if modifiers.alt
+                        && !modifiers.control
+                        && !modifiers.platform
+                        && !modifiers.shift
+                    {
+                        match event.keystroke.key.as_str() {
+                            "up" | "down" => {
+                                cx.stop_propagation();
+                                view.select_adjacent(
+                                    event.keystroke.key == "down",
+                                    &scroll,
+                                    window,
+                                    cx,
+                                );
+                                return;
+                            }
+                            _ => {}
+                        }
                     }
-                    view.quit_pressed(crate::platform::quit_key_state(), cx);
+                    if event.keystroke.modifiers.platform && event.keystroke.key == "q" {
+                        cx.stop_propagation();
+                        if event.is_held || view.stopping.is_some() {
+                            return;
+                        }
+                        view.quit_pressed(crate::platform::quit_key_state(), cx);
+                    }
                 }
             }))
             .capture_key_up(cx.listener(|view, event: &KeyUpEvent, _, cx| {
@@ -1829,14 +1889,20 @@ impl Workspace {
             .bg(t.background)
             .text_color(t.ink)
             .text_size(px(tokens::BODY))
-            .child(self.sidebar(cx))
             .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .min_w_0()
-                    .child(self.content(window, cx)),
+                h_resizable("workspace-panes")
+                    .child(
+                        resizable_panel()
+                            .size(px(tokens::SIDEBAR))
+                            .size_range(px(tokens::SIDEBAR)..px(tokens::SIDEBAR_MAX))
+                            .flex_none()
+                            .child(self.sidebar(&podcast_scroll, cx)),
+                    )
+                    .child(
+                        resizable_panel()
+                            .size_range(content_min..Pixels::MAX)
+                            .child(self.content(window, cx)),
+                    ),
             )
             .when_some(quit_notice, |workspace, (instruction, opacity)| {
                 workspace.child(

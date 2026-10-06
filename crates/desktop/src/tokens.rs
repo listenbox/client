@@ -4,6 +4,8 @@ use gpui_kit::component::{ActiveTheme, Theme, ThemeMode};
 use gpui_kit::{App, Hsla, Window, px, rgb};
 
 pub const SIDEBAR: f32 = 240.;
+pub const SIDEBAR_MAX: f32 = 480.;
+pub const CONTENT_MIN: f32 = 360.;
 pub const SIDEBAR_INSET: f32 = 16.;
 pub const NAV_ROW_INSET: f32 = 8.;
 pub const CONTROL_HEIGHT: f32 = 36.;
