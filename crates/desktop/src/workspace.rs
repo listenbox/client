@@ -52,7 +52,10 @@ fn show_latest_release(show: &Show) -> String {
         .last_episode_at
         .and_then(chrono::DateTime::from_timestamp_millis)
     {
-        Some(date) => format!("Latest release {}", date.format("%-d %b %Y")),
+        Some(date) => format!(
+            "Latest release {}",
+            date.with_timezone(&chrono::Local).format("%-d %b %Y")
+        ),
         None => "No published episodes".into(),
     }
 }
@@ -66,7 +69,7 @@ fn show_youtube_check(show: &Show) -> String {
         Some(date) => format!(
             "YouTube checked {}",
             date.with_timezone(&chrono::Local)
-                .format("%-d %b %Y, %H:%M %Z")
+                .format("%-d %b %Y, %H:%M")
         ),
         None => "YouTube not checked yet".into(),
     }
