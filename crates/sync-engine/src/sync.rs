@@ -199,6 +199,9 @@ impl Engine {
                 .context("Show source has no video ID")?;
             youtube.video_snapshot(api, &id).await?
         };
+        // A source check has completed even if later media transfers fail.
+        // Invalid/failed scans return before this guarded, server-timed report.
+        update_metadata(api, slug, collection, None, Vec::new(), true).await?;
         if before
             .show
             .image_url
@@ -207,7 +210,7 @@ impl Engine {
             && let Some(url) = &snapshot.artwork_url
         {
             let image = crate::artwork::upload_source(api, &before.show.id, url).await?;
-            update_metadata(api, slug, collection, Some(image), Vec::new()).await?;
+            update_metadata(api, slug, collection, Some(image), Vec::new(), false).await?;
         }
         let ordered_urls: Vec<String> = snapshot
             .present
@@ -488,6 +491,7 @@ async fn update_titles(
         youtube_url: collection.into(),
         image_asset_id: None,
         episode_titles: Vec::new(),
+        checked: None,
     })?
     .len();
     let mut bytes = overhead;
@@ -500,14 +504,22 @@ async fn update_titles(
         );
         let separator = usize::from(!batch.is_empty());
         if bytes + size + separator > METADATA_REQUEST_BYTES {
-            update_metadata(api, slug, collection, None, std::mem::take(&mut batch)).await?;
+            update_metadata(
+                api,
+                slug,
+                collection,
+                None,
+                std::mem::take(&mut batch),
+                false,
+            )
+            .await?;
             bytes = overhead;
         }
         bytes += size + usize::from(!batch.is_empty());
         batch.push(title);
     }
     if !batch.is_empty() {
-        update_metadata(api, slug, collection, None, batch).await?;
+        update_metadata(api, slug, collection, None, batch, false).await?;
     }
     Ok(())
 }
@@ -518,6 +530,7 @@ async fn update_metadata(
     collection: &str,
     image_asset_id: Option<String>,
     episode_titles: Vec<p::SyncEpisodeTitle>,
+    checked: bool,
 ) -> Result<()> {
     match api
         .client()
@@ -527,6 +540,7 @@ async fn update_metadata(
                 youtube_url: collection.into(),
                 image_asset_id,
                 episode_titles,
+                checked: checked.then_some(true),
             },
         })
         .await?

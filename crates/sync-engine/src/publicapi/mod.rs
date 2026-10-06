@@ -3400,6 +3400,8 @@ impl Response for SetEpisodeOrderResponse {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Show {
+    #[serde(rename = "episode_count")]
+    pub episode_count: i64,
     #[serde(rename = "has_active_subscription")]
     pub has_active_subscription: bool,
     #[serde(rename = "id")]
@@ -3408,6 +3410,8 @@ pub struct Show {
     pub image_url: std::option::Option<std::string::String>,
     #[serde(rename = "language")]
     pub language: ShowLanguage,
+    #[serde(rename = "last_episode_at", default, skip_serializing_if = "Option::is_none")]
+    pub last_episode_at: std::option::Option<UnixMillis>,
     #[serde(rename = "slug")]
     pub slug: ShowSlug,
     #[serde(rename = "source_kind")]
@@ -3975,6 +3979,8 @@ impl Response for UpdateShowMemberRoleResponse {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UpdateSyncMetadata {
+    #[serde(rename = "checked", default, skip_serializing_if = "Option::is_none")]
+    pub checked: std::option::Option<bool>,
     #[serde(rename = "episode_titles")]
     pub episode_titles: std::vec::Vec<SyncEpisodeTitle>,
     #[serde(rename = "image_asset_id", default, skip_serializing_if = "Option::is_none")]
@@ -4319,6 +4325,10 @@ pub enum YouTubeDestinationStatus {
 pub struct YouTubeLinkage {
     #[serde(rename = "destination_status")]
     pub destination_status: YouTubeDestinationStatus,
+    #[serde(rename = "last_changed_at", default, skip_serializing_if = "Option::is_none")]
+    pub last_changed_at: std::option::Option<UnixMillis>,
+    #[serde(rename = "last_checked_at", default, skip_serializing_if = "Option::is_none")]
+    pub last_checked_at: std::option::Option<UnixMillis>,
     #[serde(rename = "url", default, skip_serializing_if = "Option::is_none")]
     pub url: std::option::Option<std::string::String>,
 }

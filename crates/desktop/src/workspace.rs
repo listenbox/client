@@ -33,6 +33,44 @@ mod import_progress;
 #[path = "workspace/settings.rs"]
 mod settings;
 
+fn show_episode_activity(show: &Show) -> String {
+    let episodes = format!(
+        "{} {}",
+        show.episode_count,
+        if show.episode_count == 1 {
+            "episode"
+        } else {
+            "episodes"
+        }
+    );
+    format!("{episodes} · {}", show_latest_release(show))
+}
+
+fn show_latest_release(show: &Show) -> String {
+    match show
+        .last_episode_at
+        .and_then(chrono::DateTime::from_timestamp_millis)
+    {
+        Some(date) => format!("Latest release {}", date.format("%-d %b %Y")),
+        None => "No published episodes".into(),
+    }
+}
+
+fn show_youtube_check(show: &Show) -> String {
+    match show
+        .youtube
+        .last_checked_at
+        .and_then(chrono::DateTime::from_timestamp_millis)
+    {
+        Some(date) => format!(
+            "YouTube checked {}",
+            date.with_timezone(&chrono::Local)
+                .format("%-d %b %Y, %H:%M %Z")
+        ),
+        None => "YouTube not checked yet".into(),
+    }
+}
+
 pub struct Workspace {
     episodes: Vec<listenbox_sync_engine::publicapi::EpisodeListItem>,
     episode_loading: bool,
@@ -57,6 +95,7 @@ pub struct Workspace {
     focus: FocusHandle,
     sender: UnboundedSender<Message>,
     catalog: Catalog,
+    catalog_refresh_due: bool,
     loaded: bool,
     loading: bool,
     authorization: Option<Authorization>,
@@ -321,6 +360,7 @@ impl Workspace {
             focus: cx.focus_handle(),
             sender,
             catalog: Catalog::default(),
+            catalog_refresh_due: false,
             loaded: false,
             loading: false,
             authorization: None,
@@ -449,6 +489,7 @@ impl Workspace {
             return;
         }
         self.loading = true;
+        self.catalog_refresh_due = false;
         self.error = None;
         let (client, sender, cancel) = (
             self.client.clone(),
@@ -632,6 +673,9 @@ impl Workspace {
                             self.load_episodes(cx);
                         }
                         self.start_auto_sync(cx);
+                        if self.catalog_refresh_due {
+                            self.reload_after_import(cx);
+                        }
                     }
                     Err(error) => {
                         if error.is::<listenbox_sync_engine::api::AuthenticationRequired>() {
@@ -708,6 +752,8 @@ impl Workspace {
                         if slug.is_some() {
                             self.receive(Message::Report(show.slug, report), window, cx);
                         }
+                        self.catalog_refresh_due = true;
+                        self.reload_after_import(cx);
                     }
                     Err(_) if stopped => {
                         if let Some(slug) = slug {
@@ -794,6 +840,8 @@ impl Workspace {
                             .insert(slug, SyncReport::Notice(format!("Sync failed. {error:#}")));
                     }
                 }
+                self.catalog_refresh_due = true;
+                self.reload_after_import(cx);
             }
         }
         cx.notify();
@@ -1207,7 +1255,7 @@ impl Workspace {
                     .w_full()
                     .h_auto()
                     .p(px(tokens::NAV_ROW_INSET))
-                    .accessibility_label(format!("{}, {status}", show.title))
+                    .accessibility_label(format!("{}, {}, {status}", show.title, show_episode_activity(show)))
                     .justify_start()
                     .when(selected, |button| button.bg(t.selected))
                     .child(
@@ -1232,6 +1280,18 @@ impl Workspace {
                                             .font_weight(FontWeight::SEMIBOLD)
                                             .child(show.title.clone()),
                                     )
+                                    .child(
+                                        div().text_size(px(12.)).text_color(t.muted)
+                                            .id(SharedString::from(format!("show-episodes-{}", show.slug)))
+                                            .role(Role::Label)
+                                            .aria_label(show_episode_activity(show))
+                                            .child(show_episode_activity(show))
+                                            .test_support(),
+                                    )
+                                    .when(show.youtube.url.is_some() && show.youtube.destination_status != listenbox_sync_engine::publicapi::YouTubeDestinationStatus::Active, |column| {
+                                        column.child(div().text_size(px(11.)).text_color(t.muted)
+                                            .child(show_youtube_check(show)))
+                                    })
                                     .child(
                                         div().text_size(px(12.)).text_color(t.muted).child(status),
                                     )
@@ -1504,7 +1564,7 @@ impl Workspace {
                                     .when(
                                         !self.episode_loading && self.episode_error.is_none(),
                                         |row| {
-                                            let count = self.episodes.len();
+                                            let count = show.episode_count;
                                             let label = format!(
                                                 "{count} {}",
                                                 if count == 1 { "episode" } else { "episodes" }
@@ -1520,6 +1580,22 @@ impl Workspace {
                                         },
                                     ),
                             )
+                            .when(show.last_episode_at.is_some(), |header| {
+                                header.child(div().text_size(px(12.)).text_color(t.muted)
+                                    .id("latest-release")
+                                    .role(Role::Label)
+                                    .aria_label(show_latest_release(show))
+                                    .child(show_latest_release(show))
+                                    .test_support())
+                            })
+                            .when(show.youtube.url.is_some() && show.youtube.destination_status != listenbox_sync_engine::publicapi::YouTubeDestinationStatus::Active, |header| {
+                                header.child(div().text_size(px(12.)).text_color(t.muted)
+                                    .id("youtube-last-checked")
+                                    .role(Role::Label)
+                                    .aria_label(show_youtube_check(show))
+                                    .child(show_youtube_check(show))
+                                    .test_support())
+                            })
                             .when(
                                 !self.source_loading && self.source_error.is_none(),
                                 |header| {

@@ -1271,7 +1271,15 @@ async fn live_backend(cx: &mut TestAppContext) {
     })
     .await;
     wait_for(cx, &workspace, |view| {
-        !view.episode_loading && !view.source_loading && !view.episodes.is_empty()
+        !view.loading
+            && !view.episode_loading
+            && !view.source_loading
+            && !view.episodes.is_empty()
+            && view.show().is_some_and(|show| {
+                show.episode_count == 1
+                    && show.last_episode_at.is_some()
+                    && show.youtube.last_checked_at.is_some()
+            })
     })
     .await;
     cx.update(|cx| {
@@ -1301,8 +1309,31 @@ async fn live_backend(cx: &mut TestAppContext) {
         assert!(!view.catalog.teams.is_empty());
         assert_eq!(view.catalog.shows.len(), 1);
         assert!(view.last_synced.is_some());
+        let sidebar_summary_id =
+            SharedString::from(format!("show-episodes-{}", view.show().unwrap().slug));
         window.render_frame(cx);
         assert_podcast_header(window, 1);
+        assert!(
+            window
+                .find("latest-release")
+                .label()
+                .unwrap()
+                .starts_with("Latest release ")
+        );
+        assert!(
+            window
+                .find("youtube-last-checked")
+                .label()
+                .unwrap()
+                .starts_with("YouTube checked ")
+        );
+        assert!(
+            window
+                .find(sidebar_summary_id)
+                .label()
+                .unwrap()
+                .starts_with("1 episode · Latest release ")
+        );
         assert!(
             window
                 .find("last-synced")
@@ -2529,7 +2560,7 @@ fn unpaid_podcast_opens_its_teams_upgrade_page(cx: &mut TestAppContext) {
             view.catalog.shows = vec![serde_json::from_value(serde_json::json!({
                 "id": "shw_0123456789abcdef", "team_id": "team_fedcba9876543210",
                 "title": "Podcast", "slug": "podcast", "language": "en", "source_kind": "audio",
-                "has_active_subscription": false,
+                "has_active_subscription": false, "episode_count": 0,
                 "youtube": {"destination_status":"none", "url":"https://www.youtube.com/playlist?list=PLtest"}
             })).unwrap()];
             view.select(Some("podcast".into()), window, cx);
@@ -2815,7 +2846,7 @@ fn library_shares_artwork_requests(cx: &mut TestAppContext) {
     let shows = vec![serde_json::from_value(serde_json::json!({
             "id":"shw_0123456789abcdef", "team_id":"team_0123456789abcdef", "slug":"import",
             "title":"Podcast artwork", "language":"en", "source_kind":"audio",
-            "has_active_subscription":true, "image_url":"https://artwork.example.test/podcast.png",
+            "has_active_subscription":true, "episode_count": 0, "image_url":"https://artwork.example.test/podcast.png",
             "youtube":{"destination_status":"none", "url":"https://www.youtube.com/playlist?list=PLabc"}
         })).unwrap()];
     cx.update_window(handle.into(), |_, window, cx| {
