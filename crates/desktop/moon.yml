@@ -162,7 +162,7 @@ tasks:
       mkdir -p .cache
       kache rustc --crate-name package_macos --edition 2024 --out-dir .cache tools/package-macos.rs
       .cache/package_macos --local
-      xcrun swiftc -warnings-as-errors -parse-as-library tools/reinstall-macos.swift -o .cache/reinstall-macos
+      xcrun clang -fobjc-arc -Wall -Wextra -Werror -framework AppKit -framework Foundation tools/reinstall-macos.m -o .cache/reinstall-macos
       .cache/reinstall-macos crates/desktop/dist/macos-local/image/Listenbox.app /Applications/Listenbox.app
     options:
       os: macos
