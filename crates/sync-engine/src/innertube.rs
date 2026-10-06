@@ -506,40 +506,30 @@ impl YouTube {
                     "Live or upcoming video; sync after it has finished".into(),
                 ));
             }
-            let mut formats = info.formats().await?;
-            formats.extend(info.adaptive_formats().await?);
-            let mut selected_client = metadata_client;
-            let (playback, formats) = if matches!(metadata_client, Client::Mweb)
-                && formats.iter().any(|format| {
-                    let f = format.info();
-                    f.url.is_some() || f.cipher.is_some() || f.signature_cipher.is_some()
-                }) {
-                (info, formats)
-            } else {
-                // SABR-only metadata still needs another client's direct streams.
-                selected_client = self.playback_client;
-                let playback = match self.player_info(id, self.playback_client).await? {
-                    PlayerResponse::Available(info) => info,
-                    // Embedding refusal does not establish video unavailability.
-                    PlayerResponse::Unavailable(_)
-                        if matches!(self.playback_client, Client::WebEmbedded) =>
-                    {
-                        selected_client = Client::WebCreator;
-                        match self.player_info(id, Client::WebCreator).await? {
-                            PlayerResponse::Available(info) => info,
-                            PlayerResponse::Unavailable(reason) => {
-                                return Ok(Playback::Unavailable(reason));
-                            }
+            // Mobile web supplies publication metadata, but its direct streams
+            // require proof of origin. Ask the session's preferred playback
+            // client immediately rather than learning that through failed ranges.
+            let mut selected_client = self.playback_client;
+            let playback = match self.player_info(id, selected_client).await? {
+                PlayerResponse::Available(info) => info,
+                // Embedding refusal does not establish video unavailability.
+                PlayerResponse::Unavailable(_)
+                    if matches!(selected_client, Client::WebEmbedded) =>
+                {
+                    selected_client = Client::WebCreator;
+                    match self.player_info(id, selected_client).await? {
+                        PlayerResponse::Available(info) => info,
+                        PlayerResponse::Unavailable(reason) => {
+                            return Ok(Playback::Unavailable(reason));
                         }
                     }
-                    PlayerResponse::Unavailable(reason) => {
-                        return Ok(Playback::Unavailable(reason));
-                    }
-                };
-                let mut formats = playback.formats().await?;
-                formats.extend(playback.adaptive_formats().await?);
-                (playback, formats)
+                }
+                PlayerResponse::Unavailable(reason) => {
+                    return Ok(Playback::Unavailable(reason));
+                }
             };
+            let mut formats = playback.formats().await?;
+            formats.extend(playback.adaptive_formats().await?);
             let cpn = playback.cpn().await?;
             let (video, audio) = self
                 .select_streams(id, formats, &cpn, data.basic_info.duration, selected_client)
@@ -575,13 +565,10 @@ impl YouTube {
                 .context("YouTube publication date is invalid")?
                 .timestamp_millis();
             Ok(Playback::Available(Box::new(Media {
-                // Consume each alternative at most once, even when its player
-                // is playable but a later media range is refused. Cookie-backed
-                // playback remains available when anonymous native playback is not.
+                // A media denial gets one native alternative. Creator playback
+                // is reserved for an embedding refusal, not another media probe.
                 fallback_clients: match selected_client {
-                    Client::Mweb => vec![Client::VisionOs, Client::WebEmbedded, Client::WebCreator],
-                    Client::WebEmbedded => vec![Client::VisionOs, Client::WebCreator],
-                    Client::WebCreator => vec![Client::VisionOs],
+                    Client::WebEmbedded | Client::WebCreator => vec![Client::VisionOs],
                     _ => Vec::new(),
                 }
                 .into_iter(),
