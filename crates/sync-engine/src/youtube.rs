@@ -540,8 +540,8 @@ pub(crate) async fn import_video(
                         {
                             // download() drains all admitted writes first. The same
                             // journal validates which ranges survive a client change.
-                            match youtube.native_media(api, id, media).await? {
-                                Some(native) => media = native,
+                            match youtube.fallback_media(api, id, media).await? {
+                                Some(fallback) => media = fallback,
                                 None => return Err(error),
                             }
                         }

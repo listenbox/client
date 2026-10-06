@@ -60,7 +60,7 @@ pub enum Playback {
 }
 
 pub struct Media {
-    playback_client: Client,
+    fallback_clients: std::vec::IntoIter<Client>,
     pub estimated_seconds: i64,
     pub duration_seconds: Option<u64>,
     pub title: String,
@@ -575,7 +575,16 @@ impl YouTube {
                 .context("YouTube publication date is invalid")?
                 .timestamp_millis();
             Ok(Playback::Available(Box::new(Media {
-                playback_client: selected_client,
+                // Consume each alternative at most once, even when its player
+                // is playable but a later media range is refused. Cookie-backed
+                // playback remains available when anonymous native playback is not.
+                fallback_clients: match selected_client {
+                    Client::Mweb => vec![Client::VisionOs, Client::WebEmbedded, Client::WebCreator],
+                    Client::WebEmbedded => vec![Client::VisionOs, Client::WebCreator],
+                    Client::WebCreator => vec![Client::VisionOs],
+                    _ => Vec::new(),
+                }
+                .into_iter(),
                 estimated_seconds: known_seconds(data.basic_info.duration.unwrap_or(0.0)),
                 duration_seconds: data.basic_info.duration.and_then(duration_seconds),
                 title: data.basic_info.title.unwrap_or_else(|| id.into()),
@@ -590,40 +599,44 @@ impl YouTube {
     }
 
     // Player permission is not proof that its media URLs allow a full download.
-    // Native playback is anonymous; authenticated metadata remains authoritative.
-    pub(crate) async fn native_media(
+    // A client's refusal does not establish source unavailability. Only streams
+    // change here; the initial response's publication metadata stays authoritative.
+    pub(crate) async fn fallback_media(
         &self,
         api: &Api,
         id: &str,
         mut media: Box<Media>,
     ) -> Result<Option<Box<Media>>> {
-        if matches!(media.playback_client, Client::VisionOs) {
-            return Ok(None);
-        }
         self.wait(api, async {
-            let playback = match self.player_info(id, Client::VisionOs).await {
-                Ok(PlayerResponse::Available(info)) => info,
-                Ok(PlayerResponse::Unavailable(_)) => return Ok(None),
-                // Native playback cannot access account-restricted videos.
-                Err(error) if error.is::<SignInRequired>() => return Ok(None),
-                Err(error) => return Err(error),
-            };
-            let mut formats = playback.formats().await?;
-            formats.extend(playback.adaptive_formats().await?);
-            let cpn = playback.cpn().await?;
-            let (video, audio) = self
-                .select_streams(
-                    id,
-                    formats,
-                    &cpn,
-                    media.duration_seconds.map(|seconds| seconds as f64),
-                    Client::VisionOs,
-                )
-                .await?;
-            media.video = video;
-            media.audio = audio;
-            media.playback_client = Client::VisionOs;
-            Ok(Some(media))
+            for client in media.fallback_clients.by_ref() {
+                let playback = match self.player_info(id, client).await {
+                    Ok(PlayerResponse::Available(info)) => info,
+                    Ok(PlayerResponse::Unavailable(_)) => continue,
+                    // Anonymous native playback cannot access restricted videos.
+                    Err(error)
+                        if matches!(client, Client::VisionOs) && error.is::<SignInRequired>() =>
+                    {
+                        continue;
+                    }
+                    Err(error) => return Err(error),
+                };
+                let mut formats = playback.formats().await?;
+                formats.extend(playback.adaptive_formats().await?);
+                let cpn = playback.cpn().await?;
+                let (video, audio) = self
+                    .select_streams(
+                        id,
+                        formats,
+                        &cpn,
+                        media.duration_seconds.map(|seconds| seconds as f64),
+                        client,
+                    )
+                    .await?;
+                media.video = video;
+                media.audio = audio;
+                return Ok(Some(media));
+            }
+            Ok(None)
         })
         .await
     }
