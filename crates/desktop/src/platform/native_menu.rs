@@ -96,6 +96,8 @@ fn accelerator(action: &dyn Action, cx: &App) -> Option<muda::accelerator::KeyAc
 #[cfg(any(target_os = "macos", target_os = "windows", test))]
 pub(super) const OPEN_WINDOW: &str = "listenbox.tray.open";
 #[cfg(any(target_os = "macos", target_os = "windows", test))]
+pub(super) const SYNC_NOW: &str = "listenbox.tray.sync";
+#[cfg(any(target_os = "macos", target_os = "windows", test))]
 pub(super) const QUIT: &str = "listenbox.tray.quit";
 
 #[cfg(any(target_os = "macos", target_os = "windows", test))]
@@ -134,6 +136,8 @@ mod installed {
                 cx.update(|cx| {
                     if id == OPEN_WINDOW {
                         super::super::show_window(cx);
+                    } else if id == SYNC_NOW {
+                        cx.dispatch_action(&super::super::SyncNow);
                     } else if id == QUIT {
                         cx.dispatch_action(&super::super::Quit);
                     } else {

@@ -619,8 +619,7 @@ impl Workspace {
                 }
             }
             Message::SyncDue => {
-                self.sync_all(false, cx);
-                self.reload(cx);
+                self.sync_now(cx);
             }
             Message::AuthorizationUrl(url) => {
                 if let Some(authorization) = &mut self.authorization
@@ -1010,6 +1009,14 @@ impl Workspace {
             });
         }
         self.sync_all(true, cx);
+    }
+
+    pub(crate) fn sync_now(&mut self, cx: &mut Context<Self>) {
+        if self.stopping.is_some() || !self.client.has_credentials() {
+            return;
+        }
+        self.sync_all(false, cx);
+        self.reload(cx);
     }
 
     fn sync_all(&mut self, only_new: bool, cx: &mut Context<Self>) {

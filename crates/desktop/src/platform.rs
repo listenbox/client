@@ -22,6 +22,7 @@ actions!(
         Quit,
         OpenSettings,
         Reload,
+        SyncNow,
         CheckUpdates,
         AutomaticUpdates,
         AutomaticDownloads
@@ -73,6 +74,11 @@ pub fn install_actions(view: &Entity<Workspace>, cx: &mut App) {
     });
     let quit = view.clone();
     cx.on_action(move |_: &Quit, cx| quit.update(cx, |view, cx| view.shutdown(Shutdown::Quit, cx)));
+    let sync = view.clone();
+    cx.on_action(move |_: &SyncNow, cx| {
+        show_window(cx);
+        sync.update(cx, |view, cx| view.sync_now(cx));
+    });
     cx.bind_keys([gpui_kit::KeyBinding::new(
         if cfg!(target_os = "macos") {
             "cmd-,"
@@ -211,8 +217,10 @@ mod status_item {
             true,
             None,
         );
+        let sync = TrayMenuItem::with_id(native_menu::SYNC_NOW, "Sync now", true, None);
         let quit = TrayMenuItem::with_id(native_menu::QUIT, "Quit", true, None);
-        menu.append_items(&[&open, &quit]).expect("status menu");
+        menu.append_items(&[&open, &sync, &quit])
+            .expect("status menu");
         #[cfg(target_os = "windows")]
         {
             use tray_icon::{MouseButton, MouseButtonState, TrayIconEvent};
