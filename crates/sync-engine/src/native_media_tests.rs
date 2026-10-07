@@ -20,7 +20,7 @@ fn linked_ffmpeg_configuration_is_visible_in_ci() {
     assert!(configuration.contains("--disable-everything"));
     assert!(configuration.contains("--disable-network"));
     assert!(configuration.contains("--disable-debug"));
-    assert!(codec::decoder::find(codec::Id::HEVC).is_none());
+
     assert!(codec::encoder::find(codec::Id::MP3).is_none());
     assert!(!configuration.contains("--enable-gpl"));
     assert!(!configuration.contains("--enable-nonfree"));
@@ -129,7 +129,8 @@ fn prepare_video(separate_audio: bool) {
     if separate_audio {
         fs::copy(fixture("opus.webm"), root.join("source-audio")).unwrap();
     }
-    let duration = media::prepare(root, separate_audio, &CancellationToken::new()).unwrap();
+    let duration =
+        media::prepare(root, separate_audio, 1080, "en", &CancellationToken::new()).unwrap();
     assert!((2..=3).contains(&duration));
     assert!(audio::fast_start(&root.join("video.mp4")).unwrap());
     assert_audio(&root.join("video.mp4"));
@@ -209,7 +210,8 @@ async fn validate_long_gop_hls(separate_audio: bool) {
     if separate_audio {
         fs::copy(fixture("opus-long.webm"), root.join("source-audio")).unwrap();
     }
-    let duration = media::prepare(root, separate_audio, &CancellationToken::new()).unwrap();
+    let duration =
+        media::prepare(root, separate_audio, 1080, "en", &CancellationToken::new()).unwrap();
     assert!((8..=9).contains(&duration));
     let report_path = root.join("validation.json");
     let output = tokio::time::timeout(
@@ -232,8 +234,8 @@ async fn validate_long_gop_hls(separate_audio: bool) {
     let media_variants: Vec<_> = variants.iter().filter(|v| v["url"].is_string()).collect();
     assert_eq!(
         media_variants.len(),
-        2,
-        "validator must visit audio and video: {report}"
+        4,
+        "validator must visit both normal videos, audio and seek: {report}"
     );
     for variant in media_variants {
         let parsed = variant["parsedSegmentsCount"].as_u64().unwrap();

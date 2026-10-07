@@ -441,6 +441,8 @@ pub(crate) struct VideoImport<'a> {
     pub transfer: &'a crate::downloads::Transfer,
     pub journal: &'a crate::database::Database,
     pub audio: bool,
+    pub max_height: u32,
+    pub language: &'a str,
 }
 
 pub(crate) enum ImportOutcome {
@@ -462,6 +464,8 @@ pub(crate) async fn import_video(
         transfer,
         journal,
         audio,
+        max_height,
+        language,
     } = work;
     let source_url = format!("https://www.youtube.com/watch?v={id}");
     let operation_id = journal.operation(&api.config.api_origin, slug, &source_url, collection)?;
@@ -564,6 +568,7 @@ pub(crate) async fn import_video(
             let root = directory.clone();
             let separate_audio = media.audio.is_some();
             let cancel = api.cancel.clone();
+            let language = language.to_owned();
             let preparation = format!(
                 "show_slug={slug} video_id={id} operation_id={operation_id} kind={} title={:?}",
                 if audio { "audio" } else { "video" },
@@ -590,7 +595,7 @@ pub(crate) async fn import_video(
                         crate::audio::prepare_m4a(&root.join("source-audio"), &output, &cancel)?;
                         crate::audio::duration(&output)
                     } else {
-                        crate::media::prepare(&root, separate_audio, &cancel)
+                        crate::media::prepare(&root, separate_audio, max_height, &language, &cancel)
                     }
                 })();
                 tracing::info!(success = result.is_ok(), elapsed_ms = started.elapsed().as_millis() as u64,

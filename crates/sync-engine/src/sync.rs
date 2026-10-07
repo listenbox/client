@@ -272,6 +272,18 @@ impl Engine {
         for transfer in &transfers {
             journal.outcome(&api.config.api_origin, slug, &transfer.item())?;
         }
+        let capacity = match api
+            .client()
+            .get_import_capacity(p::GetImportCapacityParams {
+                team_id: before.show.team_id.clone(),
+            })
+            .await?
+        {
+            p::GetImportCapacityResponse::Status200(value) => value,
+            response => return Err(api.response_error(response).await),
+        };
+        let max_height = u32::try_from(capacity.video_max_height)?;
+        let language = before.show.language.as_str();
         let audio = before.show.source_kind == p::ShowSourceKind::Audio;
         let mut work = stream::iter(additions.iter().zip(transfers).map(|(video, transfer)| {
             let journal = &journal;
@@ -296,6 +308,8 @@ impl Engine {
                             transfer: &transfer,
                             journal,
                             audio,
+                            max_height,
+                            language,
                         },
                     )
                     .await;

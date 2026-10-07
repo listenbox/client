@@ -58,6 +58,49 @@ fn extract_archive(
         .arg(unix_path(destination, msys2_bin)?))
 }
 
+// Pin the assembler with the native libraries; an ambient NASM installation
+// must not decide whether shipped x86 code uses accelerated codec/scaling paths.
+fn prepare_nasm(cache: &Path, prefix: &Path) -> Result<Option<OsString>, Box<dyn Error>> {
+    if !cfg!(all(unix, target_arch = "x86_64")) {
+        return Ok(None);
+    }
+    let version = "2.16.03";
+    let checksum = "1412a1c760bbd05db026b6c0d1657affd6631cd0a63cddb6f73cc6d4aa616148";
+    let archive = cache.join(format!("nasm-{version}.tar.xz"));
+    if !archive.exists() {
+        run(Command::new("curl")
+            .args(["--fail", "--location", "--max-time", "60", "--output"])
+            .arg(&archive)
+            .arg(format!(
+                "https://www.nasm.us/pub/nasm/releasebuilds/{version}/nasm-{version}.tar.xz"
+            )))?;
+    }
+    let digest = Command::new("openssl")
+        .args(["dgst", "-sha256"])
+        .arg(&archive)
+        .output()?;
+    if !digest.status.success() || !String::from_utf8(digest.stdout)?.trim().ends_with(checksum) {
+        return Err("NASM source checksum mismatch".into());
+    }
+    let source = cache.join(format!("nasm-{version}"));
+    if source.exists() {
+        fs::remove_dir_all(&source)?;
+    }
+    extract_archive(&archive, cache, None)?;
+    run(Command::new("bash").arg("./configure").current_dir(&source))?;
+    run(Command::new("make")
+        .arg(format!("-j{}", std::thread::available_parallelism()?))
+        .arg("nasm")
+        .current_dir(&source))?;
+    fs::create_dir_all(prefix.join("bin"))?;
+    fs::copy(source.join("nasm"), prefix.join("bin/nasm"))?;
+    fs::copy(source.join("LICENSE"), prefix.join("NASM-LICENSE.txt"))?;
+    let paths = std::iter::once(prefix.join("bin")).chain(
+        env::split_paths(&env::var_os("PATH").ok_or("PATH is required")?).collect::<Vec<_>>(),
+    );
+    Ok(Some(env::join_paths(paths)?))
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let target = env::args().nth(1);
     let arch = match target.as_deref() {
@@ -107,10 +150,70 @@ fn main() -> Result<(), Box<dyn Error>> {
     if !digest.status.success() || !String::from_utf8(digest.stdout)?.trim().ends_with(checksum) {
         return Err("FFmpeg source checksum mismatch".into());
     }
-    extract_archive(&archive, &build, msys2_bin.as_deref())?;
     let source = build.join(format!("ffmpeg-{version}"));
+    if source.exists() {
+        fs::remove_dir_all(&source)?;
+    }
+    extract_archive(&archive, &build, msys2_bin.as_deref())?;
+    let openh264_version = "2.6.0";
+    let openh264_checksum = "558544ad358283a7ab2930d69a9ceddf913f4a51ee9bf1bfb9e377322af81a69";
+    let openh264_url =
+        format!("https://codeload.github.com/cisco/openh264/tar.gz/refs/tags/v{openh264_version}");
+    let openh264_archive = cache.join(format!("openh264-{openh264_version}.tar.gz"));
+    if !openh264_archive.exists() {
+        run(Command::new("curl")
+            .args(["--fail", "--location", "--max-time", "60", "--output"])
+            .arg(&openh264_archive)
+            .arg(&openh264_url))?;
+    }
+    let digest = unix_command("openssl", msys2_bin.as_deref())
+        .args(["dgst", "-sha256"])
+        .arg(unix_path(&openh264_archive, msys2_bin.as_deref())?)
+        .output()?;
+    if !digest.status.success()
+        || !String::from_utf8(digest.stdout)?
+            .trim()
+            .ends_with(openh264_checksum)
+    {
+        return Err("OpenH264 source checksum mismatch".into());
+    }
+    let openh264_source = build.join(format!("openh264-{openh264_version}"));
+    if openh264_source.exists() {
+        fs::remove_dir_all(&openh264_source)?;
+    }
+    extract_archive(&openh264_archive, &build, msys2_bin.as_deref())?;
+    let native_path = prepare_nasm(&cache, &prefix)?;
+    let mut make = unix_command("make", msys2_bin.as_deref());
+    make.current_dir(&openh264_source)
+        .arg(format!("-j{}", std::thread::available_parallelism()?))
+        .arg(format!(
+            "PREFIX={}",
+            Path::new(&unix_path(&prefix, msys2_bin.as_deref())?).display()
+        ))
+        .arg(if cfg!(windows) {
+            "USE_ASM=No"
+        } else {
+            "USE_ASM=Yes"
+        })
+        .args(["BUILDTYPE=Release", "install-static"]);
+    if let Some(path) = &native_path {
+        make.env("PATH", path);
+    }
+    if let Some(arch) = arch {
+        make.args(["OS=msvc", &format!("ARCH={arch}")]);
+    }
+    run(&mut make)?;
     let mut configure = unix_command("bash", msys2_bin.as_deref());
-    configure.arg("./configure").current_dir(&source);
+    configure
+        .arg("./configure")
+        .current_dir(&source)
+        .env("PKG_CONFIG_PATH", prefix.join("lib/pkgconfig"));
+    if let Some(path) = &native_path {
+        configure.env("PATH", path);
+    }
+    if native_path.is_none() {
+        configure.arg("--disable-x86asm");
+    }
     if let Some(arch) = arch {
         configure
             .args(["--toolchain=msvc", "--extra-cflags=-MT"])
@@ -138,23 +241,28 @@ fn main() -> Result<(), Box<dyn Error>> {
             "--enable-pic",
             "--disable-avdevice",
             "--disable-avfilter",
-            "--disable-swscale",
+            "--enable-swscale",
+            "--enable-libopenh264",
             "--enable-swresample",
             "--enable-protocol=file",
             "--enable-demuxer=mov,matroska,ogg,aac",
             "--enable-muxer=ipod,mp4,hls,mpegts",
-            "--enable-decoder=aac,opus,vorbis,h264",
-            "--enable-encoder=aac",
-            "--enable-parser=aac,opus,vorbis,h264",
+            "--enable-decoder=aac,opus,vorbis,h264,vp9,hevc",
+            "--enable-encoder=aac,libopenh264",
+            "--enable-parser=aac,opus,vorbis,h264,vp9,hevc",
             "--enable-bsf=aac_adtstoasc,h264_mp4toannexb",
-            "--disable-x86asm",
         ]))?;
     // The default install target copies doc/examples even with docs disabled.
     // These targets build and install the libraries, headers, and pkg-config files.
-    run(unix_command("make", msys2_bin.as_deref())
+    let mut library_make = unix_command("make", msys2_bin.as_deref());
+    library_make
         .current_dir(&source)
         .arg(format!("-j{}", std::thread::available_parallelism()?))
-        .args(["install-libs", "install-headers"]))?;
+        .args(["install-libs", "install-headers"]);
+    if let Some(path) = &native_path {
+        library_make.env("PATH", path);
+    }
+    run(&mut library_make)?;
     fs::copy(
         source.join("COPYING.LGPLv2.1"),
         prefix.join("COPYING.LGPLv2.1"),
@@ -164,6 +272,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         format!(
             "FFmpeg {version}\nSource: {url}\nSHA-256: {checksum}\nConfiguration: tools/native-ffmpeg.rs\n{}",
             fs::read_to_string(source.join(Path::new("COPYING.LGPLv2.1")))?
+                + &format!(
+                    "\nOpenH264 {openh264_version}\nSource: {openh264_url}\nSHA-256: {openh264_checksum}\n{}",
+                    fs::read_to_string(openh264_source.join("LICENSE"))?
+                )
         ),
     )?;
     Ok(())

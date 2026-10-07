@@ -10,7 +10,7 @@ cookie = "0.18"
 cookie_store = { version = "0.22", default-features = false, features = ["serde"] }
 dirs = "6"
 sha1 = "0.10"
-ffmpeg = { package = "ffmpeg-the-third", version = "=6.0.0", default-features = false, features = ["static", "format", "software-resampling"] }
+ffmpeg = { package = "ffmpeg-the-third", version = "=6.0.0", default-features = false, features = ["static", "format", "software-resampling", "software-scaling"] }
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 futures-util = "0.3"
 hex = "0.4"

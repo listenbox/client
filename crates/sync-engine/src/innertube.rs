@@ -713,16 +713,19 @@ impl YouTube {
                 .filter(|fps| fps.is_finite() && *fps > 0.0)
                 .unwrap_or(0.0)
         };
-        // Keep the highest AVC resolution/frame rate within the 1080p cap.
+        // Select actual source quality; packaging applies the delivery ceiling.
         // Within that resolution/frame rate, avoid AAC encoding, then minimize bytes.
         let video = formats
             .iter()
             .filter(|format| {
                 let f = format.info();
                 f.has_video
-                    && f.mime_type.contains("avc1")
+                    && (f.mime_type.contains("avc1")
+                        || f.mime_type.contains("vp09")
+                        || f.mime_type.contains("hev1")
+                        || f.mime_type.contains("hvc1"))
                     && f.height
-                        .is_some_and(|height| height > 0.0 && height <= 1080.0)
+                        .is_some_and(|height| height.is_finite() && height > 0.0)
                     && f.audio_track
                         .as_ref()
                         .is_none_or(|track| track.audio_is_default)
@@ -738,7 +741,7 @@ impl YouTube {
                     .then_with(|| download_bitrate(b).total_cmp(&download_bitrate(a)))
                     .then_with(|| b.info().itag.cmp(&a.info().itag))
             })
-            .context("YouTube video has no AVC rendition with audio at or below 1080p")?;
+            .context("YouTube video has no supported video rendition with audio")?;
         let audio = separate_audio(video);
         let selected_audio = audio.unwrap_or(video).info();
         if cfg!(debug_assertions) {

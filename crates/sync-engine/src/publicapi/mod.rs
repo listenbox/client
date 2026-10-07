@@ -2245,6 +2245,8 @@ pub struct ImportCapacity {
     pub video_allowed: bool,
     #[serde(rename = "video_limit_seconds")]
     pub video_limit_seconds: i64,
+    #[serde(rename = "video_max_height")]
+    pub video_max_height: i64,
     #[serde(rename = "video_remaining_seconds")]
     pub video_remaining_seconds: i64,
     #[serde(rename = "video_reserved_seconds")]
