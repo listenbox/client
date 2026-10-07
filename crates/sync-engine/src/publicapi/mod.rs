@@ -3765,6 +3765,8 @@ pub struct SyncInventory {
     pub next_cursor: std::option::Option<EpisodeID>,
     #[serde(rename = "show")]
     pub show: Show,
+    #[serde(rename = "video_max_height")]
+    pub video_max_height: i64,
 }
 
 pub type TeamID = std::string::String;

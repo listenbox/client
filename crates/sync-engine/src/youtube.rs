@@ -395,7 +395,14 @@ pub async fn import(
             ImportListing::Complete(snapshot) => snapshot,
         };
         engine
-            .import_snapshot(api, slug, &canonical, snapshot, &youtube)
+            .import_snapshot(
+                api,
+                slug,
+                &canonical,
+                snapshot,
+                &youtube,
+                u32::try_from(capacity.video_max_height)?,
+            )
             .await
     }
     .await

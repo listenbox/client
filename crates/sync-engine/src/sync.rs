@@ -140,9 +140,10 @@ impl Engine {
         source: &str,
         snapshot: PlaylistSnapshot,
         youtube: &YouTube,
+        max_height: u32,
     ) -> Result<Report> {
         match self
-            .sync(api, slug, Some((source, snapshot, youtube)))
+            .sync(api, slug, Some((source, snapshot, youtube, max_height)))
             .await
         {
             Err(error) if error.is::<crate::api::SyncStopped>() => Ok(Report {
@@ -157,7 +158,7 @@ impl Engine {
         &self,
         api: &Api,
         slug: &str,
-        scanned: Option<(&str, PlaylistSnapshot, &YouTube)>,
+        scanned: Option<(&str, PlaylistSnapshot, &YouTube, u32)>,
     ) -> Result<Report> {
         std::fs::create_dir_all(&api.config.directory)?;
         let lock_key = hex::encode(Sha256::digest(format!("{}\0{slug}", api.config.api_origin)));
@@ -177,13 +178,17 @@ impl Engine {
             .context("This podcast has no linked YouTube playlist, channel or video.")?;
         let source = url::Url::parse(collection)?;
         let initialized;
-        let youtube = if let Some((_, _, youtube)) = &scanned {
+        let max_height = match &scanned {
+            Some((_, _, _, max_height)) => *max_height,
+            None => u32::try_from(before.video_max_height)?,
+        };
+        let youtube = if let Some((_, _, youtube, _)) = &scanned {
             *youtube
         } else {
             initialized = YouTube::new(api).await?;
             &initialized
         };
-        let snapshot = if let Some((scanned_source, snapshot, _)) = scanned {
+        let snapshot = if let Some((scanned_source, snapshot, _, _)) = scanned {
             ensure!(
                 collection == scanned_source,
                 "Show source differs from the admitted playlist"
@@ -272,17 +277,6 @@ impl Engine {
         for transfer in &transfers {
             journal.outcome(&api.config.api_origin, slug, &transfer.item())?;
         }
-        let capacity = match api
-            .client()
-            .get_import_capacity(p::GetImportCapacityParams {
-                team_id: before.show.team_id.clone(),
-            })
-            .await?
-        {
-            p::GetImportCapacityResponse::Status200(value) => value,
-            response => return Err(api.response_error(response).await),
-        };
-        let max_height = u32::try_from(capacity.video_max_height)?;
         let language = before.show.language.as_str();
         let audio = before.show.source_kind == p::ShowSourceKind::Audio;
         let mut work = stream::iter(additions.iter().zip(transfers).map(|(video, transfer)| {
