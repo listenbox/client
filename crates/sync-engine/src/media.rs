@@ -625,7 +625,8 @@ struct VideoOutput {
 // retry or cleanup owner is introduced. Each encoder retains only its last frame.
 fn new_video_encoder(
     request: &VideoOutput,
-    decoder: &codec::decoder::Video,
+    input_format: format::Pixel,
+    input_geometry: (u32, u32),
     input_time: ffmpeg::Rational,
     duration: f64,
 ) -> Result<VideoEncoder> {
@@ -664,9 +665,9 @@ fn new_video_encoder(
     options.set("rc_mode", "bitrate");
     let encoder = encoder.open_as_with(codec, options)?;
     let scaler = ffmpeg::software::scaling::Context::get(
-        decoder.format(),
-        decoder.width(),
-        decoder.height(),
+        input_format,
+        input_geometry.0,
+        input_geometry.1,
         format::Pixel::YUV420P,
         geometry.0,
         geometry.1,
@@ -720,9 +721,38 @@ fn encode_videos(
         ..Default::default()
     });
     let mut decoder = context.decoder().video()?;
+    let source_geometry = (decoder.width(), decoder.height());
+    let largest = requests
+        .iter()
+        .max_by_key(|request| u64::from(request.geometry.0) * u64::from(request.geometry.1))
+        .context("video has no encoding outputs")?
+        .geometry;
+    // Reduce a source above the encoded ceiling once. Lower outputs then read
+    // this bounded YUV frame, instead of repeatedly scaling the full 4K source.
+    // The same joined worker owns the scaler and retains one shared frame only.
+    let mut shared_scaler = if largest != source_geometry {
+        Some(ffmpeg::software::scaling::Context::get(
+            decoder.format(),
+            source_geometry.0,
+            source_geometry.1,
+            format::Pixel::YUV420P,
+            largest.0,
+            largest.1,
+            ffmpeg::software::scaling::Flags::BILINEAR,
+        )?)
+    } else {
+        None
+    };
+    let (input_format, input_geometry) = if shared_scaler.is_some() {
+        (format::Pixel::YUV420P, largest)
+    } else {
+        (decoder.format(), source_geometry)
+    };
     let mut outputs = requests
         .iter()
-        .map(|request| new_video_encoder(request, &decoder, input_time, duration))
+        .map(|request| {
+            new_video_encoder(request, input_format, input_geometry, input_time, duration)
+        })
         .collect::<Result<Vec<_>>>()?;
     loop {
         ensure!(!cancel.is_cancelled(), "video encoding interrupted");
@@ -734,11 +764,11 @@ fn encode_videos(
         }
         if packet.stream() == input_index {
             decoder.send_packet(&packet)?;
-            drain_video_decoder(&mut decoder, &mut outputs, cancel)?;
+            drain_video_decoder(&mut decoder, shared_scaler.as_mut(), &mut outputs, cancel)?;
         }
     }
     decoder.send_eof()?;
-    drain_video_decoder(&mut decoder, &mut outputs, cancel)?;
+    drain_video_decoder(&mut decoder, shared_scaler.as_mut(), &mut outputs, cancel)?;
     for state in &mut outputs {
         ensure!(state.previous.is_some(), "source video decoded no frames");
         while state.next_frame < state.frame_limit {
@@ -754,6 +784,7 @@ fn encode_videos(
 
 fn drain_video_decoder(
     decoder: &mut codec::decoder::Video,
+    mut shared_scaler: Option<&mut ffmpeg::software::scaling::Context>,
     outputs: &mut [VideoEncoder],
     cancel: &CancellationToken,
 ) -> Result<()> {
@@ -765,8 +796,16 @@ fn drain_video_decoder(
             Err(error) if waiting(error) => break,
             Err(error) => return Err(error.into()),
         }
+        let mut shared = ffmpeg::frame::Video::empty();
+        let frame = if let Some(scaler) = shared_scaler.as_mut() {
+            scaler.run(&frame, &mut shared)?;
+            shared.set_pts(frame.timestamp().or_else(|| frame.pts()));
+            &shared
+        } else {
+            &frame
+        };
         for output in outputs.iter_mut() {
-            output.accept_frame(&frame, cancel)?;
+            output.accept_frame(frame, cancel)?;
         }
     }
     Ok(())
