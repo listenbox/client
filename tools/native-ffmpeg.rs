@@ -45,6 +45,72 @@ fn unix_path(path: &Path, msys2_bin: Option<&Path>) -> Result<OsString, Box<dyn 
     Ok(String::from_utf8(output.stdout)?.trim_end().into())
 }
 
+fn checksum_matches(
+    archive: &Path,
+    checksum: &str,
+    msys2_bin: Option<&Path>,
+) -> Result<bool, Box<dyn Error>> {
+    let digest = unix_command("openssl", msys2_bin)
+        .args(["dgst", "-sha256"])
+        .arg(unix_path(archive, msys2_bin)?)
+        .output()?;
+    if !digest.status.success() {
+        return Err(format!(
+            "cannot checksum {}: {}",
+            archive.display(),
+            String::from_utf8_lossy(&digest.stderr)
+        )
+        .into());
+    }
+    Ok(String::from_utf8(digest.stdout)?.trim().ends_with(checksum))
+}
+
+fn prepare_archive(
+    archive: &Path,
+    url: &str,
+    checksum: &str,
+    msys2_bin: Option<&Path>,
+) -> Result<(), Box<dyn Error>> {
+    if archive.exists() {
+        if checksum_matches(archive, checksum, msys2_bin)? {
+            return Ok(());
+        }
+        eprintln!("Discarding corrupt cached archive: {}", archive.display());
+        fs::remove_file(archive)?;
+    }
+    // Interrupted downloads must never become reusable source archives. Give
+    // concurrent target builds separate temporary files in the same directory.
+    let download = archive.with_extension(format!("download-{}", std::process::id()));
+    let result = (|| -> Result<(), Box<dyn Error>> {
+        run(Command::new("curl")
+            .args([
+                "--fail",
+                "--location",
+                "--connect-timeout",
+                "30",
+                "--max-time",
+                "300",
+                "--output",
+            ])
+            .arg(&download)
+            .arg(url))?;
+        if !checksum_matches(&download, checksum, msys2_bin)? {
+            return Err(format!("{} source checksum mismatch", archive.display()).into());
+        }
+        // Another target may have published the same verified archive while
+        // this download was running. Windows cannot rename over that file.
+        if archive.exists() && checksum_matches(archive, checksum, msys2_bin)? {
+            return Ok(());
+        }
+        fs::rename(&download, archive)?;
+        Ok(())
+    })();
+    if download.exists() {
+        fs::remove_file(&download)?;
+    }
+    result
+}
+
 fn extract_archive(
     archive: &Path,
     destination: &Path,
@@ -67,21 +133,12 @@ fn prepare_nasm(cache: &Path, prefix: &Path) -> Result<Option<OsString>, Box<dyn
     let version = "2.16.03";
     let checksum = "1412a1c760bbd05db026b6c0d1657affd6631cd0a63cddb6f73cc6d4aa616148";
     let archive = cache.join(format!("nasm-{version}.tar.xz"));
-    if !archive.exists() {
-        run(Command::new("curl")
-            .args(["--fail", "--location", "--max-time", "60", "--output"])
-            .arg(&archive)
-            .arg(format!(
-                "https://www.nasm.us/pub/nasm/releasebuilds/{version}/nasm-{version}.tar.xz"
-            )))?;
-    }
-    let digest = Command::new("openssl")
-        .args(["dgst", "-sha256"])
-        .arg(&archive)
-        .output()?;
-    if !digest.status.success() || !String::from_utf8(digest.stdout)?.trim().ends_with(checksum) {
-        return Err("NASM source checksum mismatch".into());
-    }
+    prepare_archive(
+        &archive,
+        &format!("https://www.nasm.us/pub/nasm/releasebuilds/{version}/nasm-{version}.tar.xz"),
+        checksum,
+        None,
+    )?;
     let source = cache.join(format!("nasm-{version}"));
     if source.exists() {
         fs::remove_dir_all(&source)?;
@@ -137,19 +194,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     fs::create_dir_all(&build)?;
     let archive = cache.join(format!("ffmpeg-{version}.tar.xz"));
     let url = format!("https://ffmpeg.org/releases/ffmpeg-{version}.tar.xz");
-    if !archive.exists() {
-        run(Command::new("curl")
-            .args(["--fail", "--location", "--max-time", "60", "--output"])
-            .arg(&archive)
-            .arg(&url))?;
-    }
-    let digest = unix_command("openssl", msys2_bin.as_deref())
-        .args(["dgst", "-sha256"])
-        .arg(unix_path(&archive, msys2_bin.as_deref())?)
-        .output()?;
-    if !digest.status.success() || !String::from_utf8(digest.stdout)?.trim().ends_with(checksum) {
-        return Err("FFmpeg source checksum mismatch".into());
-    }
+    prepare_archive(&archive, &url, checksum, msys2_bin.as_deref())?;
     let source = build.join(format!("ffmpeg-{version}"));
     if source.exists() {
         fs::remove_dir_all(&source)?;
@@ -160,23 +205,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     let openh264_url =
         format!("https://codeload.github.com/cisco/openh264/tar.gz/refs/tags/v{openh264_version}");
     let openh264_archive = cache.join(format!("openh264-{openh264_version}.tar.gz"));
-    if !openh264_archive.exists() {
-        run(Command::new("curl")
-            .args(["--fail", "--location", "--max-time", "60", "--output"])
-            .arg(&openh264_archive)
-            .arg(&openh264_url))?;
-    }
-    let digest = unix_command("openssl", msys2_bin.as_deref())
-        .args(["dgst", "-sha256"])
-        .arg(unix_path(&openh264_archive, msys2_bin.as_deref())?)
-        .output()?;
-    if !digest.status.success()
-        || !String::from_utf8(digest.stdout)?
-            .trim()
-            .ends_with(openh264_checksum)
-    {
-        return Err("OpenH264 source checksum mismatch".into());
-    }
+    prepare_archive(
+        &openh264_archive,
+        &openh264_url,
+        openh264_checksum,
+        msys2_bin.as_deref(),
+    )?;
     let openh264_source = build.join(format!("openh264-{openh264_version}"));
     if openh264_source.exists() {
         fs::remove_dir_all(&openh264_source)?;
