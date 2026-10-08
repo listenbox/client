@@ -445,9 +445,9 @@ impl Resolve for DnsFailure {
     fn resolve(&self, name: Name) -> Resolving {
         assert_eq!(name.as_str(), "sync.test.invalid");
         let call = self.calls.fetch_add(1, Ordering::SeqCst);
-        // Inventory and the completed source check succeed before injecting
-        // transport failure at media admission, where resumable retry lives.
-        let failure = self.fail_import && call == 2;
+        // Inventory succeeds before injecting transport failure at media
+        // admission, where resumable retry lives.
+        let failure = self.fail_import && call == 1;
         let address = self.address;
         Box::pin(async move {
             if failure {
@@ -591,7 +591,7 @@ async fn live_network_recovery() {
             assert!(stopped_during_retry, "Stop never reached the retry state");
             assert_eq!(item.attempt, 1);
             if mode == "dns" {
-                assert_eq!(resolver.calls.load(Ordering::SeqCst), 3);
+                assert_eq!(resolver.calls.load(Ordering::SeqCst), 2);
             }
             assert_eq!(item.phase, Phase::Queued);
             assert_eq!(saved.phase, Phase::Queued);

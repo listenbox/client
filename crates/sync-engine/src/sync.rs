@@ -204,9 +204,6 @@ impl Engine {
                 .context("Show source has no video ID")?;
             youtube.video_snapshot(api, &id).await?
         };
-        // A source check has completed even if later media transfers fail.
-        // Invalid/failed scans return before this guarded, server-timed report.
-        update_metadata(api, slug, collection, None, Vec::new(), true).await?;
         if before
             .show
             .image_url
@@ -458,6 +455,7 @@ impl Engine {
         // Completion belongs to the engine, after every transfer and metadata
         // effect has been acknowledged. Failed and cancelled passes leave the
         // previous successful completion intact, including across restarts.
+        update_metadata(api, slug, collection, None, Vec::new(), true).await?;
         api.wait(async { journal.complete_sync(&api.config.api_origin, slug) })
             .await?;
         Ok(report)
