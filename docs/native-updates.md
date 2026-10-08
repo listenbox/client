@@ -55,10 +55,33 @@ each component between 0 and 65535. Allocate a strictly greater version, update
 the lockfile and create the matching immutable `vX.Y.Z` tag. macOS
 compares `X.Y.Z`; Windows compares `X.Y.Z.0`. Display version is `X.Y.Z`;
 the source commit is provenance, never update ordering. Every target comes
-from the tagged commit. Master pushes run standard CI only; native builds run
-on pull requests and version tags, avoiding duplicate native builds when a
-release commit and its tag are pushed. Pull request builds publish no stable
-release and receive no production secrets.
+from the tagged commit. Master pushes run standard CI; successful CI for the
+current master automatically prepares a numbered patch release. Native builds
+run on pull requests, version tags and explicit tag dispatches. Pull request
+builds publish no stable release and receive no production secrets.
+
+`automatic-release.yaml` responds only to successful push CI in this repository
+on master. It serializes version allocation and checks that the CI source is
+still current before preparing and dispatching. A newer master update replaces
+an older candidate. `tools/release-next.sh` reserves the next patch after the
+highest numeric tag, including tags for canceled or failed releases. It changes
+only Cargo's workspace version and lockfile in a release commit with the CI
+source as its parent and a `Source-commit` trailer. The source branch is not
+changed, so no version-bump CI loop is created. Repeated preparation of the
+same source reuses its tag. For a deliberate major/minor release, merge a
+greater workspace version and matching lockfile; automation uses that exact
+version, then continues patch bumps. Every component must remain at most 65535.
+
+`tools/release-dispatch.sh` pushes only that tag, skips already published
+releases, and dispatches `release.yaml` at the tag. Explicit dispatch is required
+because tag pushes using GitHub's built-in token do not trigger another workflow.
+The next passing master update cancels unfinished native build jobs. Publication
+has a separate serialized queue and is allowed to finish. Canceled tags
+are never reused; patch numbers may have gaps, and partial drafts remain
+unpublished. A CI failure leaves the previous release available.
+The native identity job also checks the source through `release-validate.sh`;
+a queued tag whose source is no longer master is skipped before joining the
+platform cancellation groups.
 
 Windows PR jobs compile the native updater, verify DLL loading and
 compile the same per-user installer as stable releases. Their
@@ -67,8 +90,8 @@ validation packages an ad-hoc development bundle; protected tags enable its
 native updater and Developer ID/notarization path.
 
 The `desktop-release` environment allows only `v*` tags and has no required
-reviewers or wait timer. Pushing a matching version tag automatically starts
-the release jobs and publication without manual deployment approval. Its
+reviewers or wait timer. A matching version tag starts
+the release jobs through a tag push or explicit dispatch without manual deployment approval. Its
 jobs sign/notarize the macOS artifact and build
 Windows per-user installers before generating separate architecture appcasts.
 Final payload bytes receive Ed25519 signatures after packaging and macOS
@@ -83,7 +106,9 @@ application proceeds independently; its approval does not block these releases.
 The publisher stages the complete set in a draft, verifies uploaded bytes,
 publishes with `latest=false`, verifies anonymous tag-specific HTTPS downloads,
 then advances Latest only after rejecting stale versions. A single release
-concurrency group serializes promotion. Draft retries compare bytes and identity;
+concurrency group serializes publication without canceling an in-flight publisher.
+Native build jobs have separate platform-specific cancellation groups.
+Draft retries compare bytes and identity;
 published assets are never overwritten. A failed build, signature, upload or
 download check leaves the previous stable release selected. Fix a published
 defect with a higher version. Never delete/reuse a published tag or edit its

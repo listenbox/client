@@ -48,15 +48,26 @@
 
 ## Releases
 
-- Standard CI runs on `master` pushes and pull requests. Native builds run only
-  on pull requests and `v*` tag pushes. Never add a branch-push trigger to the
-  native workflow: it would build a release commit again when its tag is pushed.
-- Manually bump `[workspace.package].version` in `Cargo.toml`, run `kache cargo -- update --workspace`,
-  commit/merge, then tag that client commit `vX.Y.Z` and push that specific tag.
-- Pushing the matching version tag automatically starts `desktop-release` jobs;
-  no manual deployment approval is required. Actions publishes all desktop
-  installers and update feeds together after all native builds and publication
-  checks succeed. Branch/PR builds never publish releases.
+- Standard CI runs on `master` pushes and pull requests. Successful CI for the
+  current `master` prepares an automatic patch release. Superseded CI is skipped.
+- `automatic-release.yaml` serializes version allocation. `release-next.sh`
+  chooses the next patch after the highest reserved numeric tag, updates Cargo
+  and its lockfile in a release commit whose parent is the CI source, and creates
+  the immutable `vX.Y.Z` tag. It never pushes a version commit to `master`.
+  Rerunning preparation reuses that source's existing release tag.
+- Major/minor bumps are deliberate: set `[workspace.package].version` to a
+  greater major/minor version, run `kache cargo -- update --workspace`, and merge.
+  Automation uses that version before resuming automatic patch bumps.
+- `release-dispatch.sh` pushes only the prepared tag and explicitly dispatches
+  the native workflow. GitHub's built-in token does not trigger tag-push workflows.
+  Native builds run on pull requests, `v*` tag pushes, and tag dispatches; never
+  add a branch-push trigger, which would duplicate native builds.
+- A newer tagged release cancels unfinished native build jobs. Publication
+  remains serialized and is never canceled by a newer release. Reserved versions
+  remain immutable, so cancellation may leave gaps in patch numbers. No manual
+  deployment approval is required. Actions publishes all desktop installers and
+  update feeds together after native builds and publication checks succeed.
+  Branch/PR builds never publish releases; already published tags are skipped.
 
 ## YouTube.js fork and upstream fixes
 

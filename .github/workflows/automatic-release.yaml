@@ -1,0 +1,46 @@
+name: Prepare automatic desktop release
+on:
+  workflow_run:
+    workflows: [CI]
+    branches: [master]
+    types: [completed]
+permissions:
+  contents: write
+  actions: write
+jobs:
+  prepare:
+    if: >-
+      github.repository == 'listenbox/client' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_sha == github.sha
+    concurrency:
+      group: desktop-release-version
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_COMMIT: ${{ github.event.workflow_run.head_sha }}
+      KACHE_CONFIG: ${{ github.workspace }}/.kache.toml
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '26.5.0'
+          package-manager-cache: false
+      - run: rustup toolchain install 1.98.1 --profile minimal
+      - uses: kunobi-ninja/kache-action@ad7317540dcdd71c904f7a60a87b620a0c0e67ed # v1
+        with:
+          version: '0.27.0'
+          github-cache: false
+      - name: Reserve the next numeric version for this source
+        id: release
+        run: bash tools/release-next.sh "$SOURCE_COMMIT"
+      - name: Push the immutable tag and dispatch its native release
+        if: steps.release.outputs.tag != ''
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: bash tools/release-dispatch.sh "$RELEASE_TAG" "$SOURCE_COMMIT"

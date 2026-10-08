@@ -4,9 +4,7 @@ on:
   push:
     tags: [v*]
   pull_request:
-concurrency:
-  group: ${{ startsWith(github.ref, 'refs/tags/v') && 'desktop-stable' || github.ref }}
-  cancel-in-progress: false
+  workflow_dispatch:
 permissions:
   contents: read
   actions: read
@@ -15,6 +13,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.identity.outputs.version }}
+      current: ${{ steps.identity.outputs.current }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -31,9 +30,13 @@ jobs:
         id: identity
         env:
           RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
-        run: node tools/release.mjs validate "$RELEASE_TAG"
+        run: bash tools/release-validate.sh "$RELEASE_TAG"
   macos:
     needs: identity
+    if: needs.identity.outputs.current == 'true'
+    concurrency:
+      group: desktop-macos-${{ startsWith(github.ref, 'refs/tags/v') && 'stable' || github.ref }}
+      cancel-in-progress: ${{ startsWith(github.ref, 'refs/tags/v') }}
     environment: ${{ startsWith(github.ref, 'refs/tags/v') && 'desktop-release' || 'desktop-validation' }}
     runs-on: macos-15
     env:
@@ -145,6 +148,7 @@ jobs:
 
   windows:
     needs: identity
+    if: needs.identity.outputs.current == 'true'
     environment: ${{ startsWith(github.ref, 'refs/tags/v') && 'desktop-release' || 'desktop-validation' }}
     strategy:
       fail-fast: false
@@ -160,6 +164,9 @@ jobs:
             runner: windows-11-arm
             llvm-platform: woa64
             llvm-sha256: 76f44ef1ba6eeb5a65904e9500f042f588fade49952778ce48f0374daa934396
+    concurrency:
+      group: desktop-windows-${{ matrix.architecture }}-${{ startsWith(github.ref, 'refs/tags/v') && 'stable' || github.ref }}
+      cancel-in-progress: ${{ startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ${{ matrix.runner }}
     env:
       KACHE_CONFIG: ${{ github.workspace }}/.kache.toml
@@ -353,6 +360,9 @@ jobs:
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [identity, macos, windows]
+    concurrency:
+      group: desktop-stable-publish
+      cancel-in-progress: false
     environment: desktop-release
     runs-on: ubuntu-24.04
     permissions:

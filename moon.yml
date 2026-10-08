@@ -53,13 +53,27 @@ tasks:
       os: [macos, windows]
       runInCI: false
   release-validate:
-    command: node tools/release.mjs validate
-    inputs: [tools/release.mjs, Cargo.toml]
+    command: bash tools/release-validate.sh
+    inputs: [tools/release-validate.sh, tools/release.mjs, Cargo.toml]
     options:
       cache: false
   release-publish:
     description: Verify and atomically promote the complete signed stable release.
     command: node tools/release.mjs publish artifacts
+    inputs: []
+    options:
+      cache: false
+      runInCI: false
+  release-next:
+    description: Prepare the next numeric release commit and tag for current master.
+    command: bash tools/release-next.sh
+    inputs: []
+    options:
+      cache: false
+      runInCI: false
+  release-dispatch:
+    description: Push a prepared version tag and dispatch its native release.
+    command: bash tools/release-dispatch.sh
     inputs: []
     options:
       cache: false
