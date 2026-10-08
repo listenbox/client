@@ -721,6 +721,69 @@ fn sidebar_resizes_without_resetting_on_navigation(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn team_picker_scrolls_to_the_last_team_without_moving_the_library(cx: &mut TestAppContext) {
+    let (_profile, handle, workspace) = library_workspace(cx);
+    let last_team = format!("team_{:016x}", 32);
+    workspace.update(cx, |view, cx| {
+        view.catalog.teams.extend((4..=32).map(|n| ClientTeam {
+            id: format!("team_{n:016x}"),
+            name: format!("Library {n} with a long name that must leave room for its plan badge"),
+            plan_family: Some(TeamPlanFamily::Video4k),
+        }));
+        view.catalog.shows[3].team_id = last_team.clone();
+        cx.notify();
+    });
+    let last_option = SharedString::from(format!("team-{last_team}"));
+    for dimensions in [size(px(840.), px(600.)), size(px(1080.), px(760.))] {
+        cx.simulate_window_resize(handle.into(), dimensions);
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.click("team-picker", cx);
+            assert!(window.find("all-teams").visible());
+            assert!(
+                !window.find(last_option.clone()).visible(),
+                "fixture did not overflow the team picker"
+            );
+            let import = window.find("new-import").bounds();
+            let podcast = window.find("show-podcast-0").bounds();
+            window.scroll(
+                "all-teams",
+                ScrollDelta::Pixels(point(px(0.), px(-2000.))),
+                cx,
+            );
+            let last = window.find(last_option.clone());
+            assert!(last.visible(), "scrolling left the last team unreachable");
+            assert!(last.bounds().bottom() <= import.top());
+            assert!(last.bounds().size.height >= px(32.));
+            assert_eq!(window.find("new-import").bounds(), import);
+            assert_eq!(window.find("show-podcast-0").bounds(), podcast);
+            window.scroll(
+                last_option.clone(),
+                ScrollDelta::Pixels(point(px(0.), px(2000.))),
+                cx,
+            );
+            assert!(window.find("all-teams").visible());
+            assert!(!window.find(last_option.clone()).visible());
+            window.scroll(
+                "all-teams",
+                ScrollDelta::Pixels(point(px(0.), px(-2000.))),
+                cx,
+            );
+            window.click(last_option.clone(), cx);
+            assert_eq!(workspace.read(cx).team.as_ref(), Some(&last_team));
+            assert_eq!(workspace.read(cx).selected.as_deref(), Some("podcast-3"));
+            assert!(window.try_find("all-teams").is_none());
+            assert!(window.try_find("show-podcast-0").is_none());
+            window.click("team-picker", cx);
+            window.click("all-teams", cx);
+            assert!(workspace.read(cx).team.is_none());
+            assert!(window.find("show-podcast-0").visible());
+        })
+        .unwrap();
+    }
+}
+
+#[gpui_kit::test]
 fn option_arrows_navigate_visible_podcasts_from_focused_controls(cx: &mut TestAppContext) {
     let (_profile, handle, workspace) = library_workspace(cx);
     let shows = workspace.read_with(cx, |view, _| {

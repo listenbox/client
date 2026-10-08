@@ -1,5 +1,6 @@
 use crate::artwork::{ArtworkCache, artwork};
 use crate::tokens::{self, Tokens};
+use gpui_kit::base::InteractiveElementExt;
 use gpui_kit::component::{
     Disableable, Icon, Sizable,
     button::{Button, ButtonVariants},
@@ -1096,7 +1097,12 @@ impl Workspace {
         cx.notify();
     }
 
-    fn sidebar(&self, scroll: &ScrollHandle, cx: &mut Context<Self>) -> AnyElement {
+    fn sidebar(
+        &self,
+        scroll: &ScrollHandle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let t = Tokens::current(cx);
         let selected_team = self
             .team
@@ -1163,13 +1169,22 @@ impl Workspace {
                     })),
             );
         if self.team_picker {
+            let team_scroll = window
+                .use_keyed_state("team-scroll", cx, |_, _| ScrollHandle::default())
+                .read(cx)
+                .clone();
+            // Keep the height cap on the viewport; overflow_y_scrollbar also
+            // caps its inner content, making later teams unreachable.
             let mut teams = div()
                 .id("team-options")
                 .flex()
                 .flex_col()
                 .gap_1()
                 .max_h(px(180.))
-                .overflow_y_scrollbar()
+                .overflow_y_scroll()
+                .lock_scroll_axis()
+                .track_scroll(&team_scroll)
+                .vertical_scrollbar(&team_scroll)
                 .child(
                     Button::new("all-teams")
                         .ghost()
@@ -1906,7 +1921,7 @@ impl Workspace {
                             .size(px(tokens::SIDEBAR))
                             .size_range(px(tokens::SIDEBAR)..px(tokens::SIDEBAR_MAX))
                             .flex_none()
-                            .child(self.sidebar(&podcast_scroll, cx)),
+                            .child(self.sidebar(&podcast_scroll, window, cx)),
                     )
                     .child(
                         resizable_panel()
