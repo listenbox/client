@@ -32,7 +32,7 @@ arguments.
 | `listenbox auth logout` | Remove the credential shared with the desktop app. |
 | `listenbox import [--slug SLUG] URL` | Create a podcast from RSS or a public YouTube video, playlist, or channel. |
 | `listenbox shows list` | List accessible podcast slugs. |
-| `listenbox shows update --show SLUG [--title TITLE] [--artwork FILE]` | Update one or both fields; omitted metadata and feed-specific overrides are preserved. |
+| `listenbox shows update --show SLUG [--title TITLE] [--description TEXT] [--artwork FILE]` | Update supplied fields; omitted metadata and feed-specific overrides are preserved. |
 | `listenbox shows create --title TITLE --slug SLUG --type TYPE --language LANGUAGE [--artwork FILE]` | Create an audio or video podcast. |
 | `listenbox shows order --show SLUG [--episode ID]...` | Read feed order, or move the supplied episodes to the front in sequence. |
 | `listenbox youtube sync [--show SLUG] [--watch]` | Sync all eligible YouTube shows across all teams, or one saved source. |
@@ -49,8 +49,9 @@ arguments.
 
 - `TYPE` is `audio` or `video`; `LANGUAGE` uses a code such as `en` or `en-US`.
   Artwork must be a square JPEG or PNG, 1400–3000 pixels per side.
-- `shows update` requires `--title`, `--artwork`, or both. `--image` is an
-  alias for `--artwork`.
+- `shows update` requires at least one of `--title`, `--description`, or
+  `--artwork`, and accepts any combination. `--image` is an alias for `--artwork`.
+  Description whitespace is trimmed; `--description ""` clears it.
 - `MODE` is `draft` or `publish`. Uploads accept `.mp3`, `.m4a`, `.wav`,
   `.flac`, `.mp4`, `.m4v`, and `.mov`.
 - `ROLE` is `read` or `write`. Omit `--show` to manage team membership.

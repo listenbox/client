@@ -81,12 +81,19 @@ enum AuthCommand {
 enum ShowCommand {
     List,
     /// Update shared show metadata, preserving omitted fields and feed overrides
+    #[command(group(clap::ArgGroup::new("fields")
+        .args(["title", "description", "artwork"])
+        .required(true)
+        .multiple(true)))]
     Update {
         #[arg(long, value_parser = slug)]
         show: String,
-        #[arg(long, value_parser = nonblank, required_unless_present = "artwork")]
+        #[arg(long, value_parser = nonblank)]
         title: Option<String>,
-        #[arg(long, visible_alias = "image", required_unless_present = "title")]
+        /// Show description; use an empty string to clear it
+        #[arg(long)]
+        description: Option<String>,
+        #[arg(long, visible_alias = "image")]
         artwork: Option<std::path::PathBuf>,
     },
     /// Read feed order, or move the supplied episode IDs to the front in sequence

@@ -11,6 +11,7 @@ pub async fn shows(api: &Api, command: ShowCommand) -> Result<()> {
         ShowCommand::Update {
             show,
             title,
+            description,
             artwork,
         } => {
             let shows = match api
@@ -37,6 +38,7 @@ pub async fn shows(api: &Api, command: ShowCommand) -> Result<()> {
                     show_slug: show.clone(),
                     body: p::UpdateShow {
                         title,
+                        description,
                         image_asset_id,
                     },
                 })

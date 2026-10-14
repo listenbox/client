@@ -3874,6 +3874,8 @@ impl Response for UpdateEpisodeUploadSessionResponse {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UpdateShow {
+    #[serde(rename = "description", default, skip_serializing_if = "Option::is_none")]
+    pub description: std::option::Option<std::string::String>,
     #[serde(rename = "image_asset_id", default, skip_serializing_if = "Option::is_none")]
     pub image_asset_id: std::option::Option<ImageAssetID>,
     #[serde(rename = "title", default, skip_serializing_if = "Option::is_none")]
