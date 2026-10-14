@@ -3871,6 +3871,15 @@ impl Response for UpdateEpisodeUploadSessionResponse {
     }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateShow {
+    #[serde(rename = "image_asset_id", default, skip_serializing_if = "Option::is_none")]
+    pub image_asset_id: std::option::Option<ImageAssetID>,
+    #[serde(rename = "title", default, skip_serializing_if = "Option::is_none")]
+    pub title: std::option::Option<NonEmptyString>,
+}
+
 #[derive(Clone, Debug)]
 pub struct UpdateShowInvitationRoleParams {
     pub show_slug: ShowSlug,
@@ -3974,6 +3983,60 @@ impl Response for UpdateShowMemberRoleResponse {
             Self::Status401(_) => Ok(Vec::new()),
             Self::Status403(_) => Ok(Vec::new()),
             Self::Status404(_) => Ok(Vec::new()),
+            Self::Unexpected(response) => read_body(response, 64 << 10).await,
+        };
+        match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct UpdateShowParams {
+    pub show_slug: ShowSlug,
+    pub body: UpdateShow,
+}
+
+#[derive(Debug)]
+pub enum UpdateShowResponse {
+    Status204(()),
+    Status400(ValidationErr),
+    Status401(()),
+    Status403(()),
+    Status404(()),
+    Status409(()),
+    Unexpected(reqwest::Response),
+}
+impl Response for UpdateShowResponse {
+    async fn decode(response: reqwest::Response, _limit: usize) -> Result<Self, Error> {
+        Ok(match response.status().as_u16() {
+            204 => Self::Status204(()),
+            400 => Self::Status400(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
+            401 => Self::Status401(()),
+            403 => Self::Status403(()),
+            404 => Self::Status404(()),
+            409 => Self::Status409(()),
+            _ => Self::Unexpected(response),
+        })
+    }
+    fn status(&self) -> u16 {
+        match self {
+            Self::Status204(_) => 204,
+            Self::Status400(_) => 400,
+            Self::Status401(_) => 401,
+            Self::Status403(_) => 403,
+            Self::Status404(_) => 404,
+            Self::Status409(_) => 409,
+            Self::Unexpected(response) => response.status().as_u16(),
+        }
+    }
+    async fn into_error(self) -> Error {
+        let status = self.status();
+        let body = match self {
+            Self::Status204(_) => Ok(Vec::new()),
+            Self::Status400(body) => serde_json::to_vec(&body).map_err(Error::Decode),
+            Self::Status401(_) => Ok(Vec::new()),
+            Self::Status403(_) => Ok(Vec::new()),
+            Self::Status404(_) => Ok(Vec::new()),
+            Self::Status409(_) => Ok(Vec::new()),
             Self::Unexpected(response) => read_body(response, 64 << 10).await,
         };
         match body { Ok(body) => Error::Http { status, body }, Err(error) => error }
@@ -4618,6 +4681,14 @@ impl<T: Transport> Client<T> {
     pub async fn create_show(&self, params: CreateShowParams) -> Result<CreateShowResponse, T::Error> {
         let path = "/s/shows".to_owned();
         let request = self.http.request(reqwest::Method::POST, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
+        let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
+        let request = request.json(&params.body);
+        self.transport.execute(request, self.body_limit).await
+    }
+    pub async fn update_show(&self, params: UpdateShowParams) -> Result<UpdateShowResponse, T::Error> {
+        let path = "/s/shows/{show_slug}".to_owned();
+        let path = path.replace("{show_slug}", &encode_path(&params.show_slug.to_string()));
+        let request = self.http.request(reqwest::Method::PUT, format!("{}{}", self.base_url, path)).header("Accept", "application/json");
         let request = match &self.bearer_token { Some(token) => request.bearer_auth(token), None => request };
         let request = request.json(&params.body);
         self.transport.execute(request, self.body_limit).await

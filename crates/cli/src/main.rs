@@ -80,6 +80,15 @@ enum AuthCommand {
 #[derive(Subcommand)]
 enum ShowCommand {
     List,
+    /// Update shared show metadata, preserving omitted fields and feed overrides
+    Update {
+        #[arg(long, value_parser = slug)]
+        show: String,
+        #[arg(long, value_parser = nonblank, required_unless_present = "artwork")]
+        title: Option<String>,
+        #[arg(long, visible_alias = "image", required_unless_present = "title")]
+        artwork: Option<std::path::PathBuf>,
+    },
     /// Read feed order, or move the supplied episode IDs to the front in sequence
     Order {
         #[arg(long, value_parser = slug)]

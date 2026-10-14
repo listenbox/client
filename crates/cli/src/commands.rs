@@ -8,6 +8,45 @@ use listenbox_sync_engine::{
 
 pub async fn shows(api: &Api, command: ShowCommand) -> Result<()> {
     match command {
+        ShowCommand::Update {
+            show,
+            title,
+            artwork,
+        } => {
+            let shows = match api
+                .client()
+                .list_shows(p::ListShowsParams {
+                    youtube_imports_only: None,
+                })
+                .await?
+            {
+                p::ListShowsResponse::Status200(shows) => shows,
+                response => return Err(api.response_error(response).await),
+            };
+            let existing = shows
+                .iter()
+                .find(|item| item.slug == show)
+                .with_context(|| format!("show {show:?} not found"))?;
+            let image_asset_id = match artwork {
+                Some(path) => Some(upload_artwork(api, &existing.id, &path).await?),
+                None => None,
+            };
+            match api
+                .client()
+                .update_show(p::UpdateShowParams {
+                    show_slug: show.clone(),
+                    body: p::UpdateShow {
+                        title,
+                        image_asset_id,
+                    },
+                })
+                .await?
+            {
+                p::UpdateShowResponse::Status204(()) => (),
+                response => return Err(api.response_error(response).await),
+            };
+            println!("Updated show {show:?}");
+        }
         ShowCommand::Order { show, episode } => {
             let order: p::EpisodeOrder = if episode.is_empty() {
                 match api
