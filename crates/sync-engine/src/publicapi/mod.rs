@@ -886,6 +886,8 @@ impl Response for CreateImageUploadPresignResponse {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CreateShow {
+    #[serde(rename = "apple_podcasts_url", default, skip_serializing_if = "Option::is_none")]
+    pub apple_podcasts_url: std::option::Option<std::string::String>,
     #[serde(rename = "id")]
     pub id: ShowID,
     #[serde(rename = "image_asset_id", default, skip_serializing_if = "Option::is_none")]
@@ -896,6 +898,8 @@ pub struct CreateShow {
     pub slug: ShowSlug,
     #[serde(rename = "source_kind")]
     pub source_kind: ShowSourceKind,
+    #[serde(rename = "spotify_url", default, skip_serializing_if = "Option::is_none")]
+    pub spotify_url: std::option::Option<std::string::String>,
     #[serde(rename = "team_id")]
     pub team_id: TeamID,
     #[serde(rename = "title")]
@@ -3402,6 +3406,8 @@ impl Response for SetEpisodeOrderResponse {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Show {
+    #[serde(rename = "apple_podcasts_url", default, skip_serializing_if = "Option::is_none")]
+    pub apple_podcasts_url: std::option::Option<std::string::String>,
     #[serde(rename = "episode_count")]
     pub episode_count: i64,
     #[serde(rename = "has_active_subscription")]
@@ -3418,6 +3424,8 @@ pub struct Show {
     pub slug: ShowSlug,
     #[serde(rename = "source_kind")]
     pub source_kind: ShowSourceKind,
+    #[serde(rename = "spotify_url", default, skip_serializing_if = "Option::is_none")]
+    pub spotify_url: std::option::Option<std::string::String>,
     #[serde(rename = "team_id")]
     pub team_id: TeamID,
     #[serde(rename = "title")]
@@ -3874,10 +3882,14 @@ impl Response for UpdateEpisodeUploadSessionResponse {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UpdateShow {
+    #[serde(rename = "apple_podcasts_url", default, skip_serializing_if = "Option::is_none")]
+    pub apple_podcasts_url: std::option::Option<std::string::String>,
     #[serde(rename = "description", default, skip_serializing_if = "Option::is_none")]
     pub description: std::option::Option<std::string::String>,
     #[serde(rename = "image_asset_id", default, skip_serializing_if = "Option::is_none")]
     pub image_asset_id: std::option::Option<ImageAssetID>,
+    #[serde(rename = "spotify_url", default, skip_serializing_if = "Option::is_none")]
+    pub spotify_url: std::option::Option<std::string::String>,
     #[serde(rename = "title", default, skip_serializing_if = "Option::is_none")]
     pub title: std::option::Option<NonEmptyString>,
 }
