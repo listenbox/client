@@ -103,6 +103,13 @@ jobs:
           pr-comment: false
       - name: Test release-linked media on Apple Silicon
         run: moon exec --ignore-ci-checks client-engine:test-media
+      - name: Use TCP for Apple notarization ticket delivery
+        if: startsWith(github.ref, 'refs/tags/v')
+        # https://github.com/actions/runner-images/issues/14924
+        # CloudKit HTTP/3 connections can be dropped on hosted macOS runners.
+        run: |
+          echo 'block return out quick proto udp from any to any port 443' | sudo pfctl -f -
+          sudo pfctl -E
       - name: Build Apple Silicon DMG
         run: moon exec --ignore-ci-checks desktop:dmg
       - name: Verify Apple Silicon architecture and FFmpeg linkage
@@ -130,6 +137,7 @@ jobs:
             target/nextest/ci/junit.xml
             target/release/build/ffmpeg-sys-the-third-*/output
             .cache/ffmpeg-*/ffbuild/config.log
+            crates/desktop/dist/macos/*.notary.json
             .moon/cache/*Report.json
           include-hidden-files: true
           if-no-files-found: ignore
