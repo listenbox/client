@@ -3,7 +3,6 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct APIKeyWhoami {
     #[serde(rename = "email")]
     pub email: std::string::String,
@@ -58,7 +57,6 @@ pub enum AuthorizationClient {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct CLIAuthorizationApprovedEvent {
     #[serde(rename = "team_id")]
     pub team_id: TeamID,
@@ -75,7 +73,6 @@ pub enum CLIAuthorizationApprovedEventType {
 pub type CLIAuthorizationCode = std::string::String;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct CLIAuthorizationDeniedEvent {
     #[serde(rename = "type")]
     pub r#type: CLIAuthorizationDeniedEventType,
@@ -97,7 +94,6 @@ pub enum CLIAuthorizationEvent {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct CLIAuthorizationEventVariant0 {
     #[serde(rename = "data")]
     pub data: std::string::String,
@@ -116,7 +112,6 @@ pub enum CLIAuthorizationEventVariant0Event {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct CLIAuthorizationEventVariant1 {
     #[serde(rename = "data")]
     pub data: std::string::String,
@@ -135,7 +130,6 @@ pub enum CLIAuthorizationEventVariant1Event {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct CLIAuthorizationEventVariant2 {
     #[serde(rename = "data")]
     pub data: std::string::String,
@@ -154,7 +148,6 @@ pub enum CLIAuthorizationEventVariant2Event {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct CLIAuthorizationEventVariant3 {
     #[serde(rename = "data")]
     pub data: std::string::String,
@@ -173,7 +166,6 @@ pub enum CLIAuthorizationEventVariant3Event {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct CLIAuthorizationExpiredEvent {
     #[serde(rename = "type")]
     pub r#type: CLIAuthorizationExpiredEventType,
@@ -186,7 +178,6 @@ pub enum CLIAuthorizationExpiredEventType {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct CLIAuthorizationPendingEvent {
     #[serde(rename = "credential")]
     pub credential: std::string::String,
@@ -344,7 +335,6 @@ impl Response for CliAuthorizationEventsResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ClientTeam {
     #[serde(rename = "id")]
     pub id: TeamID,
@@ -404,7 +394,6 @@ impl Response for CompleteEpisodePackageResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct CompleteEpisodeUploadSession {
     #[serde(rename = "publication")]
     pub publication: EpisodePublication,
@@ -473,7 +462,6 @@ impl Response for CompleteEpisodeUploadSessionResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct CompleteImageUpload {
     #[serde(rename = "object_key")]
     pub object_key: ImageUploadObjectKey,
@@ -534,7 +522,6 @@ impl Response for CompleteImageUploadResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct CompletedEpisodeUploadPart {
     #[serde(rename = "etag")]
     pub etag: NonEmptyString,
@@ -545,7 +532,6 @@ pub struct CompletedEpisodeUploadPart {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct CreateCLIAuthorization {
     #[serde(rename = "client")]
     pub client: AuthorizationClient,
@@ -644,7 +630,6 @@ impl Response for CreateEpisodeDeletionResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct CreateEpisodePackage {
     #[serde(rename = "description", default, skip_serializing_if = "Option::is_none")]
     pub description: std::option::Option<std::string::String>,
@@ -724,7 +709,6 @@ impl Response for CreateEpisodePackageResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct CreateEpisodeUploadSession {
     #[serde(rename = "byte_length")]
     pub byte_length: i64,
@@ -806,7 +790,6 @@ impl Response for CreateEpisodeUploadSessionResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct CreateImageUploadPresign {
     #[serde(rename = "byte_length")]
     pub byte_length: i64,
@@ -884,7 +867,6 @@ impl Response for CreateImageUploadPresignResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct CreateShow {
     #[serde(rename = "apple_podcasts_url", default, skip_serializing_if = "Option::is_none")]
     pub apple_podcasts_url: std::option::Option<std::string::String>,
@@ -958,7 +940,6 @@ impl Response for CreateShowDeletionResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct CreateShowInvitation {
     #[serde(rename = "email")]
     pub email: std::string::String,
@@ -1149,7 +1130,6 @@ impl Response for CreateSyncEpisodeDeletionResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct CreateTeamInvitation {
     #[serde(rename = "email")]
     pub email: std::string::String,
@@ -1207,7 +1187,6 @@ impl Response for CreateTeamInvitationResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct CreatedCLIAuthorization {
     #[serde(rename = "code")]
     pub code: CLIAuthorizationCode,
@@ -1218,7 +1197,6 @@ pub struct CreatedCLIAuthorization {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct CreatedImageUploadPresign {
     #[serde(rename = "content_type")]
     pub content_type: CreatedImageUploadPresignContentType,
@@ -1251,28 +1229,24 @@ pub enum CreatedImageUploadPresignMethod {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct CreatedPublicEpisodeDeletion {
     #[serde(rename = "episode_deletion_run_id")]
     pub episode_deletion_run_id: EpisodeDeletionRunID,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct CreatedPublicRSSImport {
     #[serde(rename = "import_run_id")]
     pub import_run_id: ImportRunID,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct CreatedPublicShowDeletion {
     #[serde(rename = "show_deletion_run_id")]
     pub show_deletion_run_id: ShowDeletionRunID,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct Episode {
     #[serde(rename = "description", default, skip_serializing_if = "Option::is_none")]
     pub description: std::option::Option<std::string::String>,
@@ -1301,7 +1275,6 @@ pub struct Episode {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct EpisodeDeletionCompletedEvent {
     #[serde(rename = "episode_deletion_run_id")]
     pub episode_deletion_run_id: EpisodeDeletionRunID,
@@ -1333,7 +1306,6 @@ pub enum EpisodeDeletionEvent {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct EpisodeDeletionEventVariant0 {
     #[serde(rename = "data")]
     pub data: std::string::String,
@@ -1352,7 +1324,6 @@ pub enum EpisodeDeletionEventVariant0Event {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct EpisodeDeletionEventVariant1 {
     #[serde(rename = "data")]
     pub data: std::string::String,
@@ -1426,7 +1397,6 @@ impl Response for EpisodeDeletionEventsResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct EpisodeDeletionFailedEvent {
     #[serde(rename = "episode_deletion_run_id")]
     pub episode_deletion_run_id: EpisodeDeletionRunID,
@@ -1453,7 +1423,6 @@ pub enum EpisodeDeletionFailedEventType {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct EpisodeDeletionProgressEvent {
     #[serde(rename = "current_step")]
     pub current_step: NonEmptyString,
@@ -1484,7 +1453,7 @@ pub enum EpisodeDeletionProgressEventType {
 pub type EpisodeDeletionRunID = std::string::String;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(tag = "status", deny_unknown_fields)]
+#[serde(tag = "status")]
 pub enum EpisodeDeletionTerminalEvent {
     #[serde(rename = "completed")]
     Completed {
@@ -1521,7 +1490,6 @@ pub enum EpisodeDeletionTerminalEventFailedType {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct EpisodeEnclosure {
     #[serde(rename = "byte_length")]
     pub byte_length: i64,
@@ -1554,7 +1522,6 @@ pub enum EpisodeEnclosureFormat {
 pub type EpisodeID = std::string::String;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct EpisodeListItem {
     #[serde(rename = "audio_url", default, skip_serializing_if = "Option::is_none")]
     pub audio_url: std::option::Option<std::string::String>,
@@ -1587,14 +1554,12 @@ pub struct EpisodeListItem {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct EpisodeOrder {
     #[serde(rename = "episode_ids")]
     pub episode_ids: std::vec::Vec<EpisodeID>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct EpisodePackage {
     #[serde(rename = "episode_id")]
     pub episode_id: EpisodeID,
@@ -1627,7 +1592,6 @@ pub enum EpisodePackageStatus {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct EpisodePackageUpload {
     #[serde(rename = "object_index")]
     pub object_index: i64,
@@ -1636,7 +1600,6 @@ pub struct EpisodePackageUpload {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct EpisodePage {
     #[serde(rename = "episodes")]
     pub episodes: std::vec::Vec<EpisodeListItem>,
@@ -1657,7 +1620,6 @@ pub enum EpisodeProcessingEvent {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct EpisodeProcessingEventVariant0 {
     #[serde(rename = "data")]
     pub data: std::string::String,
@@ -1676,7 +1638,6 @@ pub enum EpisodeProcessingEventVariant0Event {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct EpisodeProcessingEventVariant1 {
     #[serde(rename = "data")]
     pub data: std::string::String,
@@ -1695,7 +1656,6 @@ pub enum EpisodeProcessingEventVariant1Event {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct EpisodeProcessingEventVariant2 {
     #[serde(rename = "data")]
     pub data: std::string::String,
@@ -1714,7 +1674,6 @@ pub enum EpisodeProcessingEventVariant2Event {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct EpisodeProcessingFailedEvent {
     #[serde(rename = "episode_id")]
     pub episode_id: EpisodeID,
@@ -1743,7 +1702,6 @@ pub enum EpisodeProcessingFailedEventType {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct EpisodeProcessingProgressEvent {
     #[serde(rename = "current_step")]
     pub current_step: NonEmptyString,
@@ -1764,7 +1722,6 @@ pub enum EpisodeProcessingProgressEventType {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct EpisodeProcessingSafeHandoffEvent {
     #[serde(rename = "episode_id")]
     pub episode_id: EpisodeID,
@@ -1793,7 +1750,6 @@ pub enum EpisodeProcessingSafeHandoffEventType {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct EpisodeProcessingSnapshot {
     #[serde(rename = "current_step")]
     pub current_step: NonEmptyString,
@@ -1854,7 +1810,6 @@ pub enum EpisodeUploadContentType {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct EpisodeUploadSession {
     #[serde(rename = "byte_length")]
     pub byte_length: i64,
@@ -2208,7 +2163,6 @@ impl Response for HeadOpenapiResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ImageAsset {
     #[serde(rename = "byte_length")]
     pub byte_length: i64,
@@ -2239,7 +2193,6 @@ pub type ImageAssetID = std::string::String;
 pub type ImageUploadObjectKey = std::string::String;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ImportCapacity {
     #[serde(rename = "has_active_subscription")]
     pub has_active_subscription: bool,
@@ -2265,7 +2218,6 @@ pub struct ImportRSSParams {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ImportRSSRequest {
     #[serde(rename = "slug", default, skip_serializing_if = "Option::is_none")]
     pub slug: std::option::Option<ShowSlug>,
@@ -2652,7 +2604,6 @@ impl Response for OpenapiResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct PatchEpisodeUploadSession {
     #[serde(rename = "description", default, skip_serializing_if = "Option::is_none")]
     pub description: std::option::Option<std::string::String>,
@@ -2661,7 +2612,6 @@ pub struct PatchEpisodeUploadSession {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct PendingShowInvitation {
     #[serde(rename = "email")]
     pub email: std::string::String,
@@ -2676,7 +2626,6 @@ pub struct PendingShowInvitation {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct PendingTeamInvitation {
     #[serde(rename = "email")]
     pub email: std::string::String,
@@ -2691,7 +2640,7 @@ pub struct PendingTeamInvitation {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(tag = "code", deny_unknown_fields)]
+#[serde(tag = "code")]
 pub enum PodcastCreationConflict {
     #[serde(rename = "show_already_imported")]
     ShowAlreadyImported {
@@ -2712,7 +2661,6 @@ pub enum PodcastCreationConflict {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct PreparedMediaObject {
     #[serde(rename = "byte_length")]
     pub byte_length: i64,
@@ -2784,7 +2732,6 @@ impl Response for PresignEpisodePackagePartsResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct PresignEpisodeUploadSessionParts {
     #[serde(rename = "part_numbers")]
     pub part_numbers: std::vec::Vec<MediaUploadPartNumber>,
@@ -2849,7 +2796,6 @@ impl Response for PresignEpisodeUploadSessionPartsResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct PresignedEpisodeUploadPart {
     #[serde(rename = "expires_at")]
     pub expires_at: UnixMillis,
@@ -2868,7 +2814,6 @@ pub enum PresignedEpisodeUploadPartMethod {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct PresignedEpisodeUploadParts {
     #[serde(rename = "parts")]
     pub parts: std::vec::Vec<PresignedEpisodeUploadPart>,
@@ -2879,7 +2824,6 @@ pub struct PresignedEpisodeUploadParts {
 pub type ProcessingRunID = std::string::String;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct PublicRSSImportCompletedTerminalEvent {
     #[serde(rename = "feed_id")]
     pub feed_id: FeedID,
@@ -2915,7 +2859,6 @@ pub enum PublicRSSImportEvent {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct PublicRSSImportEventVariant0 {
     #[serde(rename = "data")]
     pub data: std::string::String,
@@ -2934,7 +2877,6 @@ pub enum PublicRSSImportEventVariant0Event {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct PublicRSSImportEventVariant1 {
     #[serde(rename = "data")]
     pub data: std::string::String,
@@ -2953,7 +2895,7 @@ pub enum PublicRSSImportEventVariant1Event {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(tag = "status", deny_unknown_fields)]
+#[serde(tag = "status")]
 pub enum PublicRSSImportTerminalEvent {
     #[serde(rename = "completed")]
     Completed {
@@ -3023,7 +2965,6 @@ pub enum PublicRSSImportTerminalEventFailedType {
 pub type R2ObjectKey = std::string::String;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct RSSImportCancelledTerminalEvent {
     #[serde(rename = "status")]
     pub status: RSSImportCancelledTerminalEventStatus,
@@ -3044,7 +2985,6 @@ pub enum RSSImportCancelledTerminalEventType {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct RSSImportEntitlementError {
     #[serde(rename = "code")]
     pub code: RSSImportEntitlementErrorCode,
@@ -3065,7 +3005,6 @@ pub enum RSSImportEntitlementErrorCode {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct RSSImportFailedTerminalEvent {
     #[serde(rename = "error_code")]
     pub error_code: NonEmptyString,
@@ -3116,7 +3055,6 @@ pub enum RSSImportMediaKind {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct RSSImportProgressEvent {
     #[serde(rename = "current_step")]
     pub current_step: NonEmptyString,
@@ -3333,7 +3271,6 @@ impl Response for RevokeTeamInvitationResponse {
 pub type SHA256Hex = std::string::String;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct SetEpisodeOrder {
     #[serde(rename = "episode_ids")]
     pub episode_ids: std::vec::Vec<EpisodeID>,
@@ -3404,7 +3341,6 @@ impl Response for SetEpisodeOrderResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct Show {
     #[serde(rename = "apple_podcasts_url", default, skip_serializing_if = "Option::is_none")]
     pub apple_podcasts_url: std::option::Option<std::string::String>,
@@ -3443,7 +3379,6 @@ pub enum ShowAccessSource {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ShowAlreadyImported {
     #[serde(rename = "code")]
     pub code: ShowAlreadyImportedCode,
@@ -3464,7 +3399,6 @@ pub enum ShowAlreadyImportedCode {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ShowDeletionCompletedEvent {
     #[serde(rename = "show_deletion_run_id")]
     pub show_deletion_run_id: ShowDeletionRunID,
@@ -3496,7 +3430,6 @@ pub enum ShowDeletionEvent {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ShowDeletionEventVariant0 {
     #[serde(rename = "data")]
     pub data: std::string::String,
@@ -3515,7 +3448,6 @@ pub enum ShowDeletionEventVariant0Event {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ShowDeletionEventVariant1 {
     #[serde(rename = "data")]
     pub data: std::string::String,
@@ -3589,7 +3521,6 @@ impl Response for ShowDeletionEventsResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ShowDeletionFailedEvent {
     #[serde(rename = "error_code")]
     pub error_code: NonEmptyString,
@@ -3616,7 +3547,6 @@ pub enum ShowDeletionFailedEventType {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ShowDeletionProgressEvent {
     #[serde(rename = "current_step")]
     pub current_step: NonEmptyString,
@@ -3647,7 +3577,7 @@ pub enum ShowDeletionProgressEventType {
 pub type ShowDeletionRunID = std::string::String;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(tag = "status", deny_unknown_fields)]
+#[serde(tag = "status")]
 pub enum ShowDeletionTerminalEvent {
     #[serde(rename = "completed")]
     Completed {
@@ -3686,7 +3616,6 @@ pub enum ShowDeletionTerminalEventFailedType {
 pub type ShowID = std::string::String;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ShowIdentityConflict {
     #[serde(rename = "code")]
     pub code: ShowIdentityConflictCode,
@@ -3705,7 +3634,6 @@ pub type ShowInvitationID = std::string::String;
 pub type ShowLanguage = std::string::String;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ShowMember {
     #[serde(rename = "access_source")]
     pub access_source: ShowAccessSource,
@@ -3718,7 +3646,6 @@ pub struct ShowMember {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ShowMemberCollection {
     #[serde(rename = "invitations")]
     pub invitations: std::vec::Vec<PendingShowInvitation>,
@@ -3739,7 +3666,6 @@ pub enum ShowSourceKind {
 pub type String = std::string::String;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct SyncEpisode {
     #[serde(rename = "id")]
     pub id: EpisodeID,
@@ -3754,7 +3680,6 @@ pub struct SyncEpisode {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct SyncEpisodeTitle {
     #[serde(rename = "episode_id")]
     pub episode_id: EpisodeID,
@@ -3765,7 +3690,6 @@ pub struct SyncEpisodeTitle {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct SyncInventory {
     #[serde(rename = "episodes")]
     pub episodes: std::vec::Vec<SyncEpisode>,
@@ -3782,7 +3706,6 @@ pub type TeamID = std::string::String;
 pub type TeamInvitationID = std::string::String;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct TeamMember {
     #[serde(rename = "joined_at")]
     pub joined_at: UnixMillis,
@@ -3793,7 +3716,6 @@ pub struct TeamMember {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct TeamMemberCollection {
     #[serde(rename = "invitations")]
     pub invitations: std::vec::Vec<PendingTeamInvitation>,
@@ -3880,7 +3802,6 @@ impl Response for UpdateEpisodeUploadSessionResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct UpdateShow {
     #[serde(rename = "apple_podcasts_url", default, skip_serializing_if = "Option::is_none")]
     pub apple_podcasts_url: std::option::Option<std::string::String>,
@@ -3948,7 +3869,6 @@ impl Response for UpdateShowInvitationRoleResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct UpdateShowMemberRole {
     #[serde(rename = "role")]
     pub role: AssignableTeamRole,
@@ -4060,7 +3980,6 @@ impl Response for UpdateShowResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct UpdateSyncMetadata {
     #[serde(rename = "checked", default, skip_serializing_if = "Option::is_none")]
     pub checked: std::option::Option<bool>,
@@ -4185,7 +4104,6 @@ impl Response for UpdateTeamInvitationRoleResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct UpdateTeamMemberRole {
     #[serde(rename = "role")]
     pub role: AssignableTeamRole,
@@ -4244,7 +4162,6 @@ impl Response for UpdateTeamMemberRoleResponse {
 pub type UploadSessionID = std::string::String;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct User {
     #[serde(rename = "email")]
     pub email: std::string::String,
@@ -4259,7 +4176,6 @@ pub struct User {
 pub type UserID = std::string::String;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ValidationErr {
     #[serde(rename = "errors")]
     pub errors: std::vec::Vec<ValidationIssue>,
@@ -4268,7 +4184,6 @@ pub struct ValidationErr {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ValidationIssue {
     #[serde(rename = "code")]
     pub code: ValidationIssueCode,
@@ -4299,7 +4214,6 @@ pub enum ValidationLocation {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct VideoAdmissionError {
     #[serde(rename = "code")]
     pub code: VideoAdmissionErrorCode,
@@ -4404,7 +4318,6 @@ pub enum YouTubeDestinationStatus {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct YouTubeLinkage {
     #[serde(rename = "destination_status")]
     pub destination_status: YouTubeDestinationStatus,
@@ -4417,7 +4330,6 @@ pub struct YouTubeLinkage {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct YouTubeSyncStopped {
     #[serde(rename = "code")]
     pub code: YouTubeSyncStoppedCode,
