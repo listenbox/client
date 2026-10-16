@@ -353,6 +353,8 @@ pub async fn import(
         language: "en".into(),
         image_asset_id: None,
         youtube_url: Some(canonical.clone()),
+        apple_podcasts_url: None,
+        spotify_url: None,
     };
     let show = loop {
         let context = format!(

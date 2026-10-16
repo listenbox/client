@@ -11,7 +11,10 @@ pub async fn shows(api: &Api, command: ShowCommand) -> Result<()> {
         ShowCommand::Update {
             show,
             title,
+            slug,
             description,
+            apple_podcasts_url,
+            spotify_url,
             artwork,
         } => {
             let shows = match api
@@ -38,7 +41,10 @@ pub async fn shows(api: &Api, command: ShowCommand) -> Result<()> {
                     show_slug: show.clone(),
                     body: p::UpdateShow {
                         title,
+                        slug,
                         description,
+                        apple_podcasts_url,
+                        spotify_url,
                         image_asset_id,
                     },
                 })
@@ -87,6 +93,8 @@ pub async fn shows(api: &Api, command: ShowCommand) -> Result<()> {
             slug,
             source_kind,
             language,
+            apple_podcasts_url,
+            spotify_url,
             artwork,
         } => {
             let id = format!("shw_{}", &uuid::Uuid::new_v4().simple().to_string()[..16]);
@@ -104,6 +112,8 @@ pub async fn shows(api: &Api, command: ShowCommand) -> Result<()> {
                         slug: slug.clone(),
                         language,
                         image_asset_id,
+                        apple_podcasts_url,
+                        spotify_url,
                         youtube_url: None,
                         source_kind: serde_json::from_value(serde_json::to_value(source_kind)?)?,
                     },
