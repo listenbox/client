@@ -82,7 +82,7 @@ enum ShowCommand {
     List,
     /// Update shared show metadata, preserving omitted fields and feed overrides
     #[command(group(clap::ArgGroup::new("fields")
-        .args(["title", "description", "artwork", "apple_podcasts_url", "spotify_url"])
+        .args(["title", "slug", "description", "artwork", "apple_podcasts_url", "spotify_url"])
         .required(true)
         .multiple(true)))]
     Update {
@@ -90,6 +90,9 @@ enum ShowCommand {
         show: String,
         #[arg(long, value_parser = nonblank)]
         title: Option<String>,
+        /// Change the show selector and website address; retires the old address
+        #[arg(long, value_parser = slug)]
+        slug: Option<String>,
         /// Apple Podcasts show URL; use an empty string to remove it
         #[arg(long)]
         apple_podcasts_url: Option<String>,

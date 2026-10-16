@@ -11,6 +11,7 @@ pub async fn shows(api: &Api, command: ShowCommand) -> Result<()> {
         ShowCommand::Update {
             show,
             title,
+            slug,
             description,
             apple_podcasts_url,
             spotify_url,
@@ -40,6 +41,7 @@ pub async fn shows(api: &Api, command: ShowCommand) -> Result<()> {
                     show_slug: show.clone(),
                     body: p::UpdateShow {
                         title,
+                        slug,
                         description,
                         apple_podcasts_url,
                         spotify_url,

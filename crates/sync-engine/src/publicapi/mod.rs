@@ -3888,6 +3888,8 @@ pub struct UpdateShow {
     pub description: std::option::Option<std::string::String>,
     #[serde(rename = "image_asset_id", default, skip_serializing_if = "Option::is_none")]
     pub image_asset_id: std::option::Option<ImageAssetID>,
+    #[serde(rename = "slug", default, skip_serializing_if = "Option::is_none")]
+    pub slug: std::option::Option<ShowSlug>,
     #[serde(rename = "spotify_url", default, skip_serializing_if = "Option::is_none")]
     pub spotify_url: std::option::Option<std::string::String>,
     #[serde(rename = "title", default, skip_serializing_if = "Option::is_none")]
