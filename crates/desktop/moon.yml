@@ -22,10 +22,13 @@ tasks:
     deps: [client:prerequisites]
     inputs: ['@group(sources)', 'project://client?group=sources']
     command: bash tools/profile.sh build
-    outputs: [dist/profiled/listenbox-desktop, dist/profiled/listenbox-desktop.dSYM/**/*]
+    outputs: [dist/profiled/listenbox-desktop, dist/profiled/listenbox-desktop.dSYM/**/*, dist/profiled/FFmpeg-NOTICE.txt]
     options:
       os: macos
       internal: true
+      # Refresh the compile-time source stamp after commits, including rebases.
+      # Cargo/kache still cache compilation; recordings must retain this build's identity.
+      cache: false
       runInCI: false
   profiled:
     description: Run the optimized desktop against local services with a frame-time overlay.
@@ -45,6 +48,24 @@ tasks:
     options:
       cache: false
       persistent: true
+      runInCI: false
+      os: macos
+  profile-startup:
+    description: Measure Launch Services to first displayed frame; optional arguments are label and timing or cpu.
+    deps: [~:build-profiled]
+    inputs: []
+    command: bash tools/startup.sh capture
+    options:
+      cache: false
+      runInCI: false
+      os: macos
+  test-startup:
+    description: Prove the native window renders while certificate loading is gated.
+    deps: [~:build-profiled]
+    inputs: []
+    command: bash tools/startup.sh check
+    options:
+      cache: false
       runInCI: false
       os: macos
   dev-tools:

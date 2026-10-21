@@ -1,5 +1,13 @@
 //! Build a relocatable application bundle and optional DMG. No build-machine config is packaged.
-use std::{env, error::Error, fs, path::Path, process::Command, thread, time::Duration};
+use std::{
+    env,
+    error::Error,
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+    thread,
+    time::Duration,
+};
 
 fn run(command: &mut Command) -> Result<(), Box<dyn Error>> {
     let status = command.status()?;
@@ -61,13 +69,23 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Err("DMGs require macOS".into());
     }
     let mut args = env::args().skip(1);
-    let local = match args.next().as_deref() {
+    let mode = args.next();
+    let profiled = mode.as_deref() == Some("--profiled");
+    let local = match mode.as_deref() {
         None => false,
-        Some("--local") => true,
-        Some(_) => return Err("Usage: package-macos [--local]".into()),
+        Some("--local" | "--profiled") => true,
+        Some(_) => return Err("Usage: package-macos [--local|--profiled OUTPUT]".into()),
+    };
+    let profiled_dist = if profiled {
+        Some(PathBuf::from(
+            args.next()
+                .ok_or("--profiled requires an output directory")?,
+        ))
+    } else {
+        None
     };
     if args.next().is_some() {
-        return Err("Usage: package-macos [--local]".into());
+        return Err("Usage: package-macos [--local|--profiled OUTPUT]".into());
     }
     let manifest = fs::read_to_string("Cargo.toml")?;
     let version = manifest
@@ -101,12 +119,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     } else {
         String::new()
     };
-    let dist = Path::new(if local {
-        "crates/desktop/dist/macos-local"
-    } else {
-        "crates/desktop/dist/macos"
+    let dist = profiled_dist.as_deref().unwrap_or_else(|| {
+        Path::new(if local {
+            "crates/desktop/dist/macos-local"
+        } else {
+            "crates/desktop/dist/macos"
+        })
     });
-    let release = Path::new(if local {
+    let release = Path::new(if profiled {
+        "crates/desktop/dist/profiled"
+    } else if local {
         "crates/desktop/dist/release-local"
     } else {
         "crates/desktop/dist/release"

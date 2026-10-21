@@ -80,8 +80,7 @@ impl Client {
         Ok(())
     }
     pub fn has_credentials(&self) -> bool {
-        self.api(CancellationToken::new())
-            .is_ok_and(|api| api.credential.is_some())
+        auth::StoredAuth::load(&self.config).is_some()
     }
     pub fn upgrade_url(&self, team: &str) -> Result<String> {
         self.config.upgrade_url(team)

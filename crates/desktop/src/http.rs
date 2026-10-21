@@ -8,33 +8,36 @@ use parking_lot::Mutex;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 use tokio::runtime::Handle;
 
+#[derive(Clone)]
 pub struct DesktopHttpClient {
-    clients: Mutex<HashMap<RedirectPolicy, ImageHttpClient>>,
+    clients: Arc<Mutex<HashMap<RedirectPolicy, ImageHttpClient>>>,
     directory: PathBuf,
     runtime: Handle,
 }
 
 impl DesktopHttpClient {
-    pub fn new(profile: &Path, runtime: Handle) -> anyhow::Result<Self> {
+    pub fn new(profile: &Path, runtime: Handle) -> Self {
         let directory = profile.join("http-cache");
-        ImageHttpClient::trim_cache(&directory)?;
-        let client = Self {
-            clients: Mutex::new(HashMap::new()),
+        Self {
+            clients: Default::default(),
             directory,
             runtime,
-        };
-        client.client(RedirectPolicy::NoFollow)?;
-        client.client(RedirectPolicy::FollowAll)?;
-        Ok(client)
+        }
     }
 
     fn client(&self, redirects: RedirectPolicy) -> anyhow::Result<ImageHttpClient> {
         let mut clients = self.clients.lock();
         if let Some(client) = clients.get(&redirects) {
             return Ok(client.clone());
+        }
+        // This runs only on a blocking worker, before any cache writes. Disk
+        // traversal and native certificate loading must not delay the first frame.
+        if clients.is_empty() {
+            ImageHttpClient::trim_cache(&self.directory)?;
         }
         // A cached final response must never satisfy a caller that needs the
         // redirect itself, or one with a different maximum number of hops.
@@ -65,22 +68,25 @@ impl HttpClient for DesktopHttpClient {
         request: Request<AsyncBody>,
     ) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>> {
         let (head, mut body) = request.into_parts();
-        let client = self.client(
-            head.extensions
-                .get::<RedirectPolicy>()
-                .cloned()
-                .unwrap_or_default(),
-        );
+        let redirects = head
+            .extensions
+            .get::<RedirectPolicy>()
+            .cloned()
+            .unwrap_or_default();
+        let transport = self.clone();
         let runtime = self.runtime.clone();
         async move {
-            let client = client?;
             let mut bytes = Vec::new();
             body.read_to_end(&mut bytes).await?;
             let mut request = reqwest::Request::new(head.method, head.uri.to_string().parse()?);
             *request.headers_mut() = head.headers;
             *request.body_mut() = Some(bytes.into());
             let response = runtime
-                .spawn(async move { client.send(request).await })
+                .spawn(async move {
+                    let client =
+                        tokio::task::spawn_blocking(move || transport.client(redirects)).await??;
+                    client.send(request).await
+                })
                 .await??;
             let mut builder = Response::builder()
                 .status(response.status())

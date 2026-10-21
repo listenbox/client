@@ -22,10 +22,12 @@ case "$mode" in
     cd "$client_root"
     # Cache libraries with real source paths. Executable caching rewrites macOS
     # object paths, which prevents rustc from packing this build's dSYM.
-    KACHE_RUSTC_PATH_NORMALIZE=0 KACHE_CACHE_EXECUTABLES=0 \
+    LISTENBOX_SOURCE_COMMIT="${LISTENBOX_SOURCE_COMMIT:-$(git rev-parse HEAD)}" \
+      KACHE_RUSTC_PATH_NORMALIZE=0 KACHE_CACHE_EXECUTABLES=0 \
       kache cargo -- build --locked --profile profiling -p listenbox-desktop --features profiling
     mkdir -p "$desktop_root/dist/profiled"
     cp target/profiling/listenbox-desktop "$binary"
+    cp .cache/ffmpeg/NOTICE.txt "$desktop_root/dist/profiled/FFmpeg-NOTICE.txt"
     rm -rf "$binary.dSYM"
     ditto target/profiling/listenbox-desktop.dSYM "$binary.dSYM"
     exit 0

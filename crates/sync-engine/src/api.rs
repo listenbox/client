@@ -61,12 +61,7 @@ pub struct Api {
 
 impl Api {
     pub fn new(config: Config, cancel: CancellationToken) -> Result<Self> {
-        let credential = std::fs::read(config.directory.join("auth.json"))
-            .ok()
-            .filter(|raw| raw.len() <= 64 << 10)
-            .and_then(|raw| serde_json::from_slice::<StoredAuth>(&raw).ok())
-            .filter(|auth| crate::config::credential_valid(&auth.api_key))
-            .map(|auth| auth.api_key);
+        let credential = StoredAuth::load(&config).map(|auth| auth.api_key);
         Ok(Self {
             config,
             credential,

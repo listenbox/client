@@ -567,7 +567,7 @@ async fn live_artwork(cx: &mut TestAppContext) {
     let runtime = Arc::new(tokio::runtime::Runtime::new().unwrap());
     let config = Config::load(None).unwrap();
     let slug = std::fs::read_to_string(config.directory.join("test-artwork-slug")).unwrap();
-    cx.update(|cx| crate::initialize(cx, &config, &runtime).unwrap());
+    cx.update(|cx| crate::initialize(cx, &config, &runtime));
     cx.executor().allow_parking();
     let client = Client::desktop(config).unwrap();
     let catalog = runtime

@@ -14,6 +14,16 @@ pub struct StoredAuth {
     pub api_key: String,
 }
 
+impl StoredAuth {
+    pub(crate) fn load(config: &crate::config::Config) -> Option<Self> {
+        std::fs::read(config.directory.join("auth.json"))
+            .ok()
+            .filter(|raw| raw.len() <= 64 << 10)
+            .and_then(|raw| serde_json::from_slice::<Self>(&raw).ok())
+            .filter(|auth| credential_valid(&auth.api_key))
+    }
+}
+
 const SCOPES: &[&str] = &[
     "team:read",
     "team:manage",

@@ -93,7 +93,7 @@ fn main() -> anyhow::Result<()> {
     let application = gpui_kit::application().with_assets(gpui_kit::assets::AllAssets);
     application.on_reopen(platform::show_window);
     application.run(move |cx| {
-        initialize(cx, &config, &runtime_ui).expect("initialize desktop");
+        initialize(cx, &config, &runtime_ui);
         #[cfg(feature = "profiling")]
         if let Some(recorder) = recorder {
             // Recording lives through workspace logout and stops with the app.
@@ -169,17 +169,12 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn initialize(
-    cx: &mut gpui_kit::App,
-    config: &Config,
-    runtime: &Arc<tokio::runtime::Runtime>,
-) -> anyhow::Result<()> {
+fn initialize(cx: &mut gpui_kit::App, config: &Config, runtime: &Arc<tokio::runtime::Runtime>) {
     gpui_kit::init(cx);
     cx.set_http_client(Arc::new(http::DesktopHttpClient::new(
         &config.directory,
         runtime.handle().clone(),
-    )?));
-    Ok(())
+    )));
 }
 
 fn shutdown_signal(
