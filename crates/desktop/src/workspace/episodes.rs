@@ -11,6 +11,19 @@ pub(super) struct EpisodeRow {
 }
 
 impl EpisodeRow {
+    fn same_content(&self, other: &Self) -> bool {
+        let episode = match (&self.episode, &other.episode) {
+            (Some(a), Some(b)) => {
+                a.title == b.title
+                    && a.status == b.status
+                    && a.duration_seconds == b.duration_seconds
+            }
+            (None, None) => true,
+            _ => false,
+        };
+        episode && self.item == other.item
+    }
+
     fn key(&self) -> &str {
         self.episode
             .as_ref()
@@ -171,6 +184,7 @@ impl Workspace {
         if request != self.episode_request {
             return;
         }
+        self.episode_view.dirty = true;
         self.episode_loading = false;
         self.episode_cancel = None;
         match result {
@@ -406,17 +420,29 @@ impl Workspace {
         } else {
             // Retain measurements and the reading position for unchanged rows,
             // including when the complete API episode list is refreshed.
-            cached.state.splice_focusable(
-                prefix + 1..cached.rows.len() - suffix + 1,
-                focus[prefix + 1..rows.len() - suffix + 1].iter().cloned(),
-            );
+            if prefix + suffix != cached.rows.len() || prefix + suffix != rows.len() {
+                cached.state.splice_focusable(
+                    prefix + 1..cached.rows.len() - suffix + 1,
+                    focus[prefix + 1..rows.len() - suffix + 1].iter().cloned(),
+                );
+                // Only newly inserted rows need a height hint. This GPUI API
+                // also marks every measured row unmeasured, so it must not run
+                // for ordinary progress or content updates.
+                cached.state.clone().with_uniform_item_height(px(80.));
+            }
             // A progress update or saved failure can change a row's height even
             // while it is off-screen. Keep its scroll anchor when remeasuring.
-            cached.state.remeasure_items(0..rows.len() + 2);
+            for ix in (0..prefix).chain(rows.len() - suffix..rows.len()) {
+                let previous = if ix < prefix {
+                    ix
+                } else {
+                    cached.rows.len() - (rows.len() - ix)
+                };
+                if !rows[ix].same_content(&cached.rows[previous]) {
+                    cached.state.remeasure_items(ix + 1..ix + 2);
+                }
+            }
         }
-        // Wheel scrolling must be able to seek into unmeasured rows. Actual
-        // layout replaces this estimate as each row reaches the viewport.
-        cached.state.clone().with_uniform_item_height(px(80.));
         cached.rows = rows;
         cached.focus = focus;
         cached.missing = missing;

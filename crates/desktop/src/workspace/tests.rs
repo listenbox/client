@@ -7,6 +7,51 @@ use gpui_kit::test::TestWindowExt;
 use listenbox_sync_engine::config::Config;
 use std::{cell::Cell, rc::Rc, time::Duration};
 
+#[cfg(unix)]
+#[gpui_kit::test]
+fn startup_renders_while_credentials_are_blocked(cx: &mut TestAppContext) {
+    let profile = tempfile::tempdir().unwrap();
+    let auth = profile.path().join("auth.json");
+    assert!(
+        std::process::Command::new("mkfifo")
+            .arg(&auth)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let (painted, frame) = std::sync::mpsc::channel();
+    let reader = std::thread::spawn(move || {
+        // Release even on regression so a foreground read fails the assertion
+        // instead of hanging the test. The frame, not elapsed time, opens the gate.
+        let rendered = frame.recv_timeout(Duration::from_secs(1)).is_ok();
+        std::fs::write(auth, b"{}").unwrap();
+        rendered
+    });
+    let client = Client::desktop(Config::load_in(None, profile.path().into()).unwrap()).unwrap();
+    let runtime = Arc::new(tokio::runtime::Runtime::new().unwrap());
+    cx.update(gpui_kit::init);
+    let window = cx.open_window(size(px(840.), px(600.)), |window, cx| {
+        let view = cx.new(|cx| {
+            Workspace::new(
+                client,
+                runtime,
+                CancellationToken::new(),
+                TaskTracker::new(),
+                window,
+                cx,
+            )
+        });
+        Root::new(view, window, cx)
+    });
+    cx.update_window(window.into(), |_, window, cx| window.render_frame(cx))
+        .unwrap();
+    let _ = painted.send(());
+    assert!(
+        reader.join().unwrap(),
+        "credential I/O blocked the first desktop frame"
+    );
+}
+
 #[test]
 #[ignore = "requires the parent API's isolated YouTube player"]
 fn live_player_runtime() {
@@ -152,6 +197,7 @@ async fn live_authorization_recovery(cx: &mut TestAppContext) {
         Root::new(entity, window, cx)
     });
     let view = view.unwrap();
+    wait_for(cx, &view, |view| !view.loading).await;
     let http = reqwest::Client::new();
     let gate = |path: &str| {
         runtime.block_on(async {
@@ -278,6 +324,7 @@ async fn live_authorization_cancel_starting(cx: &mut TestAppContext) {
         Root::new(entity, window, cx)
     });
     let view = view.unwrap();
+    wait_for(cx, &view, |view| !view.loading).await;
     let http = reqwest::Client::new();
     let gate = |path: &str| {
         runtime.block_on(async {
@@ -423,7 +470,7 @@ async fn live_logout_contended_lock(cx: &mut TestAppContext) {
         wait_for(cx, &view, |view| !view.cookie_busy).await;
         cx.update_window(window.into(), |_, window, cx| {
             view.update(cx, |view, cx| {
-                view.cookie_input.update(cx, |input, cx| input.set_value(
+                view.cookie_input.as_ref().unwrap().update(cx, |input, cx| input.set_value(
                     "# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSID\tfixture-session\n", window, cx));
             });
             window.render_frame(cx);
@@ -2563,6 +2610,7 @@ async fn live_team_import(cx: &mut TestAppContext) {
         );
         return;
     }
+    wait_for(cx, &view, |view| !view.loading).await;
     let http = reqwest::Client::new();
     let gate = |path: &str| {
         runtime.block_on(async {
@@ -3121,14 +3169,15 @@ fn quit_workspace(
     let runtime = Arc::new(tokio::runtime::Runtime::new().unwrap());
     cx.update(gpui_kit::init);
     cx.executor().allow_parking();
+    let tasks = TaskTracker::new();
     let mut view = None;
     let window = cx.open_window(size(px(840.), px(600.)), |window, cx| {
         let entity = cx.new(|cx| {
             Workspace::new(
                 client,
-                runtime,
+                runtime.clone(),
                 CancellationToken::new(),
-                TaskTracker::new(),
+                tasks.clone(),
                 window,
                 cx,
             )
@@ -3136,6 +3185,10 @@ fn quit_workspace(
         view = Some(entity.clone());
         Root::new(entity, window, cx)
     });
+    tasks.close();
+    runtime.block_on(tasks.wait());
+    tasks.reopen();
+    cx.run_until_parked();
     cx.update_window(window.into(), |_, window, cx| window.render_frame(cx))
         .unwrap();
     (profile, window, view.unwrap())
@@ -3170,7 +3223,7 @@ fn library_shares_artwork_requests(cx: &mut TestAppContext) {
     let shows = vec![serde_json::from_value(serde_json::json!({
             "id":"shw_0123456789abcdef", "team_id":"team_0123456789abcdef", "slug":"import",
             "title":"Podcast artwork", "language":"en", "source_kind":"audio",
-            "has_active_subscription":true, "episode_count": 0, "image_url":"https://artwork.example.test/podcast.png",
+            "has_active_subscription":false, "episode_count": 0, "image_url":"https://artwork.example.test/podcast.png",
             "youtube":{"destination_status":"none", "url":"https://www.youtube.com/playlist?list=PLabc"}
         })).unwrap()];
     cx.update_window(handle.into(), |_, window, cx| {
@@ -3228,9 +3281,14 @@ async fn youtube_settings_validate_save_forget_and_link_to_guide(cx: &mut TestAp
         window.render_frame(cx);
         assert!(view.read(cx).settings_open);
         window.click("cookie-guide", cx);
-        view.read(cx).cookie_input.clone().update(cx, |input, cx| {
-            input.set_value("invalid export", window, cx)
-        });
+        view.read(cx)
+            .cookie_input
+            .as_ref()
+            .unwrap()
+            .clone()
+            .update(cx, |input, cx| {
+                input.set_value("invalid export", window, cx)
+            });
         window.scroll(
             "cookie-guide",
             ScrollDelta::Pixels(point(px(0.), px(-400.))),
@@ -3247,7 +3305,7 @@ async fn youtube_settings_validate_save_forget_and_link_to_guide(cx: &mut TestAp
     cx.update_window(handle.into(), |_, window, cx| {
         assert!(view.read(cx).cookie_error.is_some());
         assert!(!view.read(cx).client.cookie_jar().is_enabled().unwrap());
-        view.read(cx).cookie_input.clone().update(cx, |input, cx| input.set_value("# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSAPISID\tsynthetic-ui-cookie\n", window, cx));
+        view.read(cx).cookie_input.as_ref().unwrap().clone().update(cx, |input, cx| input.set_value("# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSAPISID\tsynthetic-ui-cookie\n", window, cx));
         window.render_frame(cx);
         window.scroll("cookie-guide", ScrollDelta::Pixels(point(px(0.), px(-400.))), cx);
         window.click("save-cookies", cx);
@@ -3255,7 +3313,15 @@ async fn youtube_settings_validate_save_forget_and_link_to_guide(cx: &mut TestAp
     wait_for(cx, &view, |view| !view.cookie_busy).await;
     cx.update_window(handle.into(), |_, window, cx| {
         assert!(view.read(cx).client.cookie_jar().is_enabled().unwrap());
-        assert!(view.read(cx).cookie_input.read(cx).value().is_empty());
+        assert!(
+            view.read(cx)
+                .cookie_input
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .value()
+                .is_empty()
+        );
         assert!(view.read(cx).cookie_error.is_none());
         window.render_frame(cx);
         window.scroll(
@@ -3271,7 +3337,15 @@ async fn youtube_settings_validate_save_forget_and_link_to_guide(cx: &mut TestAp
     wait_for(cx, &view, |view| !view.cookie_busy).await;
     cx.update_window(handle.into(), |_, window, cx| {
         assert!(view.read(cx).cookie_saved);
-        assert!(view.read(cx).cookie_input.read(cx).value().is_empty());
+        assert!(
+            view.read(cx)
+                .cookie_input
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .value()
+                .is_empty()
+        );
         window.render_frame(cx);
         window.scroll(
             "cookie-guide",

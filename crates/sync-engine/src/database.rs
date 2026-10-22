@@ -108,21 +108,32 @@ impl Database {
                     .query_map(params![origin, show], |row| row.get::<_, String>(0))?
                     .collect::<Result<Vec<_>, _>>()?
             };
+            let mut remove = tx.prepare("DELETE FROM source_items WHERE origin IS ?1 AND show_slug IS ?2 AND source_url IS ?3")?;
             for url in previous {
                 if !urls.contains(&url) {
-                    tx.execute("DELETE FROM source_items WHERE origin IS ?1 AND show_slug IS ?2 AND source_url IS ?3", params![origin, show, url])?;
+                    remove.execute(params![origin, show, url])?;
                 }
             }
         }
-        for (position, video) in videos.iter().enumerate() {
-            let url = format!("https://www.youtube.com/watch?v={}", video.id);
-            tx.execute(
+        {
+            let mut upsert = tx.prepare(
                 "INSERT INTO source_items (origin, show_slug, collection_url, source_url, position, title, duration_seconds, phase)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'queued')
                  ON CONFLICT(origin, show_slug, source_url) DO UPDATE SET
                  position=excluded.position, title=excluded.title, duration_seconds=excluded.duration_seconds",
-                params![origin, show, collection, url, position as i64, video.title, video.duration_seconds.map(i64::try_from).transpose()?],
             )?;
+            for (position, video) in videos.iter().enumerate() {
+                let url = format!("https://www.youtube.com/watch?v={}", video.id);
+                upsert.execute(params![
+                    origin,
+                    show,
+                    collection,
+                    url,
+                    position as i64,
+                    video.title,
+                    video.duration_seconds.map(i64::try_from).transpose()?
+                ])?;
+            }
         }
         tx.commit()?;
         Ok(())

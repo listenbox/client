@@ -1,6 +1,6 @@
 //! Application-facing operations shared by native interfaces. Storage stays private.
 use crate::{
-    api::Api,
+    api::{Api, HttpClients},
     auth,
     config::Config,
     downloads::DownloadManager,
@@ -9,7 +9,7 @@ use crate::{
 };
 use anyhow::{Result, ensure};
 use futures_util::{StreamExt, stream};
-use std::collections::HashSet;
+use std::{collections::HashSet, sync::Arc};
 use tokio_util::sync::CancellationToken;
 
 #[derive(Clone, Default)]
@@ -41,6 +41,7 @@ pub enum SyncEvent {
 pub struct Client {
     config: Config,
     engine: Engine,
+    http: Arc<tokio::sync::OnceCell<HttpClients>>,
 }
 
 impl Client {
@@ -48,6 +49,7 @@ impl Client {
         Ok(Self {
             engine: Engine::default(),
             config,
+            http: Arc::default(),
         })
     }
     pub fn cookie_jar(&self) -> crate::cookies::CookieJar {
@@ -93,7 +95,7 @@ impl Client {
         slug: String,
         cancel: CancellationToken,
     ) -> Result<Vec<p::EpisodeListItem>> {
-        let api = self.api(cancel)?;
+        let api = self.api(cancel).await?;
         if api.credential.is_none() {
             return Err(crate::api::AuthenticationRequired.into());
         }
@@ -129,8 +131,16 @@ impl Client {
             }
         }
     }
-    fn api(&self, cancel: CancellationToken) -> Result<Api> {
-        Api::new(self.config.clone(), cancel)
+    async fn api(&self, cancel: CancellationToken) -> Result<Api> {
+        // Native certificate loading and credential I/O must not occupy a UI
+        // thread or a Tokio networking worker. Failed initialization is retryable.
+        let clients = self
+            .http
+            .get_or_try_init(|| async { tokio::task::spawn_blocking(HttpClients::new).await? })
+            .await?
+            .clone();
+        let config = self.config.clone();
+        Ok(tokio::task::spawn_blocking(move || Api::with_clients(config, cancel, clients)).await?)
     }
     pub async fn login(
         &self,
@@ -138,14 +148,14 @@ impl Client {
         open_browser: impl FnMut(&str),
     ) -> Result<()> {
         auth::login_with(
-            &mut self.api(cancel)?,
+            &mut self.api(cancel).await?,
             p::AuthorizationClient::Desktop,
             open_browser,
         )
         .await
     }
     pub async fn catalog(&self, cancel: CancellationToken) -> Result<Catalog> {
-        let api = self.api(cancel)?;
+        let api = self.api(cancel).await?;
         if api.credential.is_none() {
             return Err(crate::api::AuthenticationRequired.into());
         }
@@ -194,7 +204,7 @@ impl Client {
     ) -> Result<(p::Show, Report)> {
         let source = crate::youtube::collection_source(source)?;
         let team = team.to_owned();
-        let api = self.api(cancel)?;
+        let api = self.api(cancel).await?;
         let engine = self.engine.clone();
         let runtime = tokio::runtime::Handle::current();
         let span = tracing::Span::current();
@@ -224,7 +234,7 @@ impl Client {
             if cancel.is_cancelled() {
                 return Ok(());
             }
-            let api = self.api(cancel.clone())?;
+            let api = self.api(cancel.clone()).await?;
             let mut shows = match api
                 .client()
                 .list_shows(p::ListShowsParams {
@@ -294,7 +304,7 @@ impl Client {
     }
 
     async fn sync_once(&self, slug: &str, cancel: CancellationToken) -> Result<Report> {
-        let api = self.api(cancel)?;
+        let api = self.api(cancel).await?;
         let engine = self.engine.clone();
         let slug = slug.to_owned();
         let runtime = tokio::runtime::Handle::current();
@@ -316,7 +326,7 @@ impl Client {
         cancel: CancellationToken,
         mut report: impl FnMut(&Report) + Send + 'static,
     ) -> Result<()> {
-        let api = self.api(cancel)?;
+        let api = self.api(cancel).await?;
         let engine = self.engine.clone();
         let slug = slug.to_owned();
         let runtime = tokio::runtime::Handle::current();

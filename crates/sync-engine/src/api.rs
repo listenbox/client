@@ -59,19 +59,42 @@ pub struct Api {
     pub cancel: CancellationToken,
 }
 
+/// Connection pools contain no account credentials or operation cancellation.
+/// A desktop client can retain them across catalog loads and sync passes.
+#[derive(Clone)]
+pub(crate) struct HttpClients {
+    http: ClientWithMiddleware,
+    upload: ClientWithMiddleware,
+}
+
+impl HttpClients {
+    pub(crate) fn new() -> Result<Self> {
+        Ok(Self {
+            http: Api::http_client(false)?,
+            upload: reqwest_middleware::ClientBuilder::new(Api::transport_builder()?.build()?)
+                .build(),
+        })
+    }
+}
+
 impl Api {
     pub fn new(config: Config, cancel: CancellationToken) -> Result<Self> {
+        Ok(Self::with_clients(config, cancel, HttpClients::new()?))
+    }
+
+    pub(crate) fn with_clients(
+        config: Config,
+        cancel: CancellationToken,
+        clients: HttpClients,
+    ) -> Self {
         let credential = StoredAuth::load(&config).map(|auth| auth.api_key);
-        Ok(Self {
+        Self {
             config,
             credential,
-            http: Self::http_client(false)?,
-            upload_http: reqwest_middleware::ClientBuilder::new(
-                Self::transport_builder()?.build()?,
-            )
-            .build(),
+            http: clients.http,
+            upload_http: clients.upload,
             cancel,
-        })
+        }
     }
 
     pub(crate) fn http_client(no_redirects: bool) -> Result<ClientWithMiddleware> {

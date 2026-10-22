@@ -20,6 +20,32 @@ use tokio_util::sync::CancellationToken;
 // Cross Tokio's millisecond-rounded deadline so each advance wakes the sampler.
 const SAMPLE_WINDOW: Duration = Duration::from_millis(1001);
 
+#[tokio::test]
+#[ignore = "requires the parent API's isolated account and connection observer"]
+async fn live_catalog_transport() {
+    let client = Client::desktop(Config::load(None).unwrap()).unwrap();
+    let first = client.catalog(CancellationToken::new()).await.unwrap();
+    assert!(!first.teams.is_empty());
+    let cancelled = CancellationToken::new();
+    cancelled.cancel();
+    assert!(client.catalog(cancelled).await.is_err());
+    for _ in 0..2 {
+        let next = client
+            .clone()
+            .catalog(CancellationToken::new())
+            .await
+            .unwrap();
+        assert_eq!(next.teams[0].id, first.teams[0].id);
+    }
+    client.logout().unwrap();
+    let error = client
+        .catalog(CancellationToken::new())
+        .await
+        .err()
+        .unwrap();
+    assert!(error.is::<listenbox_sync_engine::api::AuthenticationRequired>());
+}
+
 async fn hold_manual_clock() -> (std::sync::mpsc::Sender<()>, tokio::task::JoinHandle<()>) {
     let (hold_clock, receive) = std::sync::mpsc::channel::<()>();
     let (started, ready) = tokio::sync::oneshot::channel();

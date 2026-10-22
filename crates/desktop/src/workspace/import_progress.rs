@@ -1,6 +1,6 @@
 use super::*;
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(super) struct ImportProgress {
     pub total: usize,
     pub imported: usize,
@@ -18,6 +18,32 @@ pub(super) struct ImportProgress {
 }
 
 impl ImportProgress {
+    pub fn by_source(snapshot: &Snapshot) -> HashMap<String, Self> {
+        let mut totals: HashMap<String, Self> = HashMap::new();
+        for item in &snapshot.items {
+            let progress = totals.entry(item.source_id.clone()).or_default();
+            progress.total += 1;
+            progress.upload_bytes += item.uploaded;
+            progress.upload_total += item.upload_total;
+            progress.upload_rate +=
+                item.bytes_per_second() * u64::from(item.phase == Phase::Uploading);
+            match item.phase {
+                Phase::Complete => progress.imported += 1,
+                Phase::Queued | Phase::WaitingToPrepare | Phase::WaitingToUpload => {
+                    progress.queued += 1
+                }
+                Phase::Resolving => progress.resolving += 1,
+                Phase::Downloading => progress.downloading += 1,
+                Phase::Preparing => progress.preparing += 1,
+                Phase::Uploading => progress.uploading += 1,
+                Phase::Publishing => progress.publishing += 1,
+                Phase::Retrying => progress.retrying += 1,
+                Phase::Failed | Phase::Skipped => progress.not_imported += 1,
+            }
+        }
+        totals
+    }
+
     pub fn accessibility_label(&self) -> String {
         if self.upload_total > 0 {
             "Prepared media upload progress".into()
@@ -204,33 +230,7 @@ impl Workspace {
     pub(super) fn import_progress(&self, slug: &str) -> ImportProgress {
         // The engine publishes every playlist entry, including episodes already
         // imported before this sync, independently of the selected podcast.
-        let mut progress = ImportProgress::default();
-        for item in self
-            .progress
-            .items
-            .iter()
-            .filter(|item| item.source_id == slug)
-        {
-            progress.total += 1;
-            progress.upload_bytes += item.uploaded;
-            progress.upload_total += item.upload_total;
-            progress.upload_rate +=
-                item.bytes_per_second() * u64::from(item.phase == Phase::Uploading);
-            match item.phase {
-                Phase::Complete => progress.imported += 1,
-                Phase::Queued | Phase::WaitingToPrepare | Phase::WaitingToUpload => {
-                    progress.queued += 1
-                }
-                Phase::Resolving => progress.resolving += 1,
-                Phase::Downloading => progress.downloading += 1,
-                Phase::Preparing => progress.preparing += 1,
-                Phase::Uploading => progress.uploading += 1,
-                Phase::Publishing => progress.publishing += 1,
-                Phase::Retrying => progress.retrying += 1,
-                Phase::Failed | Phase::Skipped => progress.not_imported += 1,
-            }
-        }
-        progress
+        self.import_totals.get(slug).cloned().unwrap_or_default()
     }
 
     pub(super) fn import_status(&self, show: &Show, cx: &mut Context<Self>) -> AnyElement {

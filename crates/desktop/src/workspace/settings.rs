@@ -21,7 +21,7 @@ impl Workspace {
         self.settings_open = true;
         self.cookie_message = None;
         self.cookie_error = None;
-        self.cookie_input = cookie_input(window, cx);
+        self.cookie_input = Some(cookie_input(window, cx));
         if !self.cookie_busy {
             self.cookie_busy = true;
             let (jar, sender) = (self.client.cookie_jar(), self.sender.clone());
@@ -39,12 +39,14 @@ impl Workspace {
         if self.cookie_busy || self.stopping.is_some() {
             return;
         }
-        let text = self.cookie_input.read(cx).value().to_string();
+        let Some(input) = &self.cookie_input else {
+            return;
+        };
+        let text = input.read(cx).value().to_string();
         self.cookie_busy = true;
         self.cookie_error = None;
         self.cookie_message = None;
-        self.cookie_input
-            .update(cx, |input, cx| input.set_disabled(true, cx));
+        input.update(cx, |input, cx| input.set_disabled(true, cx));
         let (jar, sender) = (self.client.cookie_jar(), self.sender.clone());
         let cancel = self.cancel.clone();
         self.spawn("save cookies", async move {
@@ -72,13 +74,14 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         self.cookie_busy = false;
-        self.cookie_input
-            .update(cx, |input, cx| input.set_disabled(false, cx));
+        if let Some(input) = &self.cookie_input {
+            input.update(cx, |input, cx| input.set_disabled(false, cx));
+        }
         match result {
             Ok(()) => {
                 self.cookie_saved = saved;
                 // Drop the editing history too: Undo must not reveal saved secrets.
-                self.cookie_input = cookie_input(window, cx);
+                self.cookie_input = self.settings_open.then(|| cookie_input(window, cx));
                 self.cookie_message = Some(
                     if saved {
                         "Cookies saved. Return to your podcast and choose Sync now."
@@ -99,7 +102,7 @@ impl Workspace {
                 .child(div().text_size(px(tokens::PAGE_TITLE)).font_weight(FontWeight::BOLD).child("Settings"))
                 .child(Button::new("close-settings").ghost().label("Done").disabled(busy).on_click(cx.listener(|view, _, window, cx| {
                     view.settings_open = false;
-                    view.cookie_input = cookie_input(window, cx);
+                    view.cookie_input = None;
                     view.focus.focus(window, cx);
                     cx.notify();
                 }))))
@@ -111,7 +114,7 @@ impl Workspace {
             .child(div().flex().flex_col().gap_2()
                 .child(div().font_weight(FontWeight::SEMIBOLD).child("YouTube cookies"))
                 .child(div().text_color(t.muted).child(if self.cookie_saved { "A session is saved. Pasting a new export replaces it." } else { "Paste a Netscape cookies.txt export, including the header line." }))
-                .child(Textarea::new(&self.cookie_input).h(px(132.)).accessibility_id("cookie-export").aria_label("YouTube cookies").disabled(busy))
+                .when_some(self.cookie_input.as_ref(), |pane, input| pane.child(Textarea::new(input).h(px(132.)).accessibility_id("cookie-export").aria_label("YouTube cookies").disabled(busy)))
                 .when_some(self.cookie_error.clone(), |pane, error| pane.child(div().text_color(t.danger).child(error)))
                 .when_some(self.cookie_message.clone(), |pane, message| pane.child(div().child(message)))
                 .child(div().flex().items_center().gap_3()

@@ -114,7 +114,7 @@ pub struct Workspace {
     selected: Option<String>,
     source: Entity<InputState>,
     settings_open: bool,
-    cookie_input: Entity<TextareaState>,
+    cookie_input: Option<Entity<TextareaState>>,
     cookie_busy: bool,
     cookie_saved: bool,
     cookie_message: Option<String>,
@@ -124,6 +124,8 @@ pub struct Workspace {
     reports: HashMap<String, SyncReport>,
     error: Option<ErrorNotice>,
     progress: Snapshot,
+    progress_revision: u64,
+    import_totals: HashMap<String, import_progress::ImportProgress>,
 }
 
 struct Authorization {
@@ -327,11 +329,40 @@ impl Workspace {
         let mut changes = downloads.changes();
         cx.spawn(async move |view, cx| {
             while changes.changed().await.is_ok() {
-                let snapshot = downloads.snapshot();
+                let Ok(revision) = view.update(cx, |view, _| view.progress_revision) else {
+                    break;
+                };
+                let downloads = downloads.clone();
+                // Snapshot cloning takes the engine's inventory lock. Keep it
+                // and the per-podcast aggregation off the foreground executor.
+                let (snapshot, totals) = cx
+                    .background_executor()
+                    .spawn(async move {
+                        let snapshot = downloads.snapshot();
+                        let totals = import_progress::ImportProgress::by_source(&snapshot);
+                        (snapshot, totals)
+                    })
+                    .await;
                 if view
                     .update(cx, |view, cx| {
+                        if view.progress_revision != revision
+                            || view.cancel.is_cancelled()
+                            || view.progress == snapshot
+                        {
+                            return;
+                        }
+                        let selected = view.selected.as_deref();
+                        view.episode_view.dirty |= !view
+                            .progress
+                            .items
+                            .iter()
+                            .filter(|item| Some(item.source_id.as_str()) == selected)
+                            .eq(snapshot
+                                .items
+                                .iter()
+                                .filter(|item| Some(item.source_id.as_str()) == selected));
                         view.progress = snapshot;
-                        view.episode_view.dirty = true;
+                        view.import_totals = totals;
                         cx.notify();
                     })
                     .is_err()
@@ -379,7 +410,7 @@ impl Workspace {
             selected: None,
             source,
             settings_open: false,
-            cookie_input: settings::cookie_input(window, cx),
+            cookie_input: None,
             cookie_busy: false,
             cookie_saved: false,
             cookie_message: None,
@@ -389,11 +420,11 @@ impl Workspace {
             reports: HashMap::new(),
             error: None,
             progress: Snapshot::default(),
+            progress_revision: 0,
+            import_totals: HashMap::new(),
         };
         view.focus.focus(window, cx);
-        if view.client.has_credentials() {
-            view.reload(cx);
-        }
+        view.reload(cx);
         view
     }
 
@@ -502,7 +533,14 @@ impl Workspace {
             self.cancel.child_token(),
         );
         self.spawn("catalog", async move {
-            let _ = sender.send(Message::Catalog(client.catalog(cancel).await));
+            let credentials = client.clone();
+            let result =
+                match tokio::task::spawn_blocking(move || credentials.has_credentials()).await {
+                    Ok(true) => client.catalog(cancel).await,
+                    Ok(false) => Err(listenbox_sync_engine::api::AuthenticationRequired.into()),
+                    Err(error) => Err(error.into()),
+                };
+            let _ = sender.send(Message::Catalog(result));
         });
         cx.notify();
     }
@@ -554,7 +592,6 @@ impl Workspace {
         if self.stopping.is_some() && !matches!(message, Message::Drained(..)) {
             return;
         }
-        self.episode_view.dirty = true;
         match message {
             Message::CookieStatus(result) => {
                 self.cookie_busy = false;
@@ -569,6 +606,7 @@ impl Workspace {
             Message::Episodes(request, result) => self.episodes_received(request, result),
             Message::SyncState(request, result) => {
                 if request == self.episode_request {
+                    self.episode_view.dirty = true;
                     self.source_loading = false;
                     match result {
                         Ok(state) => {
@@ -595,6 +633,7 @@ impl Workspace {
                 self.cancel = self.lifetime.child_token();
                 self.tasks.reopen();
                 self.stopping = None;
+                self.progress_revision += 1;
                 self.authorization = None;
                 self.loading = false;
                 self.creating = None;
@@ -613,6 +652,7 @@ impl Workspace {
                         self.team_picker = false;
                         self.select(None, window, cx);
                         self.progress = Snapshot::default();
+                        self.import_totals.clear();
                     }
                     Err(error) => {
                         self.error = Some(format!("Could not sign out. {error:#}").into())
@@ -856,7 +896,7 @@ impl Workspace {
         self.episode_view.reset();
         self.show_issues = false;
         self.settings_open = false;
-        self.cookie_input = settings::cookie_input(_window, cx);
+        self.cookie_input = None;
         self.import_open = false;
         self.load_episodes(cx);
         self.error = None;
@@ -991,7 +1031,7 @@ impl Workspace {
     }
 
     fn start_auto_sync(&mut self, cx: &mut Context<Self>) {
-        if self.stopping.is_some() || !self.client.has_credentials() {
+        if self.stopping.is_some() {
             return;
         }
         if !self.auto_sync {
@@ -1013,7 +1053,7 @@ impl Workspace {
     }
 
     pub(crate) fn sync_now(&mut self, cx: &mut Context<Self>) {
-        if self.stopping.is_some() || !self.client.has_credentials() {
+        if self.stopping.is_some() {
             return;
         }
         self.sync_all(false, cx);
@@ -1077,7 +1117,10 @@ impl Workspace {
         // the previous pass so checking the source cannot show stale totals.
         let downloads = self.client.downloads();
         downloads.remove_source(&slug);
-        self.progress = downloads.snapshot();
+        self.progress_revision += 1;
+        self.progress.items.retain(|item| item.source_id != slug);
+        self.import_totals.remove(&slug);
+        self.episode_view.dirty |= self.selected.as_ref() == Some(&slug);
         self.reports.insert(
             slug.clone(),
             SyncReport::Notice("Reading YouTube and Listenbox…".into()),
@@ -1266,9 +1309,9 @@ impl Workspace {
                             || self.creating.is_some()
                             || self.stopping.is_some(),
                     )
-                    .on_click(cx.listener(|view, _, window, cx| {
+                    .on_click(cx.listener(|view, _, _window, cx| {
                         view.settings_open = false;
-                        view.cookie_input = settings::cookie_input(window, cx);
+                        view.cookie_input = None;
                         view.import_open = true;
                         view.error = None;
                         cx.notify();
