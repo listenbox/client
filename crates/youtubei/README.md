@@ -15,9 +15,10 @@ moon run client-youtubei:build client-youtubei:test
 ```
 
 Moon bundles `vendor/youtubejs/src/platform/cf-worker.ts` with preserved names
-using upstream’s unchanged `package-lock.json`. The client owns the build tasks and
-deterministic regression tests in `vendor/`; the submodule contains only upstream
-source fixes. Moon writes `vendor/bundle/cf-worker.js`, which Cargo copies into its
+using the client-owned `vendor/aube-lock.yaml`. The client owns the build tasks and
+deterministic runtime tests in `vendor/`. The fork tracks upstream and retains
+listing-completeness and embedded-player extensions; see `vendor/README.md` for
+their contracts and provenance. Moon writes `vendor/bundle/cf-worker.js`, which Cargo copies into its
 `OUT_DIR` and embeds without a network download. Both standalone
 and parent-workspace builds use these same prerequisites. End users need no
 JavaScript runtime. This crate is workspace-only; its source dependency is pinned
@@ -112,12 +113,12 @@ from JSON null. `deserialize` is an explicit data snapshot, not the call protoco
 This is **not a generated, statically typed translation of every TypeScript
 declaration**. APIs outside the typed surface use these dynamic Rust operations.
 
-Application policy stays in Rust: for Mazit's unavailable-inclusive flat listing,
+Application policy stays in Rust: for Listenbox's unavailable-inclusive flat listing,
 call `Actions::browse` with `browse_id: "VL" + id` and `params: "wgYCCAA="`, then construct
 `Playlist` and follow every continuation. The crate
 does not expand listing videos or choose an audio format for the application.
-Mazit keeps channel HTML resolution, listing validation, publication dates, and
-audio selection in `src/youtube/`. The app does not call Innertube's download or
+Listenbox keeps channel HTML resolution, listing validation, publication dates, and
+audio selection in `crates/sync-engine/src/innertube.rs`. The app does not call Innertube's download or
 stream APIs: its Rust download manager retains range requests and concurrency
 slots. `Engine::fetch_with` accepts a Rust async HTTP
 callback, so the app retains its reqwest client and cookie jar. Request and
