@@ -26,9 +26,7 @@ members must prevent reconciliation.
 
 PR #1312 was closed after its menu-video example proved synthetic. No captured
 response established that proposed bug. Do not use that example as provider
-evidence or reinstate its fixture merely to justify this fork. The parent
-repository records the full evidence/coverage audit in
-`docs/youtube-provider-audit.md`.
+evidence or reinstate its fixture merely to justify this fork.
 
 Audit remaining divergence with a direct source comparison, not a three-dot
 comparison from the merge base:
