@@ -332,11 +332,14 @@ impl Database {
 
     pub fn forget(&self, origin: &str, show: &str, source: &str) -> Result<()> {
         let ids = self.read(|connection| {
-            let mut statement = connection.prepare("SELECT operation_id FROM transfers WHERE origin IS ?1 AND show_slug IS ?2 AND source_url IS ?3")?;
+            let mut statement = connection.prepare_cached("SELECT operation_id FROM transfers WHERE origin IS ?1 AND show_slug IS ?2 AND source_url IS ?3")?;
             Ok(statement
                 .query_map(params![origin, show, source], |row| row.get::<_, String>(0))?
                 .collect::<Result<Vec<_>, _>>()?)
         })?;
+        if ids.is_empty() {
+            return Ok(());
+        }
         // Delete files first. A crash before row deletion is harmless: remote inventory reconciles it again.
         for id in ids {
             let directory = self.directory(&id)?;

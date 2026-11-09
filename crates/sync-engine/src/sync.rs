@@ -395,7 +395,12 @@ impl Engine {
             bail!(message);
         }
 
-        let mut after = inventory(api, slug).await?;
+        let mut after =
+            if additions.is_empty() && before.episodes.iter().all(|episode| episode.imported) {
+                before.clone()
+            } else {
+                inventory(api, slug).await?
+            };
         ensure!(
             after.show.youtube_linkage() == Some(collection),
             "Show linkage changed during sync"
