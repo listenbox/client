@@ -1,7 +1,7 @@
 mod commands;
 mod episodes;
 mod youtube;
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use listenbox_sync_engine::{api, auth, config, youtube as youtube_source};
 use tokio_util::sync::CancellationToken;
@@ -299,23 +299,10 @@ async fn main() -> std::process::ExitCode {
         .with_writer(std::io::stderr)
         .init();
     let cancel = CancellationToken::new();
-    let signal_cancel = cancel.clone();
-    tokio::spawn(async move {
-        #[cfg(unix)]
-        {
-            match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
-                Ok(mut terminate) => {
-                    tokio::select! { _ = tokio::signal::ctrl_c() => {}, _ = terminate.recv() => {} }
-                }
-                Err(_) => {
-                    let _ = tokio::signal::ctrl_c().await;
-                }
-            }
-        }
-        #[cfg(not(unix))]
-        let _ = tokio::signal::ctrl_c().await;
-        signal_cancel.cancel();
-    });
+    if let Err(error) = install_signal_handlers(cancel.clone()) {
+        eprintln!("{error:#}");
+        return std::process::ExitCode::FAILURE;
+    }
     match run(cli, cancel.clone()).await {
         Ok(()) => std::process::ExitCode::from(if cancel.is_cancelled() { 130 } else { 0 }),
         Err(error) => {
@@ -323,6 +310,32 @@ async fn main() -> std::process::ExitCode {
             std::process::ExitCode::from(if cancel.is_cancelled() { 130 } else { 1 })
         }
     }
+}
+
+fn install_signal_handlers(cancel: CancellationToken) -> Result<()> {
+    // Register synchronously: a blocking command may reach its first lock
+    // before a spawned signal task gets its first poll.
+    #[cfg(unix)]
+    let signal = {
+        use tokio::signal::unix::{SignalKind, signal};
+        let mut interrupt = signal(SignalKind::interrupt()).context("Listen for Ctrl+C")?;
+        let mut terminate = signal(SignalKind::terminate()).context("Listen for termination")?;
+        async move {
+            tokio::select! { _ = interrupt.recv() => {}, _ = terminate.recv() => {} }
+        }
+    };
+    #[cfg(windows)]
+    let signal = {
+        let mut interrupt = tokio::signal::windows::ctrl_c().context("Listen for Ctrl+C")?;
+        async move {
+            interrupt.recv().await;
+        }
+    };
+    tokio::spawn(async move {
+        signal.await;
+        cancel.cancel();
+    });
+    Ok(())
 }
 
 async fn run(cli: Cli, cancel: CancellationToken) -> Result<()> {
