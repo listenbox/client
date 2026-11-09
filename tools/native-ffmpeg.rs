@@ -180,7 +180,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         None
     };
     let version = "9.0.2";
-    let checksum = "8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e";
+    let checksum = "6e374ed621e48faa40639307dff48ba6fe574a509977956d2cce9669b7cc27e9";
     let cache = env::current_dir()?.join(".cache");
     let prefix = cache.join(match &target {
         Some(target) => format!("ffmpeg-{target}"),
@@ -192,14 +192,18 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
     fs::create_dir_all(&cache)?;
     fs::create_dir_all(&build)?;
-    let archive = cache.join(format!("ffmpeg-{version}.tar.xz"));
-    let url = format!("https://ffmpeg.org/releases/ffmpeg-{version}.tar.xz");
+    let archive = cache.join(format!("ffmpeg-{version}.tar.gz"));
+    let url = format!("https://codeload.github.com/FFmpeg/FFmpeg/tar.gz/refs/tags/n{version}");
     prepare_archive(&archive, &url, checksum, msys2_bin.as_deref())?;
     let source = build.join(format!("ffmpeg-{version}"));
     if source.exists() {
         fs::remove_dir_all(&source)?;
     }
     extract_archive(&archive, &build, msys2_bin.as_deref())?;
+    fs::rename(build.join(format!("FFmpeg-n{version}")), &source)?;
+    // GitHub archives omit the release tarball's VERSION file. Preserve it so
+    // FFmpeg cannot pick up the enclosing client repository's Git version.
+    fs::copy(source.join("RELEASE"), source.join("VERSION"))?;
     let openh264_version = "2.6.0";
     let openh264_checksum = "558544ad358283a7ab2930d69a9ceddf913f4a51ee9bf1bfb9e377322af81a69";
     let openh264_url =
