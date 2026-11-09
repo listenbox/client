@@ -63,6 +63,7 @@ async fn downloading_gate(
     changes: &mut tokio::sync::watch::Receiver<()>,
     count: usize,
 ) {
+    eprintln!("pipeline: waiting for {count} active downloads");
     loop {
         let snapshot = manager.snapshot();
         let downloading: Vec<_> = snapshot
@@ -80,6 +81,7 @@ async fn downloading_gate(
                         .all(|range| range.phase == RangePhase::Complete)
             })
         {
+            eprintln!("pipeline: admitted {count} active downloads");
             return;
         }
         changes.changed().await.unwrap();
@@ -93,6 +95,7 @@ async fn receive_window(
     changes: &mut tokio::sync::watch::Receiver<()>,
     credit: u64,
 ) {
+    eprintln!("pipeline: receiving {credit} bytes per active download");
     let before: Vec<_> = manager
         .snapshot()
         .items
@@ -144,7 +147,14 @@ async fn live_download_adaptation() {
     let engine = Engine::default();
     let mut changes = engine.downloads.changes();
     let (hold_clock, clock_guard) = hold_manual_clock().await;
-    let upload_work = engine.once(&api, prelude);
+    let upload_work = async {
+        let result = engine.once(&api, prelude).await;
+        assert!(
+            cancel.is_cancelled(),
+            "Upload source ended before the pipeline reached Stop: {result:?}"
+        );
+        result
+    };
     let work = async {
         let mut admission = engine.downloads.changes();
         while engine
@@ -167,7 +177,12 @@ async fn live_download_adaptation() {
             );
             admission.changed().await.unwrap();
         }
-        engine.once(&api, slug).await
+        let result = engine.once(&api, slug).await;
+        assert!(
+            cancel.is_cancelled(),
+            "Download source ended before the pipeline reached Stop: {result:?}"
+        );
+        result
     };
     let monitor = async {
         loop {
@@ -189,23 +204,23 @@ async fn live_download_adaptation() {
         downloading_gate(&engine.downloads, &mut changes, 2).await;
         tokio::time::advance(SAMPLE_WINDOW).await;
         tokio::task::yield_now().await;
-        receive_window(&api, mock, &engine.downloads, &mut changes, 16 << 10).await;
+        receive_window(&api, mock, &engine.downloads, &mut changes, 1 << 10).await;
         downloading_gate(&engine.downloads, &mut changes, 3).await;
         // Exclude the window in which the third receiver joined.
         tokio::time::advance(SAMPLE_WINDOW).await;
         tokio::task::yield_now().await;
-        receive_window(&api, mock, &engine.downloads, &mut changes, 16 << 10).await;
+        receive_window(&api, mock, &engine.downloads, &mut changes, 1 << 10).await;
         assert_eq!(
             engine.downloads.snapshot().download_slots,
             3,
             "Useful throughput growth was rolled back"
         );
-        receive_window(&api, mock, &engine.downloads, &mut changes, 16 << 10).await;
+        receive_window(&api, mock, &engine.downloads, &mut changes, 1 << 10).await;
         downloading_gate(&engine.downloads, &mut changes, 4).await;
         tokio::time::advance(SAMPLE_WINDOW).await;
         tokio::task::yield_now().await;
         // Four receivers get the same aggregate bytes as the previous three.
-        receive_window(&api, mock, &engine.downloads, &mut changes, 12 << 10).await;
+        receive_window(&api, mock, &engine.downloads, &mut changes, 768).await;
         assert_eq!(
             engine.downloads.snapshot().download_slots,
             3,
@@ -234,7 +249,7 @@ async fn live_download_adaptation() {
                 .iter()
                 .filter(|item| item.phase == Phase::Queued)
                 .count(),
-            4
+            1
         );
         assert_eq!(
             drained.upload_slots, 2,
