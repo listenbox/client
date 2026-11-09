@@ -578,18 +578,22 @@ pub(crate) async fn import_video(
             let separate_audio = media.audio.is_some();
             let cancel = api.cancel.clone();
             let language = language.to_owned();
+            let show_slug = slug.to_owned();
+            let source_url = source_url.clone();
+            let youtube_url = collection.to_owned();
+            let journal = journal.clone();
             let preparation = format!(
                 "show_slug={slug} video_id={id} operation_id={operation_id} kind={} title={:?}",
                 if audio { "audio" } else { "video" },
                 media.title,
             );
-            // Join the FFmpeg owner before releasing files, including after cancellation.
+            // Join preparation and durable journal writes before releasing files,
+            // including after cancellation. File flushes must not block the executor.
             let span = tracing::info_span!("media.prepare");
-            let duration = tokio::task::spawn_blocking(move || {
+            tokio::task::spawn_blocking(move || -> Result<p::CreateEpisodePackage> {
                 let _entered = span.enter();
                 // The actual blocking worker owns the CPU permit, including if
                 // its async caller is dropped. Normal cancellation still joins it.
-                let _preparing = preparing;
                 // Measure execution, excluding download and blocking-pool wait time.
                 let started = Instant::now();
                 if cfg!(debug_assertions) {
@@ -619,25 +623,26 @@ pub(crate) async fn import_video(
                         result.as_ref().err().map(ToString::to_string),
                     );
                 }
-                result
+                // Disk latency must not consume another preparation's CPU slot.
+                drop(preparing);
+                let manifest = p::CreateEpisodePackage {
+                    show_slug,
+                    source_url,
+                    youtube_url,
+                    operation_id,
+                    title: media.title,
+                    description: Some(media.description),
+                    duration_seconds: result?,
+                    published_at: media.published_at,
+                    objects: inventory(&root, audio)?,
+                };
+                for object in &manifest.objects {
+                    std::fs::File::open(root.join(&object.name))?.sync_all()?;
+                }
+                journal.save_prepared(&manifest)?;
+                Ok(manifest)
             })
-            .await??;
-            let manifest = p::CreateEpisodePackage {
-                show_slug: slug.into(),
-                source_url: source_url.clone(),
-                youtube_url: collection.into(),
-                operation_id,
-                title: media.title,
-                description: Some(media.description),
-                duration_seconds: duration,
-                published_at: media.published_at,
-                objects: inventory(&directory, audio)?,
-            };
-            for object in &manifest.objects {
-                std::fs::File::open(directory.join(&object.name))?.sync_all()?;
-            }
-            journal.save_prepared(&manifest)?;
-            manifest
+            .await??
         }
     };
     let objects = &manifest.objects;

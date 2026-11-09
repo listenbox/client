@@ -19,7 +19,6 @@ use std::{
 
 pub const WATCH_INTERVAL: Duration = Duration::from_secs(3600);
 const TRANSFER_ATTEMPTS: usize = 5;
-const METADATA_REQUEST_BYTES: usize = 4 << 20;
 
 #[derive(Default, Clone, Debug)]
 pub struct Report {
@@ -438,7 +437,9 @@ impl Engine {
                 })
             })
             .collect();
-        update_titles(api, slug, collection, titles).await?;
+        if !titles.is_empty() {
+            update_metadata(api, slug, collection, None, titles, false).await?;
+        }
         let ordered: Vec<_> = ordered_urls
             .iter()
             .filter_map(|url| episodes.get(url.as_str()))
@@ -490,49 +491,6 @@ impl Engine {
             }
         }
     }
-}
-
-async fn update_titles(
-    api: &Api,
-    slug: &str,
-    collection: &str,
-    titles: Vec<p::SyncEpisodeTitle>,
-) -> Result<()> {
-    let overhead = serde_json::to_vec(&p::UpdateSyncMetadata {
-        youtube_url: collection.into(),
-        image_asset_id: None,
-        episode_titles: Vec::new(),
-        checked: None,
-    })?
-    .len();
-    let mut bytes = overhead;
-    let mut batch = Vec::new();
-    for title in titles {
-        let size = serde_json::to_vec(&title)?.len();
-        ensure!(
-            overhead + size <= METADATA_REQUEST_BYTES,
-            "Episode title exceeds the metadata request budget"
-        );
-        let separator = usize::from(!batch.is_empty());
-        if bytes + size + separator > METADATA_REQUEST_BYTES {
-            update_metadata(
-                api,
-                slug,
-                collection,
-                None,
-                std::mem::take(&mut batch),
-                false,
-            )
-            .await?;
-            bytes = overhead;
-        }
-        bytes += size + usize::from(!batch.is_empty());
-        batch.push(title);
-    }
-    if !batch.is_empty() {
-        update_metadata(api, slug, collection, None, batch, false).await?;
-    }
-    Ok(())
 }
 
 async fn update_metadata(

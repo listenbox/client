@@ -4006,6 +4006,7 @@ pub enum UpdateSyncMetadataResponse {
     Status403(()),
     Status404(()),
     Status409(()),
+    Status413(()),
     Status423(YouTubeSyncStopped),
     Unexpected(reqwest::Response),
 }
@@ -4019,6 +4020,7 @@ impl Response for UpdateSyncMetadataResponse {
             403 => Self::Status403(()),
             404 => Self::Status404(()),
             409 => Self::Status409(()),
+            413 => Self::Status413(()),
             423 => Self::Status423(serde_json::from_slice(&read_body(response, _limit).await?).map_err(Error::Decode)?),
             _ => Self::Unexpected(response),
         })
@@ -4032,6 +4034,7 @@ impl Response for UpdateSyncMetadataResponse {
             Self::Status403(_) => 403,
             Self::Status404(_) => 404,
             Self::Status409(_) => 409,
+            Self::Status413(_) => 413,
             Self::Status423(_) => 423,
             Self::Unexpected(response) => response.status().as_u16(),
         }
@@ -4046,6 +4049,7 @@ impl Response for UpdateSyncMetadataResponse {
             Self::Status403(_) => Ok(Vec::new()),
             Self::Status404(_) => Ok(Vec::new()),
             Self::Status409(_) => Ok(Vec::new()),
+            Self::Status413(_) => Ok(Vec::new()),
             Self::Status423(body) => serde_json::to_vec(&body).map_err(Error::Decode),
             Self::Unexpected(response) => read_body(response, 64 << 10).await,
         };
