@@ -1,4 +1,8 @@
-disposition: ship
+disposition: historical
+
+This records the GPUI review before the Go/MyGo rewrite. Its captures and
+source references describe that implementation. Current MyGo verification is
+recorded separately in `mygo-finish-review.md`.
 
 ## Scope and evidence
 

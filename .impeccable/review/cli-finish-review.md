@@ -1,6 +1,8 @@
 # Disposition
 
-ship
+Historical Rust CLI review. The captures below predate the Go rewrite and
+remain evidence of the terminal layout being preserved. Current Go command,
+plain-output and cancellation behavior is verified by integrated CLI E2E.
 
 ## Visual evidence and capture validity
 

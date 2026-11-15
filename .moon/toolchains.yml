@@ -1,4 +1,3 @@
-# Rustup reads the version and components from rust-toolchain.toml.
-# Cargo fetches dependencies on demand; kache shares compiler artifacts.
-rust:
-  inheritAliases: false
+go:
+  version: '1.27.4'
+  inferRelationships: false

@@ -73,21 +73,13 @@ fi
 release_tag="v$next_version"
 git checkout --detach "$source_commit"
 
-manifest="$(mktemp)"
-trap 'rm -f "$manifest"' EXIT
-awk -v version="$next_version" '
-  /^\[/ { workspace = ($0 == "[workspace.package]") }
-  workspace && /^version = / { $0 = "version = \"" version "\"" }
-  { print }
-' Cargo.toml > "$manifest"
-cat "$manifest" > Cargo.toml
-kache cargo -- update --workspace
+printf '%s\n' "$next_version" > VERSION
 
 source_date="$(git show -s --format=%cI "$source_commit")"
 GIT_AUTHOR_DATE="$source_date" GIT_COMMITTER_DATE="$source_date" \
   git -c user.name='github-actions[bot]' \
     -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
-    -c commit.gpgsign=false commit --quiet --allow-empty --only Cargo.toml Cargo.lock \
+    -c commit.gpgsign=false commit --quiet --allow-empty --only VERSION \
     -m "Release $release_tag" -m "Source-commit: $source_commit"
 git tag "$release_tag"
 finish

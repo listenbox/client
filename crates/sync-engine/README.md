@@ -1,6 +1,6 @@
 # Listenbox sync engine
 
-Shared Rust runtime for the [CLI](../cli/README.md) and
+Shared Go runtime for the [CLI](../cli/README.md) and
 [desktop app](../desktop/README.md). It owns authentication, API access,
 YouTube sessions, media preparation, and resumable synchronization.
 

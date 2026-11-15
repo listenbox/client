@@ -21,21 +21,15 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       SOURCE_COMMIT: ${{ github.event.workflow_run.head_sha }}
-      KACHE_CONFIG: ${{ github.workspace }}/.kache.toml
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
-      - uses: actions/setup-node@v6
+      - uses: jdx/mise-action@v5
         with:
-          node-version: '26.5.0'
-          package-manager-cache: false
-      - run: rustup toolchain install 1.98.1 --profile minimal
-      - uses: kunobi-ninja/kache-action@ad7317540dcdd71c904f7a60a87b620a0c0e67ed # v1
-        with:
-          version: '0.27.0'
-          github-cache: false
+          version: '2026.11.7'
+          install_args: node jq aube gh
       - name: Reserve the next numeric version for this source
         id: release
         run: bash tools/release-next.sh "$SOURCE_COMMIT"

@@ -18,14 +18,10 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v6
+      - uses: jdx/mise-action@v5
         with:
-          node-version: '26.5.0'
-          package-manager-cache: false
-      - uses: jdx/aube-action@v1
-        with:
-          version: "2.5.1"
-          run-install: false
+          version: '2026.11.7'
+          install_args: node jq aube gh
       - name: Validate stable release identity
         id: identity
         env:
@@ -53,75 +49,46 @@ jobs:
       MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
       MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
       MACOSX_DEPLOYMENT_TARGET: '13.0'
-      KACHE_CONFIG: ${{ github.workspace }}/.kache.toml
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           submodules: recursive
-      - uses: actions/setup-node@v6
+      - uses: jdx/mise-action@v5
         with:
-          node-version: '26.5.0'
-          package-manager-cache: false
-      - uses: jdx/aube-action@v1
+          version: '2026.11.7'
+      - uses: actions/cache@v6
         with:
-          version: '2.5.1'
-          run-install: false
+          path: |
+            ~/go/pkg/mod
+            ~/Library/Caches/go-build
+            .cache/ffmpeg
+            .cache/native-src
+          key: client-native-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.lock', 'go.sum', 'internal/nativebuild/**/*.go') }}
       - name: Import protected Apple signing credentials
         if: startsWith(github.ref, 'refs/tags/v')
         run: bash tools/macos-signing.sh setup
-      - run: brew install cmake llvm
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-nextest@0.9.146
-      - uses: moonrepo/setup-toolchain@v0
-        with:
-          moon-version: '2.5.5'
-      - run: rustup toolchain install 1.98.1 --profile minimal
-      - name: Prepare pinned updater dependencies
-        run: moon exec --ignore-ci-checks client:updaters
-      - name: Cache Cargo sources, kache, and Moon outputs
-        uses: actions/cache@v6
-        with:
-          # Save each commit's progress, then restore the closest compatible build.
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            ${{ runner.temp }}/kache
-            .moon/cache/outputs
-          key: rust-kache-v1-0.27.0-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.kache.toml', '.cargo/config.toml', 'rust-toolchain.toml', 'tools/native-ffmpeg.rs') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', '**/moon.yml', '.moon/**/*.yml', '.github/workflows/ci.yaml', '.github/workflows/release.yaml') }}-${{ github.sha }}
-          restore-keys: |
-            rust-kache-v1-0.27.0-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.kache.toml', '.cargo/config.toml', 'rust-toolchain.toml', 'tools/native-ffmpeg.rs') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', '**/moon.yml', '.moon/**/*.yml', '.github/workflows/ci.yaml', '.github/workflows/release.yaml') }}-
-            rust-kache-v1-0.27.0-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.kache.toml', '.cargo/config.toml', 'rust-toolchain.toml', 'tools/native-ffmpeg.rs') }}-
-      - name: Set up kache
-        uses: kunobi-ninja/kache-action@ad7317540dcdd71c904f7a60a87b620a0c0e67ed # v1
-        with:
-          version: '0.27.0'
-          cache-dir: ${{ runner.temp }}/kache
-          # The cache above refreshes on every commit, including source-only edits.
-          github-cache: false
-          pr-comment: false
-      - name: Test release-linked media on Apple Silicon
-        run: moon exec --ignore-ci-checks client-engine:test-media
+      - name: Test native client and media on Apple Silicon
+        run: moon exec --ignore-ci-checks client:test
       - name: Use TCP for Apple notarization ticket delivery
         if: startsWith(github.ref, 'refs/tags/v')
         # https://github.com/actions/runner-images/issues/14924
-        # CloudKit HTTP/3 connections can be dropped on hosted macOS runners.
         run: |
           echo 'block return out quick proto udp from any to any port 443' | sudo pfctl -f -
           sudo pfctl -E
-      - name: Build Apple Silicon DMG
+      - name: Build, sign and notarize Apple Silicon DMG with MyGo
         run: moon exec --ignore-ci-checks desktop:dmg
-      - name: Verify Apple Silicon architecture and FFmpeg linkage
+      - name: Verify Apple Silicon architecture and static codecs
         run: |
-          binary=crates/desktop/dist/release/listenbox-desktop
+          binary=crates/desktop/dist/mygo/darwin-arm64/Listenbox.app/Contents/MacOS/Listenbox
           lipo "$binary" -verify_arch arm64
           dependencies="$(otool -L "$binary")"
           printf '%s\n' "$dependencies"
-          if [[ "$dependencies" =~ lib(avcodec|avformat|avutil|swresample).*\.dylib ]]; then
+          if [[ "$dependencies" =~ lib(avcodec|avformat|avdevice|avfilter|avutil|swscale|swresample).*\.dylib ]]; then
             echo 'FFmpeg must be statically linked.' >&2
             exit 1
           fi
+          "$binary" --version
       - name: Sign final update payload and generate macOS appcast
         if: startsWith(github.ref, 'refs/tags/v')
         run: node tools/release.mjs prepare macos-arm64 crates/desktop/dist/macos/Listenbox-${{ needs.identity.outputs.version }}-macos-arm64.dmg .cache/release-macos
@@ -134,10 +101,8 @@ jobs:
         with:
           name: diagnostics-macos-${{ github.run_attempt }}
           path: |
-            target/nextest/ci/junit.xml
-            target/release/build/ffmpeg-sys-the-third-*/output
-            .cache/ffmpeg-*/ffbuild/config.log
-            crates/desktop/dist/macos/*.notary.json
+            .cache/native-src/FFmpeg-*/ffbuild/config.log
+            crates/desktop/dist/mygo/**/*.notary.json
             .moon/cache/*Report.json
           include-hidden-files: true
           if-no-files-found: ignore
@@ -146,14 +111,12 @@ jobs:
           name: native-macos
           path: crates/desktop/dist/macos/*.dmg
           if-no-files-found: error
-
       - uses: actions/upload-artifact@v7
         if: startsWith(github.ref, 'refs/tags/v')
         with:
           name: release-macos
           path: .cache/release-macos/*
           if-no-files-found: error
-
   windows:
     needs: identity
     if: needs.identity.outputs.current == 'true'
@@ -163,26 +126,25 @@ jobs:
       matrix:
         include:
           - architecture: x64
-            target: x86_64-pc-windows-msvc
             runner: windows-2025
-            llvm-platform: win64
-            llvm-sha256: 16e5709785fef73c854646241c4a92c5cd574318d1b33c63330dd7721903e55c
+            msystem: CLANG64
+            sdk: clang-x86_64
+            assembler: mingw-w64-clang-x86_64-nasm
           - architecture: arm64
-            target: aarch64-pc-windows-msvc
             runner: windows-11-arm
-            llvm-platform: woa64
-            llvm-sha256: 76f44ef1ba6eeb5a65904e9500f042f588fade49952778ce48f0374daa934396
+            msystem: CLANGARM64
+            sdk: clang-aarch64
+            assembler: ''
     concurrency:
       group: desktop-windows-${{ matrix.architecture }}-${{ startsWith(github.ref, 'refs/tags/v') && 'stable' || github.ref }}
       cancel-in-progress: ${{ startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ${{ matrix.runner }}
     env:
-      KACHE_CONFIG: ${{ github.workspace }}/.kache.toml
+      LISTENBOX_PRODUCTION_RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') && '1' || '0' }}
       LISTENBOX_SOURCE_COMMIT: ${{ github.sha }}
       LISTENBOX_UPDATE_PUBLIC_KEY: ${{ vars.WINDOWS_UPDATE_PUBLIC_KEY }}
       WINDOWS_UPDATE_PUBLIC_KEY: ${{ vars.WINDOWS_UPDATE_PUBLIC_KEY }}
       WINDOWS_UPDATE_SEED_BASE64: ${{ secrets.WINDOWS_UPDATE_SEED_BASE64 }}
-      LLVM_VERSION: '22.1.8'
     defaults:
       run:
         shell: pwsh
@@ -192,147 +154,39 @@ jobs:
         with:
           fetch-depth: 0
           submodules: recursive
-      - uses: actions/setup-node@v6
-        with:
-          node-version: '26.5.0'
-          package-manager-cache: false
-      - uses: jdx/aube-action@v1
-        with:
-          version: '2.5.1'
-          run-install: false
-      - name: Install host-native LLVM
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          LLVM_PLATFORM: ${{ matrix.llvm-platform }}
-          LLVM_SHA256: ${{ matrix.llvm-sha256 }}
-        run: |
-          # LLVM 20/21 can crash when ffmpeg-sys unloads libclang after probing.
-          # LLVM 22 includes https://github.com/llvm/llvm-project/pull/171465.
-          $archive = "LLVM-$env:LLVM_VERSION-$env:LLVM_PLATFORM.exe"
-          $download = Join-Path $env:RUNNER_TEMP $archive
-          $directory = Join-Path $env:RUNNER_TEMP 'llvm'
-          $libclangPath = Join-Path $directory 'bin'
-          gh release download "llvmorg-$env:LLVM_VERSION" --repo llvm/llvm-project --pattern $archive --dir $env:RUNNER_TEMP
-          if ($LASTEXITCODE -ne 0) { throw 'LLVM download failed.' }
-          if ((Get-FileHash $download -Algorithm SHA256).Hash -ne $env:LLVM_SHA256) { throw 'LLVM checksum mismatch.' }
-          7z x $download "-o$directory" -y | Out-Null
-          if ($LASTEXITCODE -ne 0) { throw 'LLVM extraction failed.' }
-          Remove-Item $download
-          if (-not (Test-Path (Join-Path $libclangPath 'libclang.dll'))) { throw 'LLVM libclang.dll is missing.' }
-          & (Join-Path $libclangPath 'clang.exe') --version
-          if ($LASTEXITCODE -ne 0) { throw 'LLVM cannot run on this host.' }
-          "LIBCLANG_PATH=$libclangPath" >> $env:GITHUB_ENV
       - uses: msys2/setup-msys2@v2
         id: msys2
         with:
-          msystem: MSYS
+          msystem: ${{ matrix.msystem }}
           path-type: inherit
-          install: make diffutils tar xz openssl
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-nextest@0.9.146
-      - name: Install Moon
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          install: >-
+            make diffutils tar xz openssl
+            mingw-w64-${{ matrix.sdk }}-toolchain
+            mingw-w64-${{ matrix.sdk }}-pkgconf
+            ${{ matrix.assembler }}
+      - name: Record native SDK identity
+        id: sdk
+        shell: msys2 {0}
         run: |
-          # Moon publishes x64 Windows binaries; Windows ARM64 runs these too.
-          $archive = 'moon_cli-x86_64-pc-windows-msvc.zip'
-          $tools = Join-Path $env:RUNNER_TEMP 'moon'
-          New-Item -ItemType Directory -Force $tools | Out-Null
-          gh release download v2.5.5 --repo moonrepo/moon --pattern $archive --pattern "$archive.sha256" --dir $tools
-          if ($LASTEXITCODE -ne 0) { throw 'Moon download failed.' }
-          $expected = ((Get-Content (Join-Path $tools "$archive.sha256") -Raw).Trim() -split '\s+')[0]
-          if ((Get-FileHash (Join-Path $tools $archive) -Algorithm SHA256).Hash -ne $expected) { throw 'Moon checksum mismatch.' }
-          Expand-Archive (Join-Path $tools $archive) $tools
-          (Get-ChildItem $tools -Recurse -Filter moon.exe | Select-Object -First 1).DirectoryName >> $env:GITHUB_PATH
-      - run: rustup toolchain install 1.98.1 --profile minimal --component clippy,rustfmt --target ${{ matrix.target }}
-      - name: Bundle pinned YouTube.js source
-        run: moon exec --ignore-ci-checks youtubejs:bundle
-      - name: Resolve native toolchain version
-        id: native-toolchain
-        shell: pwsh
-        run: |
-          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
-          $component = if ('${{ matrix.architecture }}' -eq 'arm64') { 'ARM64' } else { 'x86.x64' }
-          $vsVersion = & $vswhere -latest -products '*' -requires "Microsoft.VisualStudio.Component.VC.Tools.$component" -property installationVersion
-          if ($LASTEXITCODE -ne 0 -or -not $vsVersion) { throw 'Visual Studio build tools are missing.' }
-          "version=$vsVersion" >> $env:GITHUB_OUTPUT
-      - name: Cache Cargo sources and kache
-        uses: actions/cache@v6
+          sdk_hash="$(pacman -Q | sha256sum | cut -d ' ' -f 1)"
+          printf 'identity=%s\n' "$sdk_hash" >> "$GITHUB_OUTPUT"
+          printf 'MSYS2_LOCATION=%s\n' "${{ steps.msys2.outputs.msys2-location }}" >> "$GITHUB_ENV"
+      - uses: jdx/mise-action@v5
         with:
-          # Keep MSVC/LLVM compatibility fixed while refreshing Cargo per commit.
+          version: '2026.11.7'
+      - uses: actions/cache@v6
+        with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            ${{ runner.temp }}/kache
-          key: windows-rust-kache-v1-0.27.0-${{ matrix.target }}-${{ steps.native-toolchain.outputs.version }}-llvm-${{ env.LLVM_VERSION }}-${{ hashFiles('.kache.toml', 'rust-toolchain.toml', '.cargo/config.toml', 'tools/native-ffmpeg.rs', 'tools/build-windows.ps1') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}-${{ github.sha }}
-          restore-keys: |
-            windows-rust-kache-v1-0.27.0-${{ matrix.target }}-${{ steps.native-toolchain.outputs.version }}-llvm-${{ env.LLVM_VERSION }}-${{ hashFiles('.kache.toml', 'rust-toolchain.toml', '.cargo/config.toml', 'tools/native-ffmpeg.rs', 'tools/build-windows.ps1') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}-
-            windows-rust-kache-v1-0.27.0-${{ matrix.target }}-${{ steps.native-toolchain.outputs.version }}-llvm-${{ env.LLVM_VERSION }}-${{ hashFiles('.kache.toml', 'rust-toolchain.toml', '.cargo/config.toml', 'tools/native-ffmpeg.rs', 'tools/build-windows.ps1') }}-
-      - name: Set up kache
-        uses: kunobi-ninja/kache-action@ad7317540dcdd71c904f7a60a87b620a0c0e67ed # v1
-        with:
-          version: '0.27.0'
-          cache-dir: ${{ runner.temp }}/kache
-          # The cache above refreshes on every commit, including source-only edits.
-          github-cache: false
-          pr-comment: false
-      - name: Resolve desktop release version
-        id: version
-        shell: pwsh
-        run: |
-          $metadata = kache cargo -- metadata --locked --no-deps --format-version 1 | ConvertFrom-Json
-          if ($LASTEXITCODE -ne 0) { throw 'Cargo metadata failed.' }
-          $desktop = @($metadata.packages | Where-Object { $_.name -eq 'listenbox-desktop' })
-          if ($desktop.Count -ne 1) { throw 'Expected exactly one listenbox-desktop package.' }
-          "version=$($desktop[0].version)" >> $env:GITHUB_OUTPUT
-      - name: Restore FFmpeg
-        id: ffmpeg-cache
-        uses: actions/cache/restore@v6
-        with:
-          path: .cache/ffmpeg-${{ matrix.target }}
-          key: windows-ffmpeg-${{ matrix.target }}-${{ steps.native-toolchain.outputs.version }}-${{ hashFiles('rust-toolchain.toml', 'tools/native-ffmpeg.rs', 'tools/build-windows.ps1') }}
-      - name: Build FFmpeg
-        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
-        env:
-          MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
+            ~/go/pkg/mod
+            ~/AppData/Local/go-build
+            .cache/ffmpeg
+            .cache/native-src
+          key: client-native-windows-${{ matrix.architecture }}-${{ steps.sdk.outputs.identity }}-${{ hashFiles('mise.lock', 'go.sum', 'internal/nativebuild/**/*.go') }}
+      - name: Build and verify MyGo release payload
         run: |
           New-Item -ItemType Directory -Force .cache | Out-Null
-          moon exec --ignore-ci-checks client:native-ffmpeg-windows-${{ matrix.architecture }} 2>&1 | Tee-Object .cache/windows-ffmpeg-${{ matrix.architecture }}.log
+          moon exec --ignore-ci-checks desktop:build-release-windows-${{ matrix.architecture }} 2>&1 | Tee-Object .cache/windows-desktop-${{ matrix.architecture }}.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      # Save the native build before Cargo runs, even if compilation later fails.
-      - name: Save FFmpeg
-        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6
-        with:
-          path: .cache/ffmpeg-${{ matrix.target }}
-          key: ${{ steps.ffmpeg-cache.outputs.cache-primary-key }}
-      - name: Prepare pinned updater dependencies
-        run: moon exec --ignore-ci-checks client:updaters
-      - name: Build and verify release
-        env:
-          MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
-        # Generated sources are checked in here. FFmpeg was prepared above and
-        # must not be rebuilt after an exact cache hit.
-        run: |
-          New-Item -ItemType Directory -Force .cache | Out-Null
-          moon exec --ignore-ci-checks --upstream none desktop:build-release-windows-${{ matrix.architecture }} 2>&1 | Tee-Object .cache/windows-desktop-${{ matrix.architecture }}.log
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Upload build diagnostics
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: diagnostics-windows-${{ matrix.architecture }}-${{ github.run_attempt }}
-          path: |
-            .cache/windows-*.log
-            target/nextest/ci/junit.xml
-            target/${{ matrix.target }}/release/build/ffmpeg-sys-the-third-*/output
-            .cache/ffmpeg-build-${{ matrix.target }}/ffmpeg-*/ffbuild/config.log
-            .moon/cache/*Report.json
-          include-hidden-files: true
-          if-no-files-found: ignore
-          retention-days: 14
       - name: Install verified Inno Setup compiler
         env:
           GH_TOKEN: ${{ github.token }}
@@ -345,7 +199,7 @@ jobs:
           if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'Pyrsys B.V.') { throw 'Invalid Inno Setup publisher.' }
           $process = Start-Process $installer -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw 'Inno Setup installation failed.' }
-      - name: Build per-user upgrade installer
+      - name: Build existing per-user upgrade installer
         run: ./tools/package-windows.ps1 -Architecture ${{ matrix.architecture }} -Payload crates/desktop/dist/windows-${{ matrix.architecture }}
       - uses: actions/upload-artifact@v7
         with:
@@ -364,7 +218,18 @@ jobs:
           name: release-windows-${{ matrix.architecture }}
           path: .cache/release-windows-${{ matrix.architecture }}/*
           if-no-files-found: error
-
+      - name: Upload Windows diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: diagnostics-windows-${{ matrix.architecture }}-${{ github.run_attempt }}
+          path: |
+            .cache/windows-*.log
+            .cache/native-src/FFmpeg-*/ffbuild/config.log
+            .moon/cache/*Report.json
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 14
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [identity, macos, windows]
@@ -383,17 +248,10 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v6
+      - uses: jdx/mise-action@v5
         with:
-          node-version: '26.5.0'
-          package-manager-cache: false
-      - uses: jdx/aube-action@v1
-        with:
-          version: '2.5.1'
-          run-install: false
-      - uses: moonrepo/setup-toolchain@v0
-        with:
-          moon-version: '2.5.5'
+          version: '2026.11.7'
+          install_args: node jq aube gh aqua:moonrepo/moon
       - uses: actions/download-artifact@v8
         with:
           pattern: release-*

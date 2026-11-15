@@ -1,0 +1,98 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+  relative-path-mode: gomod
+
+linters:
+  default: all
+  disable:
+    - arangolint
+    - clickhouselint
+    - depguard
+    - err113
+    - exhaustruct
+    - exhaustruct_v5
+    - forbidigo
+    - ginkgolinter
+    - gochecknoglobals
+    - goheader
+    - gomodguard
+    - gomodguard_v2
+    - loggercheck
+    - nilnil
+    - nlreturn
+    - noinlineerr
+    - protogetter
+    - rowserrcheck
+    - sloglint
+    - spancheck
+    - sqlclosecheck
+    - tagliatelle
+    - testifylint
+    - testpackage
+    - unqueryvet
+    - varnamelen
+    - wrapcheck
+    - wsl
+    - wsl_v5
+    - zerologlint
+  settings:
+    cyclop:
+      max-complexity: 12
+      package-average: 8
+    gomoddirectives:
+      replace-allow-list:
+        - github.com/getkin/kin-openapi
+  exclusions:
+    generated: strict
+    warn-unused: true
+    paths:
+      - internal/gen/.*
+      # moon:gitignored-files
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - linters:
+          - gomoddirectives
+        path: go.mod
+        text: listenbox.app/fixtureserver
+      - linters:
+          - gomoddirectives
+        path: go.mod
+        text: listenbox.app/spaniel
+      - linters:
+          - gomoddirectives
+        path: go.mod
+        text: listenbox.app/cloudflare-cache|listenbox.app/local-s3
+      - linters:
+          - gomoddirectives
+        path: go.mod
+        text: listenbox.app/stripe-mock|listenbox.app/google-oauth-mock|listenbox.app/turnstile-mock
+      - linters:
+          - gomoddirectives
+        path: go.mod
+        text: listenbox.app/youtube-data-api-v3/mock
+      - linters:
+          - gomoddirectives
+        path: go.mod
+        text: listenbox.app/youtube-web-mock
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+formatters:
+  enable:
+    - gci
+    - gofumpt
+    - goimports
+  exclusions:
+    generated: strict
+    warn-unused: true
+    paths:
+      # moon:gitignored-files

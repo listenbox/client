@@ -4,8 +4,12 @@ Implementation contract: Sparkle 2.10.0 on macOS ARM64 and WinSparkle 0.9.4
 on Windows x64/ARM64 own checking, persisted preferences, download verification,
 native prompts, deferral and installation. The pinned archives are SHA-256
 verified before extraction, and their licenses accompany installed files.
-Developer builds have no native updater or production checks. Release builds
-enable `native-updater` explicitly and require a valid public key.
+Developer builds without an update key have no native updater. Release builds
+embed the existing public key and require it for production packaging.
+MyGo's updater plugin uses signed JSON manifests, not Sparkle/WinSparkle appcasts;
+it is not enabled. MyGo still owns executable resources and bundle packaging.
+Windows uses `go-winsparkle`; macOS uses a Go Objective-C bridge to Sparkle 2's
+modern controller and retained installation callback.
 
 Both frameworks check every 24 hours. Automatic checks default to enabled on
 both platforms; macOS also defaults to automatically downloading and installing
@@ -30,18 +34,18 @@ descriptions, so Sparkle and WinSparkle do not create release-notes webviews.
 The macOS bundle also sets `SUShowReleaseNotes=false`. GitHub release pages are
 for reading in a browser, never inside an update alert.
 
-The workspace TaskTracker remains the authoritative owner of admitted work.
-Updater callbacks only enqueue a request onto GPUI. The workspace cancels new
+The workspace remains the authoritative owner of admitted work.
+Updater callbacks only enqueue a request onto MyGo's main thread. The workspace cancels new
 work, closes admission and waits for admitted writes, embedded FFmpeg cleanup
 and SQLite commits. Sparkle's retained installation handler runs on the main
 thread after that drain. WinSparkle's shutdown callback never waits or cleans
-up the DLL; cleanup happens after GPUI returns and the final runtime drain.
+up the DLL; cleanup happens after MyGo returns and the final runtime drain.
 The Windows installer waits for the app's mutex and never terminates the old
 process. If draining stalls, replacement is refused and the old installation
 remains usable. Credentials, settings, journals and downloads are owned by the
 persistent profile, outside all installation directories.
 
-The macOS bridge also gates Cocoa termination, covering Sparkle paths that omit
+MyGo's macOS termination hook also gates Cocoa termination, covering Sparkle paths that omit
 the postponement callback when an update is already staged. It routes termination
 through the same workspace drain and permits Cocoa to exit only afterward. An
 update requested during an existing drain uses that drain instead of discarding
@@ -50,9 +54,9 @@ credential removal before the update proceeds.
 
 ## Stable identity and publication
 
-`Cargo.toml` workspace version is the sole release identity: `X.Y.Z`, with
+`VERSION` is the sole release identity: `X.Y.Z`, with
 each component between 0 and 65535. Allocate a strictly greater version, update
-the lockfile and create the matching immutable `vX.Y.Z` tag. macOS
+the version file and create the matching immutable `vX.Y.Z` tag. macOS
 compares `X.Y.Z`; Windows compares `X.Y.Z.0`. Display version is `X.Y.Z`;
 the source commit is provenance, never update ordering. Every target comes
 from the tagged commit. Master pushes run standard CI; successful CI for the
@@ -65,11 +69,11 @@ on master. It serializes version allocation and checks that the CI source is
 still current before preparing and dispatching. A newer master update replaces
 an older candidate. `tools/release-next.sh` reserves the next patch after the
 highest numeric tag, including tags for canceled or failed releases. It changes
-only Cargo's workspace version and lockfile in a release commit with the CI
+only VERSION in a release commit with the CI
 source as its parent and a `Source-commit` trailer. The source branch is not
 changed, so no version-bump CI loop is created. Repeated preparation of the
 same source reuses its tag. For a deliberate major/minor release, merge a
-greater workspace version and matching lockfile; automation uses that exact
+greater VERSION; automation uses that exact
 version, then continues patch bumps. Every component must remain at most 65535.
 
 `tools/release-dispatch.sh` pushes only that tag, skips already published
@@ -86,8 +90,11 @@ platform cancellation groups.
 Windows PR jobs compile the native updater, verify DLL loading and
 compile the same per-user installer as stable releases. Their
 `desktop-validation` environment contains only public updater keys. macOS
-validation packages an ad-hoc development bundle; protected tags enable its
-native updater and Developer ID/notarization path.
+validation packages an ad-hoc bundle; protected tags require the native updater
+key and Developer ID/notarization path. MyGo signs nested Sparkle helpers and
+the bundle, builds the DMG, submits it using the imported notary keychain
+profile, and staples both app and DMG. The Moon target validates the signatures
+and tickets. `apps/client-signing/build-macos.mjs` uses this same flow locally.
 
 The `desktop-release` environment allows only `v*` tags and has no required
 reviewers or wait timer. A matching version tag starts

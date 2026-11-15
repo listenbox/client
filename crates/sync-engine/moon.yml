@@ -1,63 +1,18 @@
-language: rust
+language: go
 layer: library
-toolchains:
-  default: rust
-env:
-  CARGO_TERM_COLOR: always
-dependsOn: ['client']
-taskOptions:
-  cache: true
+tags: [client-component]
+dependsOn: [client]
 fileGroups:
-  sources:
-    - src/**/*.rs
-    - tests/**/*
-    - Cargo.toml
+  sources: ['**/*.go', '**/*.sql', 'tests/fixtures/**/*']
 tasks:
   build:
-    deps: [client:prerequisites, client-youtubei:build]
-    inputs: ['@group(sources)', 'project://client?group=sources']
-    script: |-
-      set -euo pipefail
-      kache cargo -- build --locked -p listenbox-sync-engine
-  test:
     deps: [client:prerequisites]
+    command: mise -C ../.. exec -- go build ./crates/sync-engine
     inputs: ['@group(sources)', 'project://client?group=sources']
-    command: kache cargo -- nextest run --locked -p listenbox-sync-engine
   build-e2e:
-    description: Build sync fixtures used by the parent API's integrated recovery proofs.
     deps: [client:prerequisites]
+    script: |
+      mise -C ../.. exec -- go test -c -o crates/sync-engine/dist/listenbox-network-e2e ./crates/sync-engine
+      cp dist/listenbox-network-e2e dist/listenbox-journal-e2e
     inputs: ['@group(sources)', 'project://client?group=sources']
-    script: |-
-      set -euo pipefail
-      mkdir -p dist
-      build_dir="$(mktemp -d dist/.build-e2e.XXXXXX)"
-      trap 'rm -rf "$build_dir"' EXIT
-      kache cargo -- test --locked -p listenbox-sync-engine --test v1_journal --test network_recovery --no-run --message-format=json > "$build_dir/test-build.json"
-      for fixture in v1_journal network_recovery; do
-        executable="$(jq -r --arg fixture "$fixture" 'select(.reason == "compiler-artifact" and .profile.test and .target.name == $fixture and .executable != null) | .executable' "$build_dir/test-build.json")"
-        test -n "$executable"
-        if [ "$fixture" = v1_journal ]; then
-          destination=listenbox-journal-e2e
-        else
-          destination=listenbox-network-e2e
-        fi
-        cp "$executable" "$build_dir/$destination"
-        mv "$build_dir/$destination" "dist/$destination"
-      done
-    outputs: [dist/listenbox-journal-e2e, dist/listenbox-network-e2e]
-  test-media:
-    description: Decode real AAC/Opus/AVC fixtures through the release-linked media preparation code.
-    deps: [client:prerequisites]
-    inputs: ['@group(sources)', 'project://client?group=sources']
-    command: kache cargo -- nextest run --locked --release --profile ci --success-output immediate -p listenbox-sync-engine -E 'test(native_media_tests::) or binary(native_build)'
-    options:
-      runInCI: false
-      cache: false
-  test-hls:
-    description: Validate complete multi-segment desktop HLS packages with Apple mediastreamvalidator.
-    deps: [client:prerequisites]
-    inputs: ['@group(sources)', 'project://client?group=sources']
-    command: kache cargo -- nextest run --locked --release --profile ci --success-output immediate -p listenbox-sync-engine --run-ignored only -E 'test(native_media_tests::apple_hls_)'
-    options:
-      cache: false
-      os: [macos, linux]
+    outputs: [dist/listenbox-network-e2e, dist/listenbox-journal-e2e]

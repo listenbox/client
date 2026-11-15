@@ -1,30 +1,30 @@
 # YouTube extraction traffic
 
-## Layer ownership — keep the Rust API thin
+## Layer ownership — keep the Go API thin
 
 - `youtubei` owns the QuickJS context, scheduling, object lifetimes, native
-  platform primitives, and thin Rust bindings to the live YouTube.js API.
+  platform primitives, and thin Go bindings to the live YouTube.js API.
   Bindings call upstream methods and read upstream properties; they do not
   implement a second YouTube client.
-- `vendor/youtubejs` owns YouTube HTTP operations: session and player bootstrap,
+- `third_party/youtubejs` owns YouTube HTTP operations: session and player bootstrap,
   endpoint selection, request construction, response parsing, continuations,
   and signature/`n` deciphering. Let its real code execute inside QuickJS.
 - Never issue independent YouTube HTTP requests from this crate. Never add
-  Rust endpoint calls, hand-built YouTube payloads, response parsers, player
+  Go endpoint calls, hand-built YouTube payloads, response parsers, player
   extraction algorithms, or fallback requests to these bindings.
 - The HTTP boundary is **YouTube.js → its `fetch` → the host transport**.
-  A Rust fetch adapter may perform the requested I/O and return response bytes;
+  A Go fetch adapter may perform the requested I/O and return response bytes;
   it must not invent additional YouTube requests or replace upstream protocol
   behavior. Supplying native fetch/streams/URL primitives is runtime glue,
-  not permission to move extraction into Rust.
+  not permission to move extraction into Go.
 - `sync-engine` owns Listenbox policy: which upstream client to request,
   rendition selection, cancellation, resumable downloads, upload journals,
   and publication. Keep that policy outside `youtubei`.
 - Fix YouTube.js parser, request, and player-runtime defects in the nested
-  `vendor/youtubejs` repository, then update its pin. Do not conceal them with
-  Rust API workarounds or hard-coded HTTP responses.
-- Verify this boundary with the real Rust CLI and embedded YouTube.js against
-  local HTTP fixtures. A mocked Rust extraction result cannot prove that
+  `third_party/youtubejs` repository, then update its pin. Do not conceal them with
+  Go API workarounds or hard-coded HTTP responses.
+- Verify this boundary with the real Go CLI and embedded YouTube.js against
+  local HTTP fixtures. A mocked Go extraction result cannot prove that
   YouTube.js made and handled the necessary requests.
 
 ## Request budget
@@ -46,5 +46,5 @@
   cancellation, and genuine unavailability when reducing requests. Fewer
   requests do not justify silently publishing incomplete or incorrect media.
 - Verify the successful request budget and necessary fallback paths through the
-  real Rust client and embedded YouTube.js against local integrated fixtures.
+  real Go client and embedded YouTube.js against local integrated fixtures.
   Keep live cookie-backed investigation read-only and credentials out of logs.

@@ -8,54 +8,27 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-24.04
-    env:
-      KACHE_CONFIG: ${{ github.workspace }}/.kache.toml
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           submodules: recursive
           filter: blob:none
-      - uses: actions/setup-node@v6
+      - uses: jdx/mise-action@v5
         with:
-          node-version: '26.5.0'
-          package-manager-cache: false
-      - uses: jdx/aube-action@v1
-        with:
-          version: '2.5.1'
-          run-install: false
-      - run: sudo apt-get update && sudo apt-get install -y build-essential cmake clang libclang-dev pkg-config shellcheck jq libasound2-dev libfontconfig1-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev libxcb1-dev libx11-xcb-dev libx11-dev libegl1-mesa-dev libvulkan-dev libssl-dev
+          version: '2026.11.7'
+      - name: Install platform SDK
+        run: sudo apt-get update && sudo apt-get install -y build-essential libasound2-dev libfontconfig1-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev libxcb1-dev libx11-xcb-dev libx11-dev libegl1-mesa-dev libvulkan-dev
       - name: Install pinned Apple HLS validator
         run: bash tools/install-apple-hls-tools.sh tools/hls_tools_1.26.143.14.tar
-      - uses: taiki-e/install-action@v2
+      - uses: actions/cache@v6
         with:
-          tool: cargo-nextest@0.9.146
-      - uses: moonrepo/setup-toolchain@v0
-        with:
-          moon-version: "2.5.5"
-      - run: rustup toolchain install 1.98.1 --profile minimal --component clippy,rustfmt
-      - name: Cache Cargo sources, kache, and Moon outputs
-        uses: actions/cache@v6
-        with:
-          # Kache reconstructs target/; Moon hydrates matching native outputs.
-          # Save each commit's progress, then restore the closest compatible build.
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            ${{ runner.temp }}/kache
-            .moon/cache/outputs
-          key: rust-kache-v1-0.27.0-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.kache.toml', '.cargo/config.toml', 'rust-toolchain.toml', 'tools/native-ffmpeg.rs') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', '**/moon.yml', '.moon/**/*.yml', '.github/workflows/ci.yaml') }}-${{ github.sha }}
-          restore-keys: |
-            rust-kache-v1-0.27.0-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.kache.toml', '.cargo/config.toml', 'rust-toolchain.toml', 'tools/native-ffmpeg.rs') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', '**/moon.yml', '.moon/**/*.yml', '.github/workflows/ci.yaml') }}-
-            rust-kache-v1-0.27.0-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.kache.toml', '.cargo/config.toml', 'rust-toolchain.toml', 'tools/native-ffmpeg.rs') }}-
-      - name: Set up kache
-        uses: kunobi-ninja/kache-action@ad7317540dcdd71c904f7a60a87b620a0c0e67ed # v1
-        with:
-          version: '0.27.0'
-          cache-dir: ${{ runner.temp }}/kache
-          # The cache above refreshes on every commit, including source-only edits.
-          github-cache: false
-          pr-comment: false
+            ~/go/pkg/mod
+            ~/.cache/go-build
+            .cache/ffmpeg
+            .cache/native-src
+          key: client-go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.lock', 'go.sum', 'internal/nativebuild/**/*.go') }}
       - name: Check affected tasks
         id: ci
         run: moon ci
@@ -66,13 +39,11 @@ jobs:
           access-token: ${{ secrets.GITHUB_TOKEN }}
           skip-comment: true
       - name: Upload Moon reports
-        if: always() && github.event_name != 'pull_request'
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: moon-reports-${{ github.run_attempt }}
-          path: |
-            .moon/cache/ciReport.json
-            .moon/cache/runReport.json
+          path: .moon/cache/*Report.json
           if-no-files-found: ignore
           include-hidden-files: true
           retention-days: 14

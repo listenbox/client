@@ -106,7 +106,7 @@ This is the desktop interface’s design system. The shared Listenbox system own
 brand colors and contrast requirements; this file owns native hierarchy,
 density, typography, alignment, control composition and interaction. Desktop
 screens follow these rules rather than inheriting the web’s page layouts or
-GPUI Kit’s default component composition.
+MyGo’s default component composition.
 
 ## Purpose and hierarchy
 
@@ -124,7 +124,7 @@ and is hidden when the issue count reaches zero.
 
 The sidebar starts at 240px and resizes by dragging its right divider. It starts
 directly with the team picker. The native window title
-owns the app name. One menu definition is rendered by muda as the macOS app menu
+owns the app name. One MyGo menu definition provides the macOS app menu
 and Windows menu bar. Settings and Log out live in Listenbox; Reload lives under
 View, with ⌘R on macOS and Ctrl+R elsewhere. Linux exposes the same commands from
 a compact Menu button in the sidebar footer. The selected team is the strongest
@@ -148,7 +148,7 @@ There are no Save playlist, Disconnect or Keep syncing controls.
 
 ## Geometry and rhythm
 
-Use the named constants in `src/tokens.rs`, with a 4px spacing base.
+Use the layout values in `view.go` and `workspace.go`, with a 4px spacing base.
 
 | Role | Size | Rule |
 | --- | --- | --- |
@@ -181,7 +181,7 @@ remains reachable by scrolling.
 
 The main pane has a visible vertical scrollbar whenever its content overflows,
 including the virtualized episode list. Its thumb controls the same scroll
-state as wheel input. The podcast list and team choices use GPUI Kit's native
+state as wheel input. The podcast list and team choices use MyGo's list and
 scrollbar affordance and system visibility behavior.
 
 ## Type and color
@@ -205,17 +205,15 @@ Measure the composed result, including hover and focus.
 
 ## Native controls
 
-Use GPUI Kit for focus, keyboard activation, disabled state and pointer state.
-Use `.primary()` explicitly for Import playlist, creation, sign-in and Sync now.
+Use MyGo for focus, keyboard activation, disabled state and pointer state.
+Use `ui.PrimaryButton` for Import playlist, creation, sign-in and Sync now.
 Pause uses an outline; source links and browser handoffs use ghost buttons.
 Not-imported video titles use underlined, keyboard-focusable links
 to YouTube. White default buttons are not primary actions.
 
-**Navigation content must own its alignment.** GPUI Kit centers its internal
-label container even when the outer button has `.justify_start()`. Compose a
-full-width child row for navigation, with a flexible left label and a trailing
-chevron or plus. Give custom-content buttons an explicit accessibility label.
-Do not repeat the ineffective outer-only alignment pattern.
+**Navigation content must own its alignment.** Compose a full-width child row
+for navigation, with a flexible left label and a trailing chevron or plus.
+Give custom-content buttons an explicit accessibility label.
 
 Use the native focus treatment and do not move controls on hover. Input fields
 have a visible border and a readable placeholder. Lock import controls while
@@ -224,7 +222,8 @@ creation is underway. Errors state the problem and the recovery above the form.
 ## Artwork and selection
 
 Every podcast row has a 44px square cover and the selected podcast has a 120px
-cover. Use native `img`, `ObjectFit::Cover` and 8px/14px corner radii. Missing,
+cover. Render `ui.Bitmap` images through `ui.Image`, with a cover crop and
+8px/14px corner radii. Missing,
 loading and failed images use the same rounded headphone placeholder without
 changing layout. Podcast rows share one text column for title and sync status;
 the selected row uses a neutral fill rather than a decorative marker.
@@ -232,8 +231,7 @@ the selected row uses a neutral fill rather than a decorative marker.
 A workspace-owned cache coalesces requests and decoding across both cover
 sizes. It retains at most 128 covers, releases evicted GPU images, prunes covers
 that leave the catalog, and clears on logout or explicit Reload. Startup installs
-the shared image HTTP transport on GPUI using the desktop's Tokio runtime and
-TLS configuration. HTTP responses persist under the active profile's
+an owned Go HTTP client for artwork. HTTP responses persist under the active profile's
 `http-cache/`, honor shared-cache freshness and revalidation rules, and keep
 redirect policies in separate stores. Only bodyless GETs use this cache; other
 requests pass through directly. Startup clears HTTP data exceeding 128 MiB.
@@ -286,10 +284,11 @@ Do not introduce a full-window dimming layer or shift the workspace.
 
 ## Evidence
 
-`src/tokens.rs` owns reusable dimensions and semantic colors. `src/workspace.rs`
-owns production composition; `src/artwork.rs` owns covers and their cache.
+`view.go` owns dimensions, semantic colors and production composition.
+`workspace.go` owns artwork loading and its decoded cache; shared engine HTTP
+transport owns persisted responses.
 
-Headless GPUI tests cover control activation and state, while parent API E2E
+Headless MyGo tests cover control activation and state, while parent API E2E
 scenarios exercise actual import, sync and recovery. Native window chrome
 requires the running application; headless captures do not establish OS-level
 behavior or a monorepo-wide visual audit.

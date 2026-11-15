@@ -1,0 +1,17 @@
+{
+  "name": "Listenbox",
+  "slug": "listenbox",
+  "identifier": "app.listenbox.client",
+  "publisher": "Listenbox",
+  "main": ".",
+  "out": "dist/mygo",
+  "icon": "assets/icon.png",
+  "resources": ["../../LICENSE", "../../THIRD-PARTY-NOTICES.txt", "../../.cache/ffmpeg/NOTICE.txt"],
+  "macos": {
+    "minimumSystemVersion": "13.0",
+    "dmgTitle": "Listenbox",
+    "infoPlist": {"LSApplicationCategoryType": "public.app-category.productivity"}
+  },
+  "windows": {"displayName": "Listenbox", "installDirName": "Listenbox"},
+  "linux": {"formats": []}
+}

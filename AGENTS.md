@@ -1,4 +1,4 @@
-# Rust client
+# Go client
 
 - Repository and submodule fetch/push remotes and `.gitmodules` URLs use SSH.
   GitHub Actions checkout may use HTTPS.
@@ -8,15 +8,11 @@
 - Write client command and build automation as simple Bash scripts checked by
   ShellCheck, never TypeScript or zx scripts. This does not apply to application
   code in the YouTube.js submodule.
-- Run Cargo commands as `kache cargo -- ...` and standalone Rust compilation as
-  `kache rustc --crate-name ... --out-dir ...`. Keep `.cargo/config.toml`'s
-  wrapper enabled for tools that invoke Cargo internally. Registry installs
-  must explicitly set `RUSTC_WRAPPER=kache`, `CARGO_INCREMENTAL=0`, and
-  `KACHE_CONFIG` because Cargo ignores project configuration for those installs.
-- Keep Cargo build directories independent per worktree, with compatible
-  artifacts in kache's shared OS cache on the same filesystem. Install the
-  pinned Dioxus CLI through `tools/dev-tools.sh`; its versioned installation
-  is shared across worktrees and its temporary build artifacts are removed.
+- Mise provisions tools and the CGO environment from `mise.toml` and its lock.
+  Run tasks through Moon. Never define tasks in Mise TOML or Mise task files.
+- Use the pinned Go, C/C++ compiler and pkg-config through `mise exec`.
+  Native libraries are built by `client:native-ffmpeg`; desktop distribution
+  uses MyGo's CLI. Windows requires a matching CLANG64/CLANGARM64 MSYS2 SDK.
 
 - CLI and desktop share `crates/sync-engine`; put HTTP, format selection,
   configuration, and sync behavior there.
@@ -51,12 +47,12 @@
 - Standard CI runs on `master` pushes and pull requests. Successful CI for the
   current `master` prepares an automatic patch release. Superseded CI is skipped.
 - `automatic-release.yaml` serializes version allocation. `release-next.sh`
-  chooses the next patch after the highest reserved numeric tag, updates Cargo
-  and its lockfile in a release commit whose parent is the CI source, and creates
+  chooses the next patch after the highest reserved numeric tag, updates VERSION
+  in a release commit whose parent is the CI source, and creates
   the immutable `vX.Y.Z` tag. It never pushes a version commit to `master`.
   Rerunning preparation reuses that source's existing release tag.
-- Major/minor bumps are deliberate: set `[workspace.package].version` to a
-  greater major/minor version, run `kache cargo -- update --workspace`, and merge.
+- Major/minor bumps are deliberate: set `VERSION` to a
+  greater major/minor version and merge.
   Automation uses that version before resuming automatic patch bumps.
 - `release-dispatch.sh` pushes only the prepared tag and explicitly dispatches
   the native workflow. GitHub's built-in token does not trigger tag-push workflows.
@@ -71,11 +67,11 @@
 
 ## YouTube.js fork and upstream fixes
 
-- `vendor/youtubejs` is our `listenbox/YouTube.js` fork, a nested Git
+- `third_party/youtubejs` is our `listenbox/YouTube.js` fork, a nested Git
   submodule. Patch bugs there when the defect belongs to YouTube.js; keep the
   parser and runtime fixes in their canonical upstream implementation instead
   of adding application workarounds or host-runtime shims.
-- Reproduce the observed response shape and failure with the real Rust client
+- Reproduce the observed response shape and failure with the real Go client
   and embedded YouTube.js against local integrated E2E fixtures. Prove the
   regression fails before the fix and passes afterward, including the relevant
   incomplete-scan and deletion safeguards.

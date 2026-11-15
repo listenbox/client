@@ -1,49 +1,31 @@
-language: rust
+language: go
 layer: application
-toolchains:
-  default: rust
-env:
-  CARGO_TERM_COLOR: always
-dependsOn: ['client']
-taskOptions:
-  cache: true
+tags: [client-component]
+dependsOn: [client]
 fileGroups:
-  sources:
-    - src/**/*.rs
-    - tests/**/*
-    - Cargo.toml
+  sources: ['*.go']
 tasks:
-  build:
-    deps: [client:prerequisites, client-engine:build]
-    inputs: ['@group(sources)', 'project://client?group=sources']
-    script: |-
-      set -euo pipefail
-      kache cargo -- build --locked -p listenbox
-      mkdir -p dist
-      cp ../../target/debug/listenbox dist/listenbox
-    outputs: [dist/listenbox]
-  test:
-    deps: [client:prerequisites]
-    inputs: ['@group(sources)', 'project://client?group=sources']
-    command: kache cargo -- test --locked -p listenbox
-  build-release:
-    description: Build the production CLI with the persistent desktop profile.
-    deps: [client:prerequisites]
-    inputs: ['@group(sources)', 'project://client?group=sources']
-    script: |-
-      set -euo pipefail
-      kache cargo -- build --locked --release -p listenbox
-      mkdir -p dist/release
-      cp ../../target/release/listenbox dist/release/listenbox
-    outputs: [dist/release/listenbox]
-    options:
-      runInCI: false
   prod:
-    description: Build and run the CLI against production quickly; pass commands after --.
+    description: Run the CLI against production using the persistent shared profile.
     deps: [client:prerequisites]
-    preset: utility
+    command: [mise, -C, ../.., exec, --, go, run, '-ldflags=-X github.com/listenbox/client/crates/sync-engine.Production=1', ./crates/cli, --config, config/prod.yaml]
     inputs: []
-    command: kache cargo -- run --locked --profile prod -p listenbox -- --config ../../config/prod.yaml
     options:
       cache: false
+      runInCI: false
+  build:
+    deps: [client:prerequisites]
+    script: mise -C ../.. exec -- go build -buildvcs=false -o crates/cli/dist/listenbox ./crates/cli
+    inputs: ['@group(sources)', 'project://client?group=sources']
+    outputs: [dist/listenbox]
+  build-release:
+    deps: [client:prerequisites]
+    script: |
+      cd ../..
+      version="$(cat VERSION)"
+      commit="$(git rev-parse HEAD)"
+      mise exec -- go build -trimpath -buildvcs=false -ldflags="-s -w -X github.com/listenbox/client/crates/sync-engine.Version=$version -X github.com/listenbox/client/crates/sync-engine.SourceCommit=$commit -X github.com/listenbox/client/crates/sync-engine.Production=1" -o crates/cli/dist/release/listenbox ./crates/cli
+    inputs: ['@group(sources)', 'project://client?group=sources']
+    outputs: [dist/release/listenbox]
+    options:
       runInCI: false

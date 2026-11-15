@@ -3,10 +3,14 @@
 /dist/
 /.moon/cache/
 /node_modules/
-/vendor/bundle/
-/vendor/node_modules/
+/third_party/bundle/
+/third_party/node_modules/
 
 /crates/*/dist/
+/crates/desktop/mygo.json
+/crates/desktop/mygo_windows_*.syso
+/crates/sync-engine/clientconfig/
+/crates/sync-engine/publicapi/
 
 # Local credentials, sync journals, logs, and macOS signing material.
 .env

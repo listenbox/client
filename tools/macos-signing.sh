@@ -33,8 +33,10 @@ keychains=("$keychain")
 while IFS= read -r previous; do keychains+=("$previous"); done < "$directory/keychains"
 security list-keychains -d user -s "${keychains[@]}"
 security find-identity -v -p codesigning "$keychain" | grep -F "\"$MACOS_SIGNING_IDENTITY\"" > /dev/null
+xcrun notarytool store-credentials listenbox-desktop-notary --keychain "$keychain" --key "$directory/notary.p8" --key-id "$MACOS_NOTARY_KEY_ID" --issuer "$MACOS_NOTARY_ISSUER_ID" > /dev/null
 {
   printf 'LISTENBOX_SIGNING_IDENTITY=%s\n' "$MACOS_SIGNING_IDENTITY"
   printf 'LISTENBOX_SIGNING_KEYCHAIN=%s\n' "$keychain"
   printf 'LISTENBOX_NOTARY_KEY=%s\n' "$directory/notary.p8"
+  printf 'LISTENBOX_NOTARY_PROFILE=listenbox-desktop-notary\n'
 } >> "${GITHUB_ENV:?}"

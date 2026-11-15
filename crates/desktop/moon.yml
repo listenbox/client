@@ -1,226 +1,108 @@
-language: rust
+language: go
 layer: application
-toolchains:
-  default: rust
-env:
-  CARGO_TERM_COLOR: always
-dependsOn: ['client']
-taskOptions:
-  cache: true
+tags: [client-component]
+dependsOn: [client]
 fileGroups:
-  sources:
-    - assets/**/*
-    - build.rs
-    - src/**/*.rs
-    - src/**/*.m
-    - tests/**/*
-    - tools/**/*
-    - Cargo.toml
+  sources: ['*.go', 'assets/**/*', 'mygo.template.json', 'tests/fixtures/**/*']
 tasks:
-  build-profiled:
-    description: Build the optimized desktop with GPUI instrumentation and dSYM symbols.
-    deps: [client:prerequisites]
+  package:
+    description: Build the native desktop bundle with MyGo's distribution tools.
+    deps: [client:prerequisites, client:updaters, ~:build-config]
+    command: [mise, -C, ../.., exec, --, go, tool, mygo, build, -skip-installer, crates/desktop]
     inputs: ['@group(sources)', 'project://client?group=sources']
-    command: bash tools/profile.sh build
-    outputs: [dist/profiled/listenbox-desktop, dist/profiled/listenbox-desktop.dSYM/**/*, dist/profiled/FFmpeg-NOTICE.txt]
     options:
-      os: macos
+      runInCI: false
+  build-config:
+    description: Generate MyGo packaging metadata from VERSION and the platform release environment.
+    script: >-
+      mise -C ../.. exec -- node --input-type=module -e '
+      import {readFileSync,writeFileSync} from "node:fs";
+      import {execFileSync} from "node:child_process";
+      const base="crates/desktop/";
+      const c=JSON.parse(readFileSync(base+"mygo.template.json","utf8"));
+      c.version=readFileSync("VERSION","utf8").trim();
+      const key=process.env.LISTENBOX_UPDATE_PUBLIC_KEY||"";
+      if(process.platform==="win32"){
+        c.name="listenbox-desktop";
+        const arch=process.arch==="arm64"?"ARM64":"x64";
+        c.resources.push("../../.cache/updaters/WinSparkle-0.9.4/"+arch+"/Release/WinSparkle.dll","../../.cache/updaters/WinSparkle-0.9.4/COPYING","../../.cache/updaters/WinSparkle-0.9.4/COPYING.expat");
+      }
+      if(process.platform==="darwin"){
+        c.macos.signingIdentity=process.env.LISTENBOX_SIGNING_IDENTITY||"-";
+        c.macos.infoPlist.ListenboxSourceCommit=process.env.LISTENBOX_SOURCE_COMMIT||execFileSync("git",["rev-parse","HEAD"],{encoding:"utf8"}).trim();
+        if(key){
+          c.resources.push("../../.cache/updaters/Sparkle.framework","../../.cache/updaters/LICENSE");
+          Object.assign(c.macos.infoPlist,{SUPublicEDKey:key,SUFeedURL:"https://github.com/listenbox/client/releases/latest/download/appcast-macos-arm64.xml",SUEnableAutomaticChecks:true,SUAutomaticallyUpdate:true,SUShowReleaseNotes:false,SUUpdateCheckInterval:86400});
+        }
+        if(process.env.LISTENBOX_PRODUCTION_RELEASE==="1"){
+          if(!key||!process.env.LISTENBOX_NOTARY_PROFILE||!process.env.LISTENBOX_SIGNING_KEYCHAIN)throw Error("Production packaging requires the existing update key and imported Apple signing profile");
+          c.macos.notarize={keychainProfile:process.env.LISTENBOX_NOTARY_PROFILE,keychain:process.env.LISTENBOX_SIGNING_KEYCHAIN};
+        }
+      }
+      writeFileSync(base+"mygo.json",JSON.stringify(c,null,2)+"\n");'
+    inputs: [mygo.template.json, 'project://client?group=version']
+    outputs: [mygo.json]
+    options:
+      cache: false
       internal: true
-      # Refresh the compile-time source stamp after commits, including rebases.
-      # Cargo/kache still cache compilation; recordings must retain this build's identity.
-      cache: false
-      runInCI: false
-  profiled:
-    description: Run the optimized desktop against local services with a frame-time overlay.
-    deps: [~:build-profiled]
-    preset: server
-    inputs: []
-    command: bash tools/profile.sh launch
-    options:
-      cache: false
-      interactive: true
-      runInCI: false
-      os: macos
-  profile:
-    description: Capture the profiled desktop; arguments are label, seconds, and cpu or metal.
-    inputs: []
-    command: bash tools/profile.sh capture
-    options:
-      cache: false
-      persistent: true
-      runInCI: false
-      os: macos
-  profile-startup:
-    description: Measure Launch Services to first displayed frame; optional arguments are label and timing or cpu.
-    deps: [~:build-profiled]
-    inputs: []
-    command: bash tools/startup.sh capture
-    options:
-      cache: false
-      runInCI: false
-      os: macos
-  test-startup:
-    description: Prove the native window renders while certificate loading is gated.
-    deps: [~:build-profiled]
-    inputs: []
-    command: bash tools/startup.sh check
-    options:
-      cache: false
-      runInCI: false
-      os: macos
-  dev-tools:
-    description: Install the pinned Subsecond build and watch driver.
-    command: bash ../../tools/dev-tools.sh
-    inputs: ['project://client?group=desktop-dev-tools', 'project://client?group=cargo-config']
-    options:
-      cache: false
-      os: macos
-      outputStyle: buffer-only-failure
-      runInCI: false
-  dev-bundle-info:
-    description: Generate the macOS development bundle's product name and current Cargo version.
-    command: bash tools/dev-bundle-info.sh
-    inputs: [tools/dev-bundle-info.sh, Cargo.toml, 'project://client?group=desktop-dev-config']
-    outputs: [dist/dev-bundle/Info.plist]
-    options:
-      os: macos
-      runInCI: false
-  dev:
-    description: Hotpatch the running desktop UI with Subsecond against local Listenbox services.
-    deps: [client:prerequisites, ~:dev-tools, ~:dev-bundle-info]
-    preset: server
-    inputs: []
-    env:
-      RUST_BACKTRACE: '1'
-    script: |-
-      set -eu
-      cd ../..
-      exec crates/desktop/dist/dev-tools/bin/dx serve \
-        --port 8090 --desktop --hot-patch --package listenbox-desktop --features hot-reload \
-        --locked --args="--config $PWD/config/dev.yaml"
-    options:
-      cache: false
-      interactive: true
-      runInCI: false
-      os: macos
   build:
-    deps: [client:prerequisites, client-engine:build]
+    deps: [client:prerequisites]
+    script: mise -C ../.. exec -- go build -buildvcs=false -o crates/desktop/dist/listenbox-desktop ./crates/desktop
     inputs: ['@group(sources)', 'project://client?group=sources']
-    script: |-
-      set -euo pipefail
-      kache cargo -- build --locked -p listenbox-desktop
-      mkdir -p dist
-      cp ../../target/debug/listenbox-desktop dist/listenbox-desktop
     outputs: [dist/listenbox-desktop]
-  build-release:
-    description: Build the production desktop executable for the host architecture.
-    deps: [client:prerequisites, client:updaters]
-    inputs: ['@group(sources)', 'project://client?group=sources', 'project://client?group=notices', '$LISTENBOX_PRODUCTION_RELEASE', '$LISTENBOX_UPDATE_PUBLIC_KEY', '$LISTENBOX_SOURCE_COMMIT']
-    script: |-
-      set -euo pipefail
-      cd ../..
-      if [[ "${LISTENBOX_PRODUCTION_RELEASE:-0}" == 1 ]]; then
-        kache cargo -- build --locked --release -p listenbox-desktop --features native-updater
-      else
-        kache cargo -- build --locked --release -p listenbox-desktop
-      fi
-      mkdir -p crates/desktop/dist/release
-      cp target/release/listenbox-desktop crates/desktop/dist/release/listenbox-desktop
-      cp .cache/ffmpeg/NOTICE.txt crates/desktop/dist/release/FFmpeg-NOTICE.txt
-      if [[ "${LISTENBOX_PRODUCTION_RELEASE:-0}" == 1 && "$OSTYPE" == darwin* ]]; then
-        DYLD_FRAMEWORK_PATH="$PWD/.cache/updaters" crates/desktop/dist/release/listenbox-desktop --help
-      else
-        crates/desktop/dist/release/listenbox-desktop --help
-      fi
-    outputs: [dist/release/listenbox-desktop, dist/release/FFmpeg-NOTICE.txt]
-    options:
-      os: [linux, macos]
-      runInCI: false
-  build-release-local:
-    description: Build the local production desktop without native updater dependencies.
-    extends: build-release
-    deps: [client:prerequisites]
-    env:
-      LISTENBOX_PRODUCTION_RELEASE: '0'
-    script: |-
-      set -euo pipefail
-      cd ../..
-      kache cargo -- build --locked --release -p listenbox-desktop
-      mkdir -p crates/desktop/dist/release-local
-      cp target/release/listenbox-desktop crates/desktop/dist/release-local/listenbox-desktop
-      cp .cache/ffmpeg/NOTICE.txt crates/desktop/dist/release-local/FFmpeg-NOTICE.txt
-      crates/desktop/dist/release-local/listenbox-desktop --help
-    outputs: [dist/release-local/listenbox-desktop, dist/release-local/FFmpeg-NOTICE.txt]
-    options:
-      mergeDeps: replace
-      mergeOutputs: replace
-      os: macos
-  dmg:
-    description: Package the production Apple Silicon desktop executable as a macOS DMG.
-    deps: [client:updaters, ~:build-release]
-    inputs: [project://client?group=notices, project://client?group=sources]
-    script: |-
-      set -euo pipefail
-      cd ../..
-      mkdir -p .cache
-      kache rustc --crate-name package_macos --edition 2024 --out-dir .cache tools/package-macos.rs
-      .cache/package_macos
-    outputs: [dist/macos/*.dmg, dist/macos/image/Listenbox.app/**/*]
-    options:
-      os: macos
-      cache: false
-      runInCI: false
-  macos-reinstall:
-    description: Build locally for production services and replace /Applications/Listenbox.app without creating a DMG.
-    deps: [~:build-release-local]
-    inputs: [project://client?group=macos-install-tools, project://client?group=sources, project://client?group=notices]
-    env:
-      LISTENBOX_PRODUCTION_RELEASE: '0'
-      LISTENBOX_SIGNING_IDENTITY: '-'
-    script: |-
-      set -euo pipefail
-      cd ../..
-      mkdir -p .cache
-      kache rustc --crate-name package_macos --edition 2024 --out-dir .cache tools/package-macos.rs
-      .cache/package_macos --local
-      xcrun clang -fobjc-arc -Wall -Wextra -Werror -framework AppKit -framework Foundation tools/reinstall-macos.m -o .cache/reinstall-macos
-      .cache/reinstall-macos crates/desktop/dist/macos-local/image/Listenbox.app /Applications/Listenbox.app
-    options:
-      os: macos
-      cache: false
-      runInCI: false
-  build-release-windows-x64:
-    description: Build and package a Windows x64 release, also runnable through Windows 11 ARM emulation.
-    deps: [client:codegen, youtubejs:bundle, client:updaters, client:native-ffmpeg-windows-x64]
-    command: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ../../tools/build-windows.ps1 -Architecture x64 -Stage Release
-    inputs: ['@group(sources)', 'project://client?group=sources', 'project://client?group=notices']
-    outputs: [dist/windows-x64/**/*]
-    options:
-      os: windows
-      runInCI: false
-      cache: false
-  build-release-windows-arm64:
-    description: Build and package a native Windows ARM64 release on Windows ARM64.
-    deps: [client:codegen, youtubejs:bundle, client:updaters, client:native-ffmpeg-windows-arm64]
-    command: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ../../tools/build-windows.ps1 -Architecture arm64 -Stage Release
-    inputs: ['@group(sources)', 'project://client?group=sources', 'project://client?group=notices']
-    outputs: [dist/windows-arm64/**/*]
-    options:
-      os: windows
-      runInCI: false
-      cache: false
-  test:
-    deps: [client:prerequisites]
-    inputs: ['@group(sources)', 'project://client?group=sources']
-    command: kache cargo -- test --locked -p listenbox-desktop --features hot-reload
   build-e2e:
     deps: [client:prerequisites]
+    command: mise -C ../.. exec -- go test -c -o crates/desktop/dist/listenbox-desktop-e2e ./crates/desktop
     inputs: ['@group(sources)', 'project://client?group=sources']
-    script: |-
-      set -euo pipefail
-      mkdir -p dist
-      kache cargo -- test --locked -p listenbox-desktop --no-run --message-format=json > dist/test-build.json
-      executable="$(jq -r 'select(.reason == "compiler-artifact" and .profile.test and .executable != null) | .executable' dist/test-build.json)"
-      test -n "$executable"
-      cp "$executable" dist/listenbox-desktop-e2e
     outputs: [dist/listenbox-desktop-e2e]
+  dev:
+    deps: [client:prerequisites, ~:build-config]
+    command: [mise, -C, ../.., exec, --, go, tool, mygo, dev, crates/desktop]
+    preset: server
+    inputs: []
+  build-release:
+    deps: [client:prerequisites, client:updaters, ~:build-config]
+    script: |
+      cd ../..
+      version="$(cat VERSION)"
+      commit="$(git rev-parse HEAD)"
+      key="${LISTENBOX_UPDATE_PUBLIC_KEY:-}"
+      if [[ "${LISTENBOX_PRODUCTION_RELEASE:-0}" = 1 ]]; then
+        : "${key:?A production release requires the existing Ed25519 update key}"
+      fi
+      export MYGO_LDFLAGS="-X github.com/listenbox/client/crates/sync-engine.Version=$version -X github.com/listenbox/client/crates/sync-engine.SourceCommit=$commit -X github.com/listenbox/client/crates/sync-engine.Production=1 -X main.updatePublicKey=$key -X main.updatePlatform=macos-arm64"
+      mise exec -- go tool mygo build -platform darwin/arm64 crates/desktop
+    inputs: ['@group(sources)', 'project://client?group=sources']
+    options:
+      os: macos
+      runInCI: false
+  dmg:
+    deps: [~:build-release]
+    script: |
+      version="$(cat ../../VERSION)"
+      mkdir -p dist/macos
+      cp "dist/mygo/darwin-arm64/listenbox-$version-arm64.dmg" "dist/macos/Listenbox-$version-macos-arm64.dmg"
+      codesign --verify --deep --strict dist/mygo/darwin-arm64/Listenbox.app
+      if [[ "${LISTENBOX_PRODUCTION_RELEASE:-0}" = 1 ]]; then
+        xcrun stapler validate dist/mygo/darwin-arm64/Listenbox.app
+        xcrun stapler validate "dist/macos/Listenbox-$version-macos-arm64.dmg"
+        spctl --assess --type execute --verbose=2 dist/mygo/darwin-arm64/Listenbox.app
+      fi
+    inputs: ['@group(sources)', 'project://client?group=sources']
+    options:
+      os: macos
+      runInCI: false
+  build-release-windows-x64:
+    deps: [client:prerequisites, client:updaters, ~:build-config]
+    command: [mise, -C, ../.., exec, --, pwsh, -NoProfile, -File, tools/build-windows.ps1, -Architecture, x64]
+    inputs: ['@group(sources)', 'project://client?group=sources']
+    options:
+      os: windows
+      runInCI: false
+  build-release-windows-arm64:
+    deps: [client:prerequisites, client:updaters, ~:build-config]
+    command: [mise, -C, ../.., exec, --, pwsh, -NoProfile, -File, tools/build-windows.ps1, -Architecture, arm64]
+    inputs: ['@group(sources)', 'project://client?group=sources']
+    options:
+      os: windows
+      runInCI: false

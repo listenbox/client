@@ -1,0 +1,29 @@
+# Keep this submodule independently buildable. These pins agree with the parent
+# workspace; the native build environment stays local to this config root.
+[tools]
+go = "1.27.4"
+shellcheck = "0.11.0"
+aube = "2.5.1"
+node = "26.5.0"
+bun = "1.4.4"
+"aqua:moonrepo/moon" = "2.5.6"
+jq = "1.8.1"
+gh = "2.104.0"
+# Native Unix toolchain. Windows uses the native CLANG64/CLANGARM64 MSYS2 SDK
+# checked by client:native-setup; its compiler must target the same CRT as FFmpeg.
+cmake = "4.5.0"
+ninja = "1.13.2"
+clang = { version = "23.1.5", os = ["linux", "macos"] }
+"conda:clangxx" = { version = "23.1.5", os = ["linux", "macos"] }
+make = { version = "4.4.1", os = ["linux", "macos"] }
+"conda:pkg-config" = { version = "0.29.2", os = ["linux", "macos"] }
+"conda:nasm" = { version = "2.16.03", os = ["linux", "macos"] }
+"conda:openssl" = { version = "4.1.0", os = ["linux", "macos"] }
+"conda:curl" = { version = "8.23.0", os = ["linux", "macos"] }
+
+[env]
+CGO_ENABLED = "1"
+CC = "{% if os() == 'windows' %}\"{{ get_env(name='MSYS2_LOCATION', default='C:/msys64') }}/{% if arch() == 'arm64' %}clangarm64{% else %}clang64{% endif %}/bin/clang.exe\"{% else %}clang{% endif %}"
+CXX = "{% if os() == 'windows' %}\"{{ get_env(name='MSYS2_LOCATION', default='C:/msys64') }}/{% if arch() == 'arm64' %}clangarm64{% else %}clang64{% endif %}/bin/clang++.exe\"{% else %}clang++{% endif %}"
+PKG_CONFIG = "{% if os() == 'windows' %}{{ get_env(name='MSYS2_LOCATION', default='C:/msys64') }}/{% if arch() == 'arm64' %}clangarm64{% else %}clang64{% endif %}/bin/pkg-config.exe{% else %}pkg-config{% endif %}"
+PKG_CONFIG_PATH = "{{config_root}}/.cache/ffmpeg/lib/pkgconfig"

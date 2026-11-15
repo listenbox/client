@@ -85,12 +85,16 @@ moonx cli:prod -- youtube sync
 moonx cli:prod -- youtube sync --show field-notes --watch
 ```
 
-`moon run cli:prod -- …` also works. Moon requires `--` before CLI arguments. The target uses `cargo run --profile prod`, forces the production API/dashboard origins, and uses the persistent production profile shared with desktop. This Cargo profile inherits the fast, unoptimized dev build with debug assertions disabled, keeping production state and quiet diagnostics. Cargo reuses compiled artifacts on subsequent runs. An explicit `LISTENBOX_PROFILE_DIR` override still selects a different profile.
+`moon run cli:prod -- …` also works. Moon requires `--` before CLI arguments.
+The target uses Go with production profile selection and `config/prod.yaml`,
+including the production API/dashboard origins and the persistent profile shared
+with desktop. An explicit `LISTENBOX_PROFILE_DIR` override still selects a
+different profile. Go reuses compiled artifacts on subsequent runs.
 
 Once Moon has prepared the native dependencies and generated code, the equivalent command from `apps/client` is:
 
 ```sh
-kache cargo -- run --locked --profile prod -p listenbox -- --config config/prod.yaml youtube sync
+mise exec -- go run '-ldflags=-X github.com/listenbox/client/crates/sync-engine.Production=1' ./crates/cli --config config/prod.yaml youtube sync
 ```
 
 Use `moon run cli:build-release` when you need an optimized release binary.

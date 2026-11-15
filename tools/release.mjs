@@ -25,9 +25,7 @@ function compareVersions(left, right) {
 }
 
 async function identity(tag) {
-  const manifest = await readFile('Cargo.toml', 'utf8');
-  const workspace = manifest.split('[workspace.package]')[1]?.split(/\n\[/)[0];
-  const version = workspace?.match(/^version = "([^"]+)"$/m)?.[1];
+  const version = (await readFile('VERSION', 'utf8')).trim();
   versionParts(version);
   const commit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
   if (tag && tag !== `v${version}`) throw new Error('Tag and workspace version disagree.');

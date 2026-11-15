@@ -1,31 +1,11 @@
-language: rust
+language: go
 layer: library
-toolchains:
-  default: rust
-env:
-  CARGO_TERM_COLOR: always
-dependsOn: ['client']
-taskOptions:
-  cache: true
+tags: [client-component]
+dependsOn: [client]
 fileGroups:
-  sources:
-    - src/**/*.rs
-    - build.rs
-    - Cargo.toml
-  tests:
-    - tests/**/*
+  sources: ['*.go']
 tasks:
   build:
-    deps:
-      - target: youtubejs:bundle
-        cacheStrategy: outputs
-    inputs: ['@group(sources)', 'project://client?group=cargo-config']
-    script: |-
-      set -euo pipefail
-      kache cargo -- build --locked -p youtubei
-  test:
-    deps:
-      - target: youtubejs:bundle
-        cacheStrategy: outputs
-    inputs: ['@group(sources)', '@group(tests)', 'project://client?group=cargo-config']
-    command: kache cargo -- test --locked -p youtubei
+    deps: [client:prerequisites]
+    command: mise -C ../.. exec -- go build ./crates/youtubei
+    inputs: ['@group(sources)', 'project://client?group=sources']
