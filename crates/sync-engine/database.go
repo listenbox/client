@@ -25,15 +25,6 @@ import (
 //go:embed schema.sql
 var desiredSchema string
 
-var (
-	migrationNames     = []string{"initial", "source_outcomes", "sync_completion"}
-	migrationChecksums = []string{
-		"5099304756189747416",
-		"8695450466991846087",
-		"7849515749098490957",
-	}
-)
-
 // Database owns durable checkpoints. Once admitted, journal operations drain
 // independently of request cancellation; the client joins them before Close.
 type Database struct {
@@ -73,9 +64,9 @@ func OpenDatabase(ctx context.Context, directory string) (*Database, error) {
 		return nil, err
 	}
 	db := &Database{writer: writer, root: filepath.Join(directory, "transfers")}
-	if err := db.migrate(ctx); err != nil {
+	if err := db.ensureSchema(ctx); err != nil {
 		writer.Close()
-		return nil, fmt.Errorf("migrate sync journal: %w", err)
+		return nil, fmt.Errorf("initialize sync journal: %w", err)
 	}
 	db.readers = sql.OpenDB(
 		sqlite.Connector(
@@ -539,16 +530,12 @@ func (db *Database) Items(ctx context.Context, origin, show string) ([]Download,
 	return items, rows.Err()
 }
 
-func (db *Database) migrate(ctx context.Context) error {
+func (db *Database) ensureSchema(ctx context.Context) error {
 	conn, err := db.writer.Conn(ctx)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
-	applied, err := readMigrationHistory(ctx, conn)
-	if err != nil {
-		return err
-	}
 	plan, err := planJournalSchema(ctx, conn)
 	if err != nil {
 		return err
@@ -569,9 +556,6 @@ func (db *Database) migrate(ctx context.Context) error {
 			return err
 		}
 	}
-	if err := writeMigrationHistory(ctx, tx, applied); err != nil {
-		return err
-	}
 	rows, err := tx.QueryContext(ctx, "PRAGMA foreign_key_check")
 	if err != nil {
 		return err
@@ -584,54 +568,8 @@ func (db *Database) migrate(ctx context.Context) error {
 	return tx.Commit()
 }
 
-func readMigrationHistory(ctx context.Context, conn *sql.Conn) (int, error) {
-	present, err := migrationHistoryPresent(ctx, conn)
-	if err != nil || !present {
-		return 0, err
-	}
-	applied := 0
-	rows, err := conn.QueryContext(
-		ctx,
-		"SELECT version,name,checksum FROM refinery_schema_history ORDER BY version",
-	)
-	if err != nil {
-		return 0, err
-	}
-	for rows.Next() {
-		var version int
-		var name, checksum string
-		if err := rows.Scan(&version, &name, &checksum); err != nil {
-			rows.Close()
-			return 0, err
-		}
-		if !validMigrationHistoryEntry(version, applied, name, checksum) {
-			rows.Close()
-			return 0, fmt.Errorf("divergent or missing journal migration %d %q", version, name)
-		}
-		applied++
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return 0, err
-	}
-	if err := rows.Close(); err != nil {
-		return 0, err
-	}
-	if applied == 0 {
-		return 0, errors.New("sync journal migration history is empty")
-	}
-	return applied, nil
-}
-
 func normalizeConstraints(inspected *schema.Schema) error {
 	for _, table := range inspected.Tables {
-		for _, column := range table.Columns {
-			// INT4 is Refinery's SQLite version type. Atlas treats it as a
-			// user-defined type and compares its spelling case-sensitively.
-			if declared, ok := column.Type.Type.(*atlassqlite.UserDefinedType); ok {
-				declared.T = strings.ToLower(declared.T)
-			}
-		}
 		for _, index := range table.Indexes {
 			if !strings.HasPrefix(index.Name, "sqlite_autoindex") {
 				continue
@@ -708,7 +646,7 @@ func planJournalSchema(ctx context.Context, conn *sql.Conn) (*migrate.Plan, erro
 		return nil, err
 	}
 	// Atlas creates inline UNIQUE constraints as named indexes. Compare those
-	// constraints by their columns so SQLite's historical generated names and
+	// constraints by their columns so SQLite's generated names and
 	// the names Atlas assigns during CREATE INDEX represent the same schema.
 
 	if err := normalizeConstraints(want); err != nil {
@@ -718,7 +656,11 @@ func planJournalSchema(ctx context.Context, conn *sql.Conn) (*migrate.Plan, erro
 	if err != nil {
 		return nil, err
 	}
-	have, err := current.InspectSchema(ctx, "main", nil)
+	tables := make([]string, len(want.Tables))
+	for i, table := range want.Tables {
+		tables[i] = table.Name
+	}
+	have, err := current.InspectSchema(ctx, "main", &schema.InspectOptions{Tables: tables})
 	if err != nil {
 		return nil, err
 	}
@@ -733,30 +675,6 @@ func planJournalSchema(ctx context.Context, conn *sql.Conn) (*migrate.Plan, erro
 		return nil, err
 	}
 	return current.PlanChanges(ctx, "listenbox-journal", changes)
-}
-
-func writeMigrationHistory(ctx context.Context, tx *sql.Tx, applied int) error {
-	if applied < 2 && applied > 0 {
-		if _, err := tx.ExecContext(
-			ctx,
-			"UPDATE source_items SET title=source_url WHERE title IS ''",
-		); err != nil {
-			return err
-		}
-	}
-	for i := applied; i < len(migrationNames); i++ {
-		if _, err := tx.ExecContext(
-			ctx,
-			"INSERT INTO refinery_schema_history VALUES (?,?,?,?)",
-			i+1,
-			migrationNames[i],
-			time.Now().UTC().Format(time.RFC3339Nano),
-			migrationChecksums[i],
-		); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func removeMissingSources(
@@ -798,33 +716,4 @@ func removeMissingSources(
 		}
 	}
 	return nil
-}
-
-func migrationHistoryPresent(ctx context.Context, conn *sql.Conn) (bool, error) {
-	var history, existing int
-	if err := conn.QueryRowContext(
-		ctx, "SELECT count(*) FROM sqlite_master WHERE type IS 'table' AND name IS 'refinery_s"+
-			"chema_history'").
-		Scan(&history); err != nil {
-		return false, err
-	}
-	if history == 0 {
-		if err := conn.QueryRowContext(
-			ctx,
-			"SELECT count(*) FROM sqlite_master WHERE type IS 'table' AND name IS 'transfers'",
-		).
-			Scan(&existing); err != nil {
-			return false, err
-		}
-		if existing > 0 {
-			return false, errors.New("sync journal has no migration history")
-		}
-		return false, nil
-	}
-	return true, nil
-}
-
-func validMigrationHistoryEntry(version, applied int, name, checksum string) bool {
-	return version == applied+1 && version <= len(migrationNames) &&
-		name == migrationNames[version-1] && checksum == migrationChecksums[version-1]
 }

@@ -1,9 +1,3 @@
-CREATE TABLE refinery_schema_history (
-    version INT4 PRIMARY KEY,
-    name VARCHAR(255),
-    applied_on VARCHAR(255),
-    checksum VARCHAR(255)
-);
 CREATE TABLE transfers (
     origin TEXT NOT NULL,
     show_slug TEXT NOT NULL,

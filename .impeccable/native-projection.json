@@ -5,11 +5,11 @@
     "rootDesign": "../../../DESIGN.md",
     "directionContract": "../../../docs/client-design.md",
     "surfaceBrief": "surfaces/apps-client-crates-desktop.md",
-    "finishReview": "review/finish-review.md",
-    "nativeTokens": "../crates/desktop/src/tokens.rs",
-    "nativeWorkspace": "../crates/desktop/src/workspace.rs",
-    "nativePlatform": "../crates/desktop/src/platform.rs",
-    "nativeLifecycle": "../crates/desktop/src/quit.rs"
+    "finishReview": "review/mygo-finish-review.md",
+    "nativeTokens": "../crates/desktop/view.go",
+    "nativeWorkspace": "../crates/desktop/workspace.go",
+    "nativePlatform": "../crates/desktop/platform_darwin.go",
+    "nativeLifecycle": "../crates/desktop/quit.go"
   },
   "projection": {
     "appearance": "system",
@@ -62,15 +62,15 @@
         "dark": "dark-primary"
       },
       "status": {
-        "danger": "native RGB status values in tokens.rs"
+        "danger": "native status colors in view.go"
       }
     },
     "primitives": {
-      "action": "Button::primary()",
-      "quietAction": "Button::ghost()",
-      "field": "Input::new()",
-      "progress": "Progress::new()",
-      "loading": "Spinner::new().small()"
+      "action": "ui.Button",
+      "quietAction": "ui.Button",
+      "field": "ui.TextInput",
+      "progress": "ui.Progress",
+      "loading": "ui.Progress(c, -1)"
     }
   },
   "guardrails": [
@@ -83,10 +83,6 @@
   "review": {
     "disposition": "ship",
     "materialFixes": "none",
-    "captures": [
-      "review/welcome.png",
-      "review/workspace-light.png",
-      "review/workspace-dark.png"
-    ]
+    "captures": []
   }
 }

@@ -12,7 +12,6 @@ aube -C youtubejs exec --no-install esbuild \
   --define:global=globalThis --conditions=module --platform=node \
   --outfile="../$temporary_bundle"
 
-# Cargo watches this file's mtime through youtubei's build script.
 if ! cmp -s "$temporary_bundle" bundle/cf-worker.js; then
   mv "$temporary_bundle" bundle/cf-worker.js
 fi

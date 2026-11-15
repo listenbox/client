@@ -60,8 +60,7 @@ type application struct {
 func main() { os.Exit(run()) }
 func run() int {
 	level := slog.LevelWarn
-	if strings.Contains(os.Getenv("RUST_LOG"), "info") ||
-		strings.Contains(os.Getenv("LISTENBOX_LOG"), "info") {
+	if strings.Contains(os.Getenv("LISTENBOX_LOG"), "info") {
 		level = slog.LevelInfo
 	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))

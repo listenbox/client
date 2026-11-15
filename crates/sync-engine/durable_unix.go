@@ -8,7 +8,7 @@ package syncengine
 #include <errno.h>
 static int listenbox_full_sync(int fd) {
 #ifdef __APPLE__
-    // F_FULLFSYNC also flushes the drive's write cache, as Rust's sync_all did.
+    // F_FULLFSYNC also flushes the drive's write cache.
     if (fcntl(fd, F_FULLFSYNC) == 0) return 0;
     if (errno != ENOTSUP && errno != EINVAL) return -1;
 #endif

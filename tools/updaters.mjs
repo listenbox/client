@@ -31,7 +31,10 @@ if (process.platform === 'darwin') {
   execFileSync('tar', ['-xf', archive, '-C', directory], { stdio: 'inherit' });
   await rename(path.join(directory, 'LICENSE'), path.join(directory, 'Sparkle.LICENSE.txt'));
 } else {
-  execFileSync('tar', ['-xf', archive, '-C', directory], { stdio: 'inherit' });
+  const windowsRoot = process.env.SystemRoot;
+  if (!windowsRoot) throw new Error('Windows archive extraction requires SystemRoot.');
+  const tar = path.join(windowsRoot, 'System32', 'tar.exe');
+  execFileSync(tar, ['-xf', pin.archive], { cwd: directory, stdio: 'inherit' });
   const root = path.join(directory, 'WinSparkle-0.9.4');
   for (const architecture of ['x64', 'ARM64']) {
     const dll = await readFile(path.join(root, architecture, 'Release/WinSparkle.dll'));

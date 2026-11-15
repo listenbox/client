@@ -21,8 +21,6 @@ import (
 
 var fixtureInvocation bool
 
-// Preserve the parent workspace's executable protocol while the fixture is
-// replaced with a Go test binary. No historical Rust executable is used here.
 const dnsFailureScenario = "dns"
 
 func TestMain(m *testing.M) {
@@ -32,9 +30,7 @@ func TestMain(m *testing.M) {
 		"live_pipeline_stall":      "TestLivePipelineStall",
 		"live_upload_idle_timeout": "TestLiveUploadIdleTimeout",
 		"live_network_recovery":    "TestLiveNetworkRecovery",
-		"prepare_v1_checkpoint":    "TestPrepareV1Checkpoint",
 	}
-	aliases["atlas_forward_checkpoint"] = "TestAtlasForwardSchemaContinuesRustHistory"
 	if len(os.Args) > 1 {
 		if name, ok := aliases[os.Args[1]]; ok {
 			fixtureInvocation = true
@@ -500,6 +496,7 @@ work:
 		changed := engine.Downloads.Changes()
 		for _, item := range engine.Downloads.Snapshot() {
 			if item.Phase == Retrying() && !stopped {
+				t.Logf("network recovery %s observed transport failure: %s", settings.Mode, item.Error)
 				if item.Attempt != 1 || item.Error == "" {
 					t.Fatal("retry lost its first transport error", item)
 				}

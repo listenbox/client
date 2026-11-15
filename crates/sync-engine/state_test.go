@@ -4,13 +4,11 @@ import (
 	"bufio"
 	"context"
 	"database/sql"
-	_ "embed"
 	"fmt"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -371,124 +369,67 @@ func TestReadersSeeCommittedSnapshotsWhileTheOnlyWriterIsBusy(t *testing.T) {
 	}
 }
 
-//go:embed tests/fixtures/V1__initial.sql
-var historicalV1 string
-
-func historicalJournal(t *testing.T, directory string) *sql.DB {
-	t.Helper()
-	uri, err := databaseFileURI(filepath.Join(directory, "sync.sqlite"))
-	requireNoError(t, err)
-	db := sql.OpenDB(sqlite.Connector(uri, nil, nil))
-	db.SetMaxOpenConns(1)
-	requireNoError(
-		t,
-		withScript(
-			t.Context(),
-			db,
-			historicalV1+"\nCREATE TABLE refinery_schema_history (version INT4 PRIMARY KEY,name VARCHAR(25"+
-				"5),applied_on VARCHAR(255),checksum VARCHAR(255));\nINSERT INTO refinery_schema_"+
-				"history VALUES(1,'initial','2026-01-01T00:00:00Z','5099304756189747416');",
-		),
-	)
-	return db
-}
-
-func journalHistory(t *testing.T, db *sql.DB) []string {
-	t.Helper()
-	rows, err := db.QueryContext(t.Context(),
-		"SELECT version,name,applied_on,checksum FROM refinery_schema_history ORDER BY version",
-	)
-	requireNoError(t, err)
-	defer rows.Close()
-	var history []string
-	for rows.Next() {
-		var version int
-		var name, applied, checksum string
-		requireNoError(t, rows.Scan(&version, &name, &applied, &checksum))
-		history = append(history, fmt.Sprintf("%d %s %s %s", version, name, applied, checksum))
-	}
-	requireNoError(t, rows.Err())
-	return history
-}
-
-func TestReopeningPreservesWorkAndRejectsChangedOrMissingHistory(t *testing.T) {
+func TestReopeningPreservesCheckpointsAndUnrelatedTables(t *testing.T) {
 	t.Parallel()
 	directory := t.TempDir()
 	db, err := OpenDatabase(t.Context(), directory)
 	requireNoError(t, err)
 	operation, err := db.Operation(t.Context(), "origin", "show", "video", "playlist")
 	requireNoError(t, err)
-	before := journalHistory(t, db.readers)
+	requireNoError(t, withScript(t.Context(), db.writer,
+		"CREATE TABLE local_notes (note TEXT); INSERT INTO local_notes VALUES ('keep');"))
 	requireNoError(t, db.Close())
+
 	db, err = OpenDatabase(t.Context(), directory)
 	requireNoError(t, err)
+	defer db.Close()
 	got, err := db.Operation(t.Context(), "origin", "show", "video", "playlist")
 	requireNoError(t, err)
-	if got != operation || !reflect.DeepEqual(journalHistory(t, db.readers), before) {
-		t.Fatal("reopening changed work or migration history")
+	if got != operation {
+		t.Fatal("reopening replaced the checkpoint identity")
 	}
-	_, err = db.writer.ExecContext(t.Context(), "UPDATE refinery_schema_history SET checksum='0'")
-	requireNoError(t, err)
-	requireNoError(t, db.Close())
-	if invalid, err := OpenDatabase(t.Context(), directory); err == nil {
-		invalid.Close()
-		t.Fatal("accepted divergent migration history")
-	}
-	uri, err := databaseFileURI(filepath.Join(directory, "sync.sqlite"))
-	requireNoError(t, err)
-	raw := sql.OpenDB(sqlite.Connector(uri, nil, nil))
-	_, err = raw.ExecContext(t.Context(), "DROP TABLE refinery_schema_history")
-	requireNoError(t, err)
-	requireNoError(t, raw.Close())
-	if invalid, err := OpenDatabase(t.Context(), directory); err == nil {
-		invalid.Close()
-		t.Fatal("accepted missing migration history")
+	var note string
+	requireNoError(t, db.readers.QueryRowContext(t.Context(), "SELECT note FROM local_notes").Scan(&note))
+	if note != "keep" {
+		t.Fatal("opening the journal changed an unrelated table")
 	}
 }
 
-func TestGroupedFailureRollsBackPendingSchemaAndHistory(t *testing.T) {
+func TestInvalidCheckpointRollsBackPendingSchema(t *testing.T) {
 	t.Parallel()
-	validDirectory := t.TempDir()
-	valid := historicalJournal(t, validDirectory)
-	requireNoError(t, valid.Close())
-	migrated, err := OpenDatabase(t.Context(), validDirectory)
-	requireNoError(t, err)
-	requireNoError(t, migrated.Close())
 	directory := t.TempDir()
-	legacy := historicalJournal(t, directory)
-	_, err = legacy.ExecContext(t.Context(), "INSERT INTO parts VALUES('absent-operation',0,1)")
+	db, err := OpenDatabase(t.Context(), directory)
 	requireNoError(t, err)
-	before := journalHistory(t, legacy)
-	requireNoError(t, legacy.Close())
-	if invalid, err := OpenDatabase(t.Context(), directory); err == nil {
-		invalid.Close()
-		t.Fatal("accepted an orphaned historical checkpoint")
-	} else if !strings.Contains(err.Error(), "foreign key") {
-		t.Fatal("migration failed before its foreign-key validation", err)
-	}
+	operation, err := db.Operation(t.Context(), "origin", "show", "video", "playlist")
+	requireNoError(t, err)
+	requireNoError(t, db.Close())
 	uri, err := databaseFileURI(filepath.Join(directory, "sync.sqlite"))
 	requireNoError(t, err)
 	raw := sql.OpenDB(sqlite.Connector(uri, nil, nil))
 	defer raw.Close()
-	if !reflect.DeepEqual(journalHistory(t, raw), before) {
-		t.Fatal("failed schema update committed migration history")
+	requireNoError(t, withScript(t.Context(), raw,
+		"DROP TABLE sync_completions; INSERT INTO parts VALUES('absent-operation',0,1);"))
+	if invalid, err := OpenDatabase(t.Context(), directory); err == nil {
+		invalid.Close()
+		t.Fatal("accepted an orphaned checkpoint")
+	} else if !strings.Contains(err.Error(), "foreign key") {
+		t.Fatal("schema initialization failed before its foreign-key validation", err)
 	}
 	var count int
-	requireNoError(
-		t,
-		raw.QueryRowContext(t.Context(), "SELECT count(*) FROM pragma_table_info('source_items') WHERE name IS 'phase'").
-			Scan(&count),
-	)
+	requireNoError(t, raw.QueryRowContext(t.Context(),
+		"SELECT count(*) FROM sqlite_master WHERE name IS 'sync_completions'").Scan(&count))
 	if count != 0 {
-		t.Fatal("failed schema update left pending columns")
+		t.Fatal("failed schema initialization left a pending table")
 	}
-	requireNoError(
-		t,
-		raw.QueryRowContext(t.Context(), "SELECT count(*) FROM sqlite_master WHERE name IS 'sync_completion'").
-			Scan(&count),
-	)
-	if count != 0 {
-		t.Fatal("failed schema update left a pending table")
+	_, err = raw.ExecContext(t.Context(), "DELETE FROM parts WHERE operation_id IS 'absent-operation'")
+	requireNoError(t, err)
+	db, err = OpenDatabase(t.Context(), directory)
+	requireNoError(t, err)
+	defer db.Close()
+	got, err := db.Operation(t.Context(), "origin", "show", "video", "playlist")
+	requireNoError(t, err)
+	if got != operation {
+		t.Fatal("schema initialization replaced a valid checkpoint")
 	}
 }
 
@@ -582,47 +523,4 @@ func TestAllShowsUseOneHourlyClockAndSkipMissedTicks(t *testing.T) {
 	case <-guard.Done():
 		t.Fatal("next hourly scan did not wake")
 	}
-}
-
-// Keep structured checkpoints readable to both binaries; the API E2E supplies
-// the actual interrupted package for the historical V1 recovery driver.
-func TestPrepareV1Checkpoint(t *testing.T) {
-	t.Parallel()
-	if !fixtureInvocation {
-		t.Skip("invoked by the API's V1 recovery scenario")
-	}
-	profile := os.Getenv("LISTENBOX_PROFILE_DIR")
-	current := filepath.Join(profile, "sync.sqlite")
-	historical := t.TempDir()
-	legacy := historicalJournal(t, historical)
-	_, err := legacy.ExecContext(t.Context(), "ATTACH DATABASE ? AS checkpoint", current)
-	requireNoError(t, err)
-	requireNoError(
-		t,
-		withScript(
-			t.Context(),
-			legacy,
-			"INSERT INTO transfers SELECT * FROM checkpoint.transfers; INSERT INTO parts SELE"+
-				"CT * FROM checkpoint.parts; INSERT INTO downloads SELECT * FROM checkpoint.downl"+
-				"oads; INSERT INTO download_ranges SELECT * FROM checkpoint.download_ranges; INSE"+
-				"RT INTO source_items SELECT origin,show_slug,collection_url,source_url,position "+
-				"FROM checkpoint.source_items;",
-		),
-	)
-	var prepared int
-	requireNoError(
-		t,
-		legacy.QueryRowContext(t.Context(), "SELECT count(*) FROM transfers WHERE manifest IS NOT NULL").
-			Scan(&prepared),
-	)
-	if prepared != 1 {
-		t.Fatalf("historical fixture has %d prepared transfers", prepared)
-	}
-	requireNoError(t, legacy.Close())
-	// #nosec G703 -- The test owns the configured temporary profile and artifact paths.
-	requireNoError(t, os.Rename(current, filepath.Join(profile, "sync-checkpoint-copy.sqlite")))
-	raw, err := os.ReadFile(filepath.Join(historical, "sync.sqlite"))
-	requireNoError(t, err)
-	// #nosec G703 -- The test owns the configured temporary profile and artifact paths.
-	requireNoError(t, os.WriteFile(current, raw, 0o600))
 }

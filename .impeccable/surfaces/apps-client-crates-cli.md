@@ -32,4 +32,4 @@ Keep the global design system unchanged. Terminal width controls clipping of the
 - Print each failed or skipped video once above the footer with its full title, show, full YouTube URL, and reason. A source-level failure uses a distinct `Not synced` record with the source link and reason. Clip only transient footer lines to terminal width.
 - Redirected stderr remains plain text, without color or cursor escapes. Ctrl+C switches to stopping guidance, drains owned writes, preserves resumable work, and exits 130. Watch starts immediately, then discovers sources again on hourly scans.
 
-The finish review and 80/120-column production captures are in [the CLI review](../review/cli-finish-review.md). Those PNGs visualize real ANSI terminal output for review; they are not product images or design assets.
+The Go command and output contracts are documented in [the CLI reference](../../crates/cli/README.md) and verified through the parent workspace's integrated CLI scenarios.

@@ -167,7 +167,7 @@ func TestNativeCallbacksPropertiesErrorsAndRuntimeBoundaries(t *testing.T) {
 }
 
 //nolint:lll // Preserve embedded JavaScript, vector assets or independent wire fixtures verbatim.
-func TestRustFetchPreservesBinaryBodiesHeadersStatusAndErrors(t *testing.T) {
+func TestFetchPreservesBinaryBodiesHeadersStatusAndErrors(t *testing.T) {
 	t.Parallel()
 	var mu sync.Mutex
 	var requests []FetchRequest

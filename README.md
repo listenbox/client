@@ -52,5 +52,4 @@ FFmpeg/OpenH264. End users need no Go, Node or FFmpeg installation.
 MyGo builds bundles and native executable resources. macOS release packaging
 uses its Developer ID signing and notarization support. Windows retains the
 existing Inno Setup installer identity for upgrades from previous releases.
-See [native updates](docs/native-updates.md) and the
-[migration verification](docs/go-migration.md).
+See [native updates](docs/native-updates.md).
