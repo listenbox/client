@@ -77,7 +77,8 @@ type PlayabilityStatus struct {
 	Subreason string `json:"subreason"`
 }
 type AudioTrack struct {
-	AudioIsDefault bool `json:"audio_is_default"`
+	AudioIsDefault bool   `json:"audio_is_default"`
+	ID             string `json:"id"`
 }
 type Format struct {
 	owner           *Engine

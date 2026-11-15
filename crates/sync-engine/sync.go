@@ -472,10 +472,6 @@ func (r *syncRun) transferVideo(
 	id string,
 ) (string, error) {
 	reason, transferErr := r.retryVideo(ctx, cancel, mu, stopped, video, id)
-	if transferErr != nil && ctx.Err() == nil && !retryable(transferErr) {
-		reason = Redact(transferErr.Error())
-		transferErr = nil
-	}
 	r.engine.Downloads.update(id, func(item *Download) {
 		switch {
 		case transferErr != nil:

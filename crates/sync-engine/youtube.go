@@ -587,14 +587,14 @@ func (t *videoImport) download(ctx context.Context) (*Media, string, error) {
 func (t *videoImport) downloadMedia(ctx context.Context, media *Media) error {
 	var err error
 	for {
+		stream := &media.Video
 		if t.audio {
-			stream := media.Video
 			if media.Audio != nil {
-				stream = *media.Audio
+				stream = media.Audio
 			}
 			err = t.api.download(
 				ctx,
-				stream,
+				*stream,
 				filepath.Join(t.directory, "source-audio"),
 				t.engine.Downloads,
 				t.id,
@@ -612,6 +612,7 @@ func (t *videoImport) downloadMedia(ctx context.Context, media *Media) error {
 				t.operation,
 			)
 			if err == nil && media.Audio != nil {
+				stream = media.Audio
 				err = t.api.download(
 					ctx,
 					*media.Audio,
@@ -626,7 +627,7 @@ func (t *videoImport) downloadMedia(ctx context.Context, media *Media) error {
 		if !errors.Is(err, ErrMediaUnavailable) || ctx.Err() != nil {
 			break
 		}
-		fallback, fallbackErr := t.youtube.FallbackMedia(ctx, t.video.ID, media)
+		fallback, fallbackErr := t.youtube.FallbackMedia(ctx, t.video.ID, media, stream)
 		if fallbackErr != nil {
 			err = fallbackErr
 			break

@@ -35,7 +35,7 @@ var (
 	)
 	//nolint:revive,staticcheck // Preserve existing end-user guidance.
 	ErrMediaUnavailable = errors.New(
-		"YouTube did not allow playback of this video. It will be checked again at the next sync.",
+		"YouTube refused the media download (HTTP 403). Try syncing again.",
 	)
 	//nolint:staticcheck // Preserve existing end-user guidance.
 	ErrSignInRequired = errors.New(

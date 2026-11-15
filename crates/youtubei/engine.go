@@ -356,7 +356,7 @@ func (engine *Engine) own(initial context.Context, fetch Fetch, ready chan<- err
 				}
 				globals.Set("__args", js.ParseJSON(string(raw)))
 				promise := js.Eval(
-					`(async()=>{try{return JSON.stringify({value:await (` + request.expression + `)(__args)})}catch(e){return JSON.stringify({error:{message:String(e.message||e),stack:e.stack,info:e.info,go_error:__goErrorID(e),playability_status:e.info?.playability_status}})}})()`,
+					`(async()=>{try{return JSON.stringify({value:await (` + request.expression + `)(__args)})}catch(e){return JSON.stringify({error:{message:String(e.message||e),stack:e.stack,info:e.info,go_error:__goErrorID(e),playability_status:e.info?.playability_status??(e.info?.status==='ERROR'?e.info:undefined)}})}})()`,
 				)
 				if promise == nil || promise.IsException() {
 					err := js.Exception()

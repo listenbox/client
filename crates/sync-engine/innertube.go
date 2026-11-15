@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -45,14 +46,19 @@ type PlaylistScan struct {
 	UnknownDurations int
 }
 type (
-	MediaStream struct{ URL, UserAgent, Identity string }
-	Media       struct {
+	MediaStream struct {
+		URL, UserAgent, Identity string
+		handle                   int
+	}
+	Media struct {
 		Title, Description, ArtworkURL string
 		PublishedAt, EstimatedSeconds  int64
 		DurationSeconds                *int64
 		Video                          MediaStream
 		Audio                          *MediaStream
 		fallback                       []youtubei.Client
+		playback                       youtubei.VideoInfo
+		client                         youtubei.Client
 	}
 )
 
@@ -257,8 +263,11 @@ func (yt *YouTube) Media(ctx context.Context, id, collection string) (*Media, st
 		return nil, "Live or upcoming video; sync after it has finished", nil
 	}
 	playback, client, reason, err := yt.playbackInfo(ctx, id)
-	if err != nil || reason != "" {
-		return nil, reason, err
+	if err != nil {
+		return nil, "", err
+	}
+	if reason != "" {
+		return nil, "", fmt.Errorf("YouTube playback failed for %s: %s", id, reason)
 	}
 	video, audio, err := yt.selectStreams(
 		ctx,
@@ -275,10 +284,13 @@ func (yt *YouTube) Media(ctx context.Context, id, collection string) (*Media, st
 	if err != nil {
 		return nil, "", err
 	}
-	return resolvedMedia(metadata, id, published, video, audio, client), "", nil
+	return resolvedMedia(metadata, playback, id, published, video, audio, client), "", nil
 }
 
-func (yt *YouTube) FallbackMedia(ctx context.Context, id string, media *Media) (bool, error) {
+func (yt *YouTube) FallbackMedia(ctx context.Context, id string, media *Media, refused *MediaStream) (bool, error) {
+	if found, err := yt.fallbackVariant(ctx, media, refused); found || err != nil {
+		return found, err
+	}
 	for len(media.fallback) > 0 {
 		client := media.fallback[0]
 		media.fallback = media.fallback[1:]
@@ -299,9 +311,46 @@ func (yt *YouTube) FallbackMedia(ctx context.Context, id string, media *Media) (
 			return false, err
 		}
 		media.Video, media.Audio = video, audio
+		media.playback, media.client = info, client
 		return true, nil
 	}
 	return false, nil
+}
+
+func (yt *YouTube) fallbackVariant(ctx context.Context, media *Media, refused *MediaStream) (bool, error) {
+	index := slices.IndexFunc(media.playback.Formats, func(format youtubei.Format) bool {
+		return format.Handle == refused.handle
+	})
+	if index == -1 {
+		return false, nil
+	}
+	previous := media.playback.Formats[index]
+	media.playback.Formats = slices.Delete(media.playback.Formats, index, index+1)
+	for _, format := range media.playback.Formats {
+		if !sameRendition(previous, format) || len(format.DRMFamilies) != 0 || format.IsTypeOTF {
+			continue
+		}
+		if format.URL == "" && format.Cipher == "" && format.SignatureCipher == "" {
+			continue
+		}
+		stream, err := yt.stream(ctx, format, media.playback.CPN, media.client)
+		if err != nil {
+			return false, err
+		}
+		*refused = stream
+		return true, nil
+	}
+	return false, nil
+}
+
+func sameRendition(left, right youtubei.Format) bool {
+	if left.ITag != right.ITag || left.MimeType != right.MimeType {
+		return false
+	}
+	if left.AudioTrack == nil || right.AudioTrack == nil {
+		return left.AudioTrack == nil && right.AudioTrack == nil
+	}
+	return left.AudioTrack.ID == right.AudioTrack.ID
 }
 
 func (yt *YouTube) playerInfo(
@@ -327,6 +376,9 @@ func (yt *YouTube) playerInfo(
 	case "UNPLAYABLE":
 		return info, unavailableReason(*status), nil
 	case "LOGIN_REQUIRED":
+		if status.Reason == "Private video" {
+			return info, unavailableReason(*status), nil
+		}
 		return info, "", fmt.Errorf("%s (%s): %w", status.Reason, id, ErrSignInRequired)
 	default:
 		return info, "", fmt.Errorf(
@@ -422,10 +474,15 @@ func (yt *YouTube) stream(
 		}
 		length = "Some(" + value + ")"
 	}
+	identity := fmt.Sprintf("%d:%s:%s", format.ITag, format.MimeType, length)
+	if tags := query.Get("xtags"); tags != "" {
+		identity += ":" + tags
+	}
 	return MediaStream{
 		URL:       u.String(),
 		UserAgent: agent,
-		Identity:  fmt.Sprintf("%d:%s:%s", format.ITag, format.MimeType, length),
+		Identity:  identity,
+		handle:    format.Handle,
 	}, nil
 }
 
@@ -810,6 +867,7 @@ func (s streamSelection) prefer(a, b youtubei.Format) bool {
 
 func resolvedMedia(
 	metadata youtubei.VideoInfo,
+	playback youtubei.VideoInfo,
 	id string,
 	published time.Time,
 	video MediaStream,
@@ -823,6 +881,8 @@ func resolvedMedia(
 		PublishedAt: published.UTC().UnixMilli(),
 		Video:       video,
 		Audio:       audio,
+		playback:    playback,
+		client:      client,
 	}
 	if media.Title == "" {
 		media.Title = id
