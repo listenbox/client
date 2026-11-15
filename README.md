@@ -34,6 +34,9 @@ Git-ignored and are rebuilt before compilation.
 The CLI and desktop share Go code, tailscale/sqlite, an Atlas declarative
 schema, buke/quickjs-go with the real YouTube.js bundle, and astiav with static
 FFmpeg/OpenH264. End users need no Go, Node or FFmpeg installation.
+`client:youtubejs-bytecode` compiles the generated YouTube.js bundle with the
+pinned native QuickJS library before building either client, so each process can
+load it without recompiling JavaScript at startup.
 
 ### Platform prerequisites
 

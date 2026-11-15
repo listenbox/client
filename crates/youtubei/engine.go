@@ -306,8 +306,12 @@ func (engine *Engine) own(initial context.Context, fetch Fetch, ready chan<- err
 		}
 		return ctx.NewUndefined()
 	})
-	for _, source := range []string{hostPrimitives, thirdparty.YouTubeJS, bindings} {
-		result := js.Eval(source)
+	for _, evaluate := range []func() *q.Value{
+		func() *q.Value { return js.Eval(hostPrimitives) },
+		func() *q.Value { return js.EvalBytecode(thirdparty.YouTubeJSBytecode) },
+		func() *q.Value { return js.Eval(bindings) },
+	} {
+		result := evaluate()
 		if result == nil || result.IsException() {
 			err := js.Exception()
 			if result != nil {
