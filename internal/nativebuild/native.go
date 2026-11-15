@@ -27,12 +27,22 @@ const (
 )
 
 const (
-	windowsOS = "windows"
-	arm64Arch = "arm64"
-	amd64Arch = "amd64"
+	windowsOS       = "windows"
+	darwinOS        = "darwin"
+	clangCommand    = "clang"
+	clangCXXCommand = "clang++"
+	arm64Arch       = "arm64"
+	amd64Arch       = "amd64"
 )
 
-func HostToolchain() (Toolchain, error) {
+func HostToolchain(ctx context.Context) (Toolchain, error) {
+	if runtime.GOOS == darwinOS {
+		compiler, err := exec.CommandContext(ctx, "xcrun", "--find", clangCommand).Output()
+		if err != nil {
+			return Toolchain{}, fmt.Errorf("find the Xcode macOS compiler: %w", err)
+		}
+		return Toolchain{CompilerBin: filepath.Dir(strings.TrimSpace(string(compiler)))}, nil
+	}
 	if runtime.GOOS != windowsOS {
 		return Toolchain{}, nil
 	}
@@ -56,13 +66,15 @@ func (toolchain Toolchain) Command(ctx context.Context, program string, args ...
 	if toolchain.MSYSBin != "" {
 		bin := toolchain.MSYSBin
 		switch program {
-		case "clang", "clang++", "pkg-config", "nasm":
+		case clangCommand, clangCXXCommand, "pkg-config", "nasm":
 			bin = toolchain.CompilerBin
 		}
 		if strings.HasPrefix(program, "llvm-") {
 			bin = toolchain.CompilerBin
 		}
 		program = filepath.Join(bin, program+".exe")
+	} else if toolchain.CompilerBin != "" && (program == clangCommand || program == clangCXXCommand) {
+		program = filepath.Join(toolchain.CompilerBin, program)
 	}
 	// #nosec G702 -- Build executables come from the trusted local native SDK.
 	command := exec.CommandContext(ctx, program, args...)
@@ -93,7 +105,7 @@ func run(command *exec.Cmd) error {
 }
 
 func (toolchain Toolchain) Check(ctx context.Context) error {
-	programs := []string{"clang", "clang++", "make", "pkg-config", "tar", "openssl", "bash"}
+	programs := []string{clangCommand, clangCXXCommand, "make", "pkg-config", "tar", "openssl", "bash"}
 	if runtime.GOARCH == amd64Arch {
 		programs = append(programs, "nasm")
 	}
@@ -115,7 +127,7 @@ func (toolchain Toolchain) Check(ctx context.Context) error {
 			return err
 		}
 	}
-	if runtime.GOOS == "darwin" {
+	if runtime.GOOS == darwinOS {
 		return run(exec.CommandContext(ctx, "xcrun", "--show-sdk-path"))
 	}
 	return nil
@@ -201,7 +213,7 @@ func archive(ctx context.Context, cache, name, url, checksum string) (string, er
 }
 
 func Build(ctx context.Context, root string) error {
-	toolchain, err := HostToolchain()
+	toolchain, err := HostToolchain(ctx)
 	if err != nil {
 		return err
 	}
@@ -215,11 +227,15 @@ func Build(ctx context.Context, root string) error {
 		return err
 	}
 	stamp := "go-astiav-9.0.2-openh264-2.6.0-v2-" + runtime.GOOS + "-" + runtime.GOARCH
-	if runtime.GOOS == windowsOS {
-		stamp += "-msys-environment-v1"
-		version, err := toolchain.Command(ctx, "clang", "--version").Output()
+	if runtime.GOOS == windowsOS || runtime.GOOS == darwinOS {
+		if runtime.GOOS == darwinOS {
+			stamp += "-apple-sdk-v1"
+		} else {
+			stamp += "-msys-environment-v1"
+		}
+		version, err := toolchain.Command(ctx, clangCommand, "--version").Output()
 		if err != nil {
-			return fmt.Errorf("identify native Windows compiler: %w", err)
+			return fmt.Errorf("identify native %s compiler: %w", runtime.GOOS, err)
 		}
 		stamp += fmt.Sprintf("-%x", sha256.Sum256(version))
 	}
@@ -393,8 +409,8 @@ func buildOpenH264(ctx context.Context, toolchain Toolchain, buildPrefix, h264Ro
 		"OS=" + osName,
 		"ARCH=" + arch,
 		"USE_ASM=" + assembly,
-		"CC=" + filepath.ToSlash(toolchain.Command(ctx, "clang").Path),
-		"CXX=" + filepath.ToSlash(toolchain.Command(ctx, "clang++").Path),
+		"CC=" + filepath.ToSlash(toolchain.Command(ctx, clangCommand).Path),
+		"CXX=" + filepath.ToSlash(toolchain.Command(ctx, clangCXXCommand).Path),
 		"STATIC_LDFLAGS=" + cxxLibrary,
 		"BUILDTYPE=Release",
 		"install-static",
@@ -418,8 +434,8 @@ func ffmpegArguments(ctx context.Context, toolchain Toolchain, buildPrefix strin
 	args := []string{
 		"./configure",
 		"--prefix=" + buildPrefix,
-		"--cc=" + filepath.ToSlash(toolchain.Command(ctx, "clang").Path),
-		"--cxx=" + filepath.ToSlash(toolchain.Command(ctx, "clang++").Path),
+		"--cc=" + filepath.ToSlash(toolchain.Command(ctx, clangCommand).Path),
+		"--cxx=" + filepath.ToSlash(toolchain.Command(ctx, clangCXXCommand).Path),
 		"--disable-everything",
 		"--disable-autodetect",
 		"--disable-programs",

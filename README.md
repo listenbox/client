@@ -37,8 +37,9 @@ FFmpeg/OpenH264. End users need no Go, Node or FFmpeg installation.
 
 ### Platform prerequisites
 
-- **macOS:** Xcode with macOS components and Command Line Tools. Mise supplies
-  LLVM, CMake, Ninja, Make, pkg-config and other native build CLIs.
+- **macOS:** Xcode with macOS components and Command Line Tools. The selected
+  Apple SDK supplies Clang and the system C++ runtime; Mise supplies CMake,
+  Ninja, Make, pkg-config and other native build CLIs.
 - **Linux (Ubuntu 24.04):** `build-essential`, `libasound2-dev`, `libfontconfig1-dev`, `libwayland-dev`,
   `libxkbcommon-dev`, `libxkbcommon-x11-dev`, `libxcb1-dev`, `libx11-xcb-dev`,
   `libx11-dev`, `libegl1-mesa-dev`, and `libvulkan-dev`.

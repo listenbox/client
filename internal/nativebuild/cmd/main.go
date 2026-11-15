@@ -25,7 +25,7 @@ func run() error {
 	var err error
 	if *check {
 		var toolchain nativebuild.Toolchain
-		toolchain, err = nativebuild.HostToolchain()
+		toolchain, err = nativebuild.HostToolchain(ctx)
 		if err == nil {
 			err = toolchain.Check(ctx)
 		}

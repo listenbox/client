@@ -10,7 +10,8 @@
   code in the YouTube.js submodule.
 - Mise provisions tools and the CGO environment from `mise.toml` and its lock.
   Run tasks through Moon. Never define tasks in Mise TOML or Mise task files.
-- Use the pinned Go, C/C++ compiler and pkg-config through `mise exec`.
+- Use the pinned Go and pkg-config through `mise exec`. Linux uses the pinned
+  C/C++ compiler; macOS uses the selected Xcode SDK's Clang and system libc++.
   Native libraries are built by `client:native-ffmpeg`; desktop distribution
   uses MyGo's CLI. Windows requires a matching CLANG64/CLANGARM64 MSYS2 SDK.
 

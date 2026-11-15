@@ -9,12 +9,13 @@ bun = "1.4.4"
 "aqua:moonrepo/moon" = "2.5.6"
 jq = "1.8.1"
 gh = "2.104.0"
-# Native Unix toolchain. Windows uses the native CLANG64/CLANGARM64 MSYS2 SDK
+# Linux compiler toolchain. macOS uses the selected Xcode SDK's compilers.
+# Windows uses the native CLANG64/CLANGARM64 MSYS2 SDK
 # checked by client:native-setup; its compiler must target the same CRT as FFmpeg.
 cmake = "4.5.0"
 ninja = "1.13.2"
-clang = { version = "23.1.5", os = ["linux", "macos"] }
-"conda:clangxx" = { version = "23.1.5", os = ["linux", "macos"] }
+clang = { version = "23.1.5", os = ["linux"] }
+"conda:clangxx" = { version = "23.1.5", os = ["linux"] }
 make = { version = "4.4.1", os = ["linux", "macos"] }
 "conda:pkg-config" = { version = "0.29.2", os = ["linux", "macos"] }
 "conda:nasm" = { version = "2.16.03", os = ["linux", "macos"] }
@@ -23,10 +24,12 @@ make = { version = "4.4.1", os = ["linux", "macos"] }
 
 [env]
 CGO_ENABLED = "1"
-CC = "{% if os() == 'windows' %}\"{{ get_env(name='MSYS2_LOCATION', default='C:/msys64') }}/{% if arch() == 'arm64' %}clangarm64{% else %}clang64{% endif %}/bin/clang.exe\"{% else %}clang{% endif %}"
-CXX = "{% if os() == 'windows' %}\"{{ get_env(name='MSYS2_LOCATION', default='C:/msys64') }}/{% if arch() == 'arm64' %}clangarm64{% else %}clang64{% endif %}/bin/clang++.exe\"{% else %}clang++{% endif %}"
+CC = "{% if os() == 'windows' %}\"{{ get_env(name='MSYS2_LOCATION', default='C:/msys64') }}/{% if arch() == 'arm64' %}clangarm64{% else %}clang64{% endif %}/bin/clang.exe\"{% elif os() == 'macos' %}/usr/bin/clang{% else %}clang{% endif %}"
+CXX = "{% if os() == 'windows' %}\"{{ get_env(name='MSYS2_LOCATION', default='C:/msys64') }}/{% if arch() == 'arm64' %}clangarm64{% else %}clang64{% endif %}/bin/clang++.exe\"{% elif os() == 'macos' %}/usr/bin/clang++{% else %}clang++{% endif %}"
 PKG_CONFIG = "{% if os() == 'windows' %}{{ get_env(name='MSYS2_LOCATION', default='C:/msys64') }}/{% if arch() == 'arm64' %}clangarm64{% else %}clang64{% endif %}/bin/pkg-config.exe{% else %}pkg-config{% endif %}"
 PKG_CONFIG_PATH = "{{config_root}}/.cache/ffmpeg/lib/pkgconfig"
 # Tailscale SQLite's monotonic clock uses MinGW's winpthreads implementation.
 # Link it statically for both tests and the distributed application.
-CGO_LDFLAGS = "{% if os() == 'windows' %}-static -lwinpthread{% endif %}"
+# CGO packages repeat shared native dependencies; Apple's linker already ignores
+# those repeats. Disable its duplicate-library diagnostic for CLI and desktop.
+CGO_LDFLAGS = "{% if os() == 'windows' %}-static -lwinpthread{% elif os() == 'macos' %}-Wl,-no_warn_duplicate_libraries{% endif %}"

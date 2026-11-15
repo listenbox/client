@@ -35,6 +35,7 @@ options=(-platform "$platform")
 if [[ "$platform" == windows/* ]]; then options+=(-skip-installer); fi
 go tool mygo build "${options[@]}" crates/desktop
 
+runtime_environment=()
 if [[ "$platform" == darwin/arm64 ]]; then
   bundle=crates/desktop/dist/mygo/darwin-arm64/Listenbox.app
   executable="$bundle/Contents/MacOS/Listenbox"
@@ -44,16 +45,45 @@ if [[ "$platform" == darwin/arm64 ]]; then
   lipo "$executable" -verify_arch arm64
   dependencies="$(otool -L "$executable")"
   printf '%s\n' "$dependencies"
-  if [[ "$dependencies" =~ lib(avcodec|avformat|avdevice|avfilter|avutil|swscale|swresample).*\.dylib ]]; then
-    echo 'FFmpeg must be statically linked.' >&2
-    exit 1
-  fi
+  while IFS= read -r dependency; do
+    case "$dependency" in
+      /usr/lib/*|/System/Library/*) ;;
+      *) echo "Packaged executable requires a non-system library: $dependency" >&2; exit 1 ;;
+    esac
+  done < <(printf '%s\n' "$dependencies" | awk 'NR > 1 {print $1}')
+  while IFS= read -r search_path; do
+    case "$search_path" in
+      @executable_path/*|@loader_path/*) ;;
+      *) echo "Packaged executable has an external runtime search path: $search_path" >&2; exit 1 ;;
+    esac
+  done < <(otool -l "$executable" | awk '$1 == "cmd" && $2 == "LC_RPATH" {rpath=1; next} rpath && $1 == "path" {print $2; rpath=0}')
   codesign --verify --deep --strict "$bundle"
   if [[ "${LISTENBOX_PRODUCTION_RELEASE:-0}" == 1 ]]; then
     xcrun stapler validate "$bundle"
     xcrun stapler validate "$image"
     spctl --assess --type execute --verbose=2 "$bundle"
   fi
+  verification_root="$(mktemp -d)"
+  trap 'hdiutil detach "$verification_root/mount" >/dev/null 2>&1 || true; rm -rf "$verification_root"' EXIT
+  mkdir "$verification_root/mount"
+  hdiutil attach -readonly -nobrowse -mountpoint "$verification_root/mount" "$image"
+  bundle="$verification_root/mount/Listenbox.app"
+  executable="$bundle/Contents/MacOS/Listenbox"
+  codesign --verify --deep --strict "$bundle"
+  if [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "$bundle/Contents/Info.plist")" != icon.png ]] ||
+    ! cmp -s crates/desktop/assets/icon.png "$bundle/Contents/Resources/icon.png"; then
+    echo 'The installed app must use the original Listenbox icon PNG.' >&2
+    exit 1
+  fi
+  resources=(LICENSE THIRD-PARTY-NOTICES.txt NOTICE.txt)
+  if [[ -n "$key" ]]; then resources+=(Sparkle.LICENSE.txt Sparkle.framework/Sparkle); fi
+  for resource in "${resources[@]}"; do
+    if [[ ! -f "$bundle/Contents/Resources/$resource" ]]; then
+      echo "Installed app is missing a required resource: $resource" >&2
+      exit 1
+    fi
+  done
+  runtime_environment=(env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin)
 else
   package="crates/desktop/dist/$release_platform"
   mkdir -p "$package"
@@ -80,7 +110,7 @@ else
     exit 1
   fi
 fi
-reported_version="$("$executable" --version)"
+reported_version="$("${runtime_environment[@]}" "$executable" --version)"
 if [[ "$reported_version" != "Listenbox $version ($commit)" ]]; then
   echo 'Packaged desktop version/source or startup is invalid.' >&2
   exit 1

@@ -29,6 +29,9 @@ tasks:
             c.resources.push("../../.cache/updaters/WinSparkle-0.9.4/"+arch+"/Release/WinSparkle.dll","../../.cache/updaters/WinSparkle-0.9.4/COPYING","../../.cache/updaters/WinSparkle-0.9.4/COPYING.expat");
           }
           if(process.platform==="darwin"){
+            c.icon="";
+            c.resources.push("assets/icon.png");
+            c.macos.infoPlist.CFBundleIconFile="icon.png";
             c.macos.signingIdentity=process.env.LISTENBOX_SIGNING_IDENTITY||"-";
             c.macos.infoPlist.ListenboxSourceCommit=process.env.LISTENBOX_SOURCE_COMMIT||execFileSync("git",["rev-parse","HEAD"],{encoding:"utf8"}).trim();
             if(key){
