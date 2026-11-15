@@ -18,7 +18,7 @@ import (
 	"strings"
 )
 
-type Toolchain struct{ MSYSBin, CompilerBin string }
+type Toolchain struct{ MSYSBin, CompilerBin, SDKRoot string }
 
 const (
 	privateDirectoryMode = 0o700
@@ -37,11 +37,18 @@ const (
 
 func HostToolchain(ctx context.Context) (Toolchain, error) {
 	if runtime.GOOS == darwinOS {
-		compiler, err := exec.CommandContext(ctx, "xcrun", "--find", clangCommand).Output()
+		compiler, err := exec.CommandContext(ctx, "xcrun", "--sdk", "macosx", "--find", clangCommand).Output()
 		if err != nil {
 			return Toolchain{}, fmt.Errorf("find the Xcode macOS compiler: %w", err)
 		}
-		return Toolchain{CompilerBin: filepath.Dir(strings.TrimSpace(string(compiler)))}, nil
+		sdk, err := exec.CommandContext(ctx, "xcrun", "--sdk", "macosx", "--show-sdk-path").Output()
+		if err != nil {
+			return Toolchain{}, fmt.Errorf("find the Xcode macOS SDK: %w", err)
+		}
+		return Toolchain{
+			CompilerBin: filepath.Dir(strings.TrimSpace(string(compiler))),
+			SDKRoot:     strings.TrimSpace(string(sdk)),
+		}, nil
 	}
 	if runtime.GOOS != windowsOS {
 		return Toolchain{}, nil
@@ -93,6 +100,11 @@ func (toolchain Toolchain) Command(ctx context.Context, program string, args ...
 			"PATH="+strings.Join(paths, string(os.PathListSeparator)),
 		)
 	}
+	if toolchain.SDKRoot != "" {
+		// Finding Clang with xcrun does not export its SDK selection. Both
+		// configure and make must pass it to the compiler's child processes.
+		command.Env = append(command.Environ(), "SDKROOT="+toolchain.SDKRoot)
+	}
 	return command
 }
 
@@ -128,7 +140,11 @@ func (toolchain Toolchain) Check(ctx context.Context) error {
 		}
 	}
 	if runtime.GOOS == darwinOS {
-		return run(exec.CommandContext(ctx, "xcrun", "--show-sdk-path"))
+		command := toolchain.Command(ctx, clangCXXCommand, "-x", "c++", "-fsyntax-only", "-")
+		command.Stdin = strings.NewReader("#include <stdio.h>\n#include <inttypes.h>\n#include <vector>\n")
+		if err := run(command); err != nil {
+			return fmt.Errorf("compile against macOS SDK %q: %w", toolchain.SDKRoot, err)
+		}
 	}
 	return nil
 }
@@ -229,7 +245,7 @@ func Build(ctx context.Context, root string) error {
 	stamp := "go-astiav-9.0.2-openh264-2.6.0-v2-" + runtime.GOOS + "-" + runtime.GOARCH
 	if runtime.GOOS == windowsOS || runtime.GOOS == darwinOS {
 		if runtime.GOOS == darwinOS {
-			stamp += "-apple-sdk-v1"
+			stamp += "-apple-sdk-v2"
 		} else {
 			stamp += "-msys-environment-v1"
 		}
