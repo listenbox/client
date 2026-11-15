@@ -13,7 +13,7 @@ func TestMsysTarExtractsIntoWindowsPathsWithSpaces(t *testing.T) {
 	if runtime.GOOS != windowsOS {
 		t.Skip("MSYS2 native Windows path regression")
 	}
-	toolchain, err := HostToolchain()
+	toolchain, err := HostToolchain(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}

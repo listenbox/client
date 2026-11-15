@@ -85,8 +85,15 @@ tasks:
     options:
       cache: false
       internal: true
+  youtubejs-bytecode:
+    deps: [youtubejs:bundle]
+    command: mise exec -- go run ./internal/youtubejsbuild
+    inputs: [internal/youtubejsbuild/**/*.go, third_party/bundle/quickjs.js, go.mod, go.sum]
+    outputs: [third_party/bundle/quickjs.bytecode]
+    options:
+      internal: true
   prerequisites:
-    deps: [~:codegen, ~:native-ffmpeg, youtubejs:bundle]
+    deps: [~:codegen, ~:native-ffmpeg, ~:youtubejs-bytecode]
     inputs: []
     options:
       internal: true
