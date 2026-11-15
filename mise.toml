@@ -27,3 +27,6 @@ CC = "{% if os() == 'windows' %}\"{{ get_env(name='MSYS2_LOCATION', default='C:/
 CXX = "{% if os() == 'windows' %}\"{{ get_env(name='MSYS2_LOCATION', default='C:/msys64') }}/{% if arch() == 'arm64' %}clangarm64{% else %}clang64{% endif %}/bin/clang++.exe\"{% else %}clang++{% endif %}"
 PKG_CONFIG = "{% if os() == 'windows' %}{{ get_env(name='MSYS2_LOCATION', default='C:/msys64') }}/{% if arch() == 'arm64' %}clangarm64{% else %}clang64{% endif %}/bin/pkg-config.exe{% else %}pkg-config{% endif %}"
 PKG_CONFIG_PATH = "{{config_root}}/.cache/ffmpeg/lib/pkgconfig"
+# Tailscale SQLite's monotonic clock uses MinGW's winpthreads implementation.
+# Link it statically for both tests and the distributed application.
+CGO_LDFLAGS = "{% if os() == 'windows' %}-static -lwinpthread{% endif %}"

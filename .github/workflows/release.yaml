@@ -1,6 +1,7 @@
+# Native build matrix adapted from egoist/mygo-music's release workflow.
+# Codec libraries require a native SDK for each target architecture.
 name: Native builds and stable releases
 on:
-  # Branch pushes belong to ci.yaml; native builds run on PRs and release tags.
   push:
     tags: [v*]
   pull_request:
@@ -27,134 +28,67 @@ jobs:
         env:
           RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
         run: bash tools/release-validate.sh "$RELEASE_TAG"
-  macos:
+  native:
     needs: identity
     if: needs.identity.outputs.current == 'true'
-    concurrency:
-      group: desktop-macos-${{ startsWith(github.ref, 'refs/tags/v') && 'stable' || github.ref }}
-      cancel-in-progress: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    name: ${{ matrix.id }}
+    runs-on: ${{ matrix.os }}
     environment: ${{ startsWith(github.ref, 'refs/tags/v') && 'desktop-release' || 'desktop-validation' }}
-    runs-on: macos-15
-    env:
-      LISTENBOX_PRODUCTION_RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') && '1' || '0' }}
-      LISTENBOX_SOURCE_COMMIT: ${{ github.sha }}
-      LISTENBOX_UPDATE_PUBLIC_KEY: ${{ vars.MACOS_UPDATE_PUBLIC_KEY }}
-      MACOS_UPDATE_PUBLIC_KEY: ${{ vars.MACOS_UPDATE_PUBLIC_KEY }}
-      MACOS_UPDATE_SEED_BASE64: ${{ secrets.MACOS_UPDATE_SEED_BASE64 }}
-      MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
-      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-      MACOS_SIGNING_IDENTITY: ${{ vars.MACOS_SIGNING_IDENTITY }}
-      MACOS_TEAM_ID: ${{ vars.MACOS_TEAM_ID }}
-      MACOS_NOTARY_KEY_P8_BASE64: ${{ secrets.MACOS_NOTARY_KEY_P8_BASE64 }}
-      MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
-      MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
-      MACOSX_DEPLOYMENT_TARGET: '13.0'
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-          submodules: recursive
-      - uses: jdx/mise-action@v5
-        with:
-          version: '2026.11.7'
-      - uses: actions/cache@v6
-        with:
-          path: |
-            ~/go/pkg/mod
-            ~/Library/Caches/go-build
-            .cache/ffmpeg
-            .cache/native-src
-          key: client-native-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.lock', 'go.sum', 'internal/nativebuild/**/*.go') }}
-      - name: Import protected Apple signing credentials
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: bash tools/macos-signing.sh setup
-      - name: Test native client and media on Apple Silicon
-        run: moon exec --ignore-ci-checks client:test
-      - name: Use TCP for Apple notarization ticket delivery
-        if: startsWith(github.ref, 'refs/tags/v')
-        # https://github.com/actions/runner-images/issues/14924
-        run: |
-          echo 'block return out quick proto udp from any to any port 443' | sudo pfctl -f -
-          sudo pfctl -E
-      - name: Build, sign and notarize Apple Silicon DMG with MyGo
-        run: moon exec --ignore-ci-checks desktop:dmg
-      - name: Verify Apple Silicon architecture and static codecs
-        run: |
-          binary=crates/desktop/dist/mygo/darwin-arm64/Listenbox.app/Contents/MacOS/Listenbox
-          lipo "$binary" -verify_arch arm64
-          dependencies="$(otool -L "$binary")"
-          printf '%s\n' "$dependencies"
-          if [[ "$dependencies" =~ lib(avcodec|avformat|avdevice|avfilter|avutil|swscale|swresample).*\.dylib ]]; then
-            echo 'FFmpeg must be statically linked.' >&2
-            exit 1
-          fi
-          "$binary" --version
-      - name: Sign final update payload and generate macOS appcast
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: node tools/release.mjs prepare macos-arm64 crates/desktop/dist/macos/Listenbox-${{ needs.identity.outputs.version }}-macos-arm64.dmg .cache/release-macos
-      - name: Remove Apple credentials and ephemeral keychain
-        if: always() && startsWith(github.ref, 'refs/tags/v')
-        run: bash tools/macos-signing.sh cleanup
-      - name: Upload macOS diagnostics
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: diagnostics-macos-${{ github.run_attempt }}
-          path: |
-            .cache/native-src/FFmpeg-*/ffbuild/config.log
-            crates/desktop/dist/mygo/**/*.notary.json
-            .moon/cache/*Report.json
-          include-hidden-files: true
-          if-no-files-found: ignore
-      - uses: actions/upload-artifact@v7
-        with:
-          name: native-macos
-          path: crates/desktop/dist/macos/*.dmg
-          if-no-files-found: error
-      - uses: actions/upload-artifact@v7
-        if: startsWith(github.ref, 'refs/tags/v')
-        with:
-          name: release-macos
-          path: .cache/release-macos/*
-          if-no-files-found: error
-  windows:
-    needs: identity
-    if: needs.identity.outputs.current == 'true'
-    environment: ${{ startsWith(github.ref, 'refs/tags/v') && 'desktop-release' || 'desktop-validation' }}
+    defaults:
+      run:
+        shell: bash
     strategy:
       fail-fast: false
       matrix:
         include:
-          - architecture: x64
-            runner: windows-2025
+          - id: macos-arm64
+            os: macos-15
+            platform: darwin/arm64
+            build-target: desktop:dmg
+            architecture: arm64
+            update-key: MACOS_UPDATE_PUBLIC_KEY
+            artifact-directory: macos
+            installer-suffix: .dmg
+          - id: windows-x64
+            os: windows-2025
+            platform: windows/amd64
+            build-target: desktop:build-release-windows-x64
+            architecture: x64
+            update-key: WINDOWS_UPDATE_PUBLIC_KEY
             msystem: CLANG64
             sdk: clang-x86_64
             assembler: mingw-w64-clang-x86_64-nasm
-          - architecture: arm64
-            runner: windows-11-arm
+            artifact-directory: installers
+            installer-suffix: -setup.exe
+          - id: windows-arm64
+            os: windows-11-arm
+            platform: windows/arm64
+            build-target: desktop:build-release-windows-arm64
+            architecture: arm64
+            update-key: WINDOWS_UPDATE_PUBLIC_KEY
             msystem: CLANGARM64
             sdk: clang-aarch64
             assembler: ''
+            artifact-directory: installers
+            installer-suffix: -setup.exe
     concurrency:
-      group: desktop-windows-${{ matrix.architecture }}-${{ startsWith(github.ref, 'refs/tags/v') && 'stable' || github.ref }}
+      group: desktop-${{ matrix.id }}-${{ startsWith(github.ref, 'refs/tags/v') && 'stable' || github.ref }}
       cancel-in-progress: ${{ startsWith(github.ref, 'refs/tags/v') }}
-    runs-on: ${{ matrix.runner }}
     env:
       LISTENBOX_PRODUCTION_RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') && '1' || '0' }}
       LISTENBOX_SOURCE_COMMIT: ${{ github.sha }}
-      LISTENBOX_UPDATE_PUBLIC_KEY: ${{ vars.WINDOWS_UPDATE_PUBLIC_KEY }}
-      WINDOWS_UPDATE_PUBLIC_KEY: ${{ vars.WINDOWS_UPDATE_PUBLIC_KEY }}
-      WINDOWS_UPDATE_SEED_BASE64: ${{ secrets.WINDOWS_UPDATE_SEED_BASE64 }}
-    defaults:
-      run:
-        shell: pwsh
+      LISTENBOX_UPDATE_PUBLIC_KEY: ${{ vars[matrix.update-key] }}
+      MACOSX_DEPLOYMENT_TARGET: '13.0'
     steps:
-      - run: git config --global core.autocrlf input
+      - name: Preserve Unix line endings on Windows
+        if: runner.os == 'Windows'
+        run: git config --global core.autocrlf input
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           submodules: recursive
       - uses: msys2/setup-msys2@v2
+        if: runner.os == 'Windows'
         id: msys2
         with:
           msystem: ${{ matrix.msystem }}
@@ -165,6 +99,7 @@ jobs:
             mingw-w64-${{ matrix.sdk }}-pkgconf
             ${{ matrix.assembler }}
       - name: Record native SDK identity
+        if: runner.os == 'Windows'
         id: sdk
         shell: msys2 {0}
         run: |
@@ -174,20 +109,46 @@ jobs:
       - uses: jdx/mise-action@v5
         with:
           version: '2026.11.7'
+      # As in mygo-music, ask Go for its paths rather than guessing per OS.
+      - name: Find Go caches
+        id: go-env
+        run: |
+          echo "build=$(mise exec -- go env GOCACHE)" >> "$GITHUB_OUTPUT"
+          echo "mod=$(mise exec -- go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@v6
         with:
           path: |
-            ~/go/pkg/mod
-            ~/AppData/Local/go-build
+            ${{ steps.go-env.outputs.build }}
+            ${{ steps.go-env.outputs.mod }}
             .cache/ffmpeg
             .cache/native-src
-          key: client-native-windows-${{ matrix.architecture }}-${{ steps.sdk.outputs.identity }}-${{ hashFiles('mise.lock', 'go.sum', 'internal/nativebuild/**/*.go') }}
-      - name: Build and verify MyGo release payload
+          key: client-native-${{ matrix.id }}-${{ steps.sdk.outputs.identity }}-${{ hashFiles('mise.lock', 'go.sum', 'internal/nativebuild/**/*.go') }}
+          restore-keys: client-native-${{ matrix.id }}-${{ steps.sdk.outputs.identity }}-
+      - name: Import protected Apple signing credentials
+        if: runner.os == 'macOS' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGNING_IDENTITY: ${{ vars.MACOS_SIGNING_IDENTITY }}
+          MACOS_TEAM_ID: ${{ vars.MACOS_TEAM_ID }}
+          MACOS_NOTARY_KEY_P8_BASE64: ${{ secrets.MACOS_NOTARY_KEY_P8_BASE64 }}
+          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+        run: bash tools/macos-signing.sh setup
+      - name: Test native client and media
+        run: moon exec --ignore-ci-checks client:test
+      - name: Use TCP for Apple notarization ticket delivery
+        if: runner.os == 'macOS' && startsWith(github.ref, 'refs/tags/v')
+        # https://github.com/actions/runner-images/issues/14924
         run: |
-          New-Item -ItemType Directory -Force .cache | Out-Null
-          moon exec --ignore-ci-checks desktop:build-release-windows-${{ matrix.architecture }} 2>&1 | Tee-Object .cache/windows-desktop-${{ matrix.architecture }}.log
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          echo 'block return out quick proto udp from any to any port 443' | sudo pfctl -f -
+          sudo pfctl -E
+      - name: Build and verify MyGo release payload
+        run: moon exec --ignore-ci-checks '${{ matrix.build-target }}' 2>&1 | tee '.cache/desktop-${{ matrix.id }}.log'
+      # Preserve the Inno AppId/mutex used by installed WinSparkle clients.
       - name: Install verified Inno Setup compiler
+        if: runner.os == 'Windows'
+        shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -200,39 +161,53 @@ jobs:
           $process = Start-Process $installer -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw 'Inno Setup installation failed.' }
       - name: Build existing per-user upgrade installer
-        run: ./tools/package-windows.ps1 -Architecture ${{ matrix.architecture }} -Payload crates/desktop/dist/windows-${{ matrix.architecture }}
-      - uses: actions/upload-artifact@v7
-        with:
-          name: native-windows-${{ matrix.architecture }}
-          path: crates/desktop/dist/installers/Listenbox-${{ needs.identity.outputs.version }}-windows-${{ matrix.architecture }}-setup.exe
-          if-no-files-found: error
-      - name: Sign final installer for WinSparkle and generate appcast
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tools/package-windows.ps1 -Architecture ${{ matrix.architecture }} -Payload crates/desktop/dist/${{ matrix.id }}
+      - name: Sign final payload and generate the existing update appcast
         if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          MACOS_UPDATE_PUBLIC_KEY: ${{ vars.MACOS_UPDATE_PUBLIC_KEY }}
+          WINDOWS_UPDATE_PUBLIC_KEY: ${{ vars.WINDOWS_UPDATE_PUBLIC_KEY }}
+          MACOS_UPDATE_SEED_BASE64: ${{ matrix.id == 'macos-arm64' && secrets.MACOS_UPDATE_SEED_BASE64 || '' }}
+          WINDOWS_UPDATE_SEED_BASE64: ${{ runner.os == 'Windows' && secrets.WINDOWS_UPDATE_SEED_BASE64 || '' }}
+          RELEASE_VERSION: ${{ needs.identity.outputs.version }}
+          RELEASE_PLATFORM: ${{ matrix.id }}
+          RELEASE_DIRECTORY: ${{ matrix.artifact-directory }}
+          RELEASE_SUFFIX: ${{ matrix.installer-suffix }}
         run: |
-          $installer = 'crates/desktop/dist/installers/Listenbox-${{ needs.identity.outputs.version }}-windows-${{ matrix.architecture }}-setup.exe'
-          node tools/release.mjs prepare windows-${{ matrix.architecture }} $installer .cache/release-windows-${{ matrix.architecture }}
-          if ($LASTEXITCODE -ne 0) { throw 'Update signature/appcast generation failed.' }
+          payload="crates/desktop/dist/$RELEASE_DIRECTORY/Listenbox-$RELEASE_VERSION-$RELEASE_PLATFORM$RELEASE_SUFFIX"
+          mise exec -- node tools/release.mjs prepare "$RELEASE_PLATFORM" "$payload" ".cache/release-$RELEASE_PLATFORM"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: native-${{ matrix.id }}
+          path: crates/desktop/dist/${{ matrix.artifact-directory }}/Listenbox-${{ needs.identity.outputs.version }}-${{ matrix.id }}${{ matrix.installer-suffix }}
+          if-no-files-found: error
       - uses: actions/upload-artifact@v7
         if: startsWith(github.ref, 'refs/tags/v')
         with:
-          name: release-windows-${{ matrix.architecture }}
-          path: .cache/release-windows-${{ matrix.architecture }}/*
+          name: release-${{ matrix.id }}
+          path: .cache/release-${{ matrix.id }}/*
           if-no-files-found: error
-      - name: Upload Windows diagnostics
+      - name: Remove Apple credentials and ephemeral keychain
+        if: always() && runner.os == 'macOS' && startsWith(github.ref, 'refs/tags/v')
+        run: bash tools/macos-signing.sh cleanup
+      - name: Upload native diagnostics
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: diagnostics-windows-${{ matrix.architecture }}-${{ github.run_attempt }}
+          name: diagnostics-${{ matrix.id }}-${{ github.run_attempt }}
           path: |
-            .cache/windows-*.log
+            .cache/desktop-*.log
             .cache/native-src/FFmpeg-*/ffbuild/config.log
             .moon/cache/*Report.json
+            crates/desktop/dist/mygo/**/*.notary.json
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 14
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [identity, macos, windows]
+    needs: [identity, native]
     concurrency:
       group: desktop-stable-publish
       cancel-in-progress: false

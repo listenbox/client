@@ -46,14 +46,12 @@ tasks:
       runInCI: false
   codegen:
     deps: [~:public-contract]
-    script: |
-      set -euo pipefail
-      mise exec -- go tool oasmith --openapi .cache/public.openapi.yaml --mode client --lang go --out crates/sync-engine/publicapi
-      mise exec -- go tool oasmith --openapi contracts/client.yaml --mode types --lang go --strict --out crates/sync-engine/clientconfig
-    inputs: ['@group(contracts)', go.mod, go.sum]
+    command: [mise, exec, --, bash, tools/codegen.sh]
+    inputs: ['@group(contracts)', go.mod, go.sum, tools/codegen.sh]
     outputs: [crates/sync-engine/publicapi/*.go, crates/sync-engine/clientconfig/*.go]
     options:
       internal: true
+      shell: false
   public-contract:
     description: Download the public API contract without access to the private specification sources.
     command: [mise, exec, --, node, --input-type=module, -e]

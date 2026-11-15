@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, rename, rm } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 
@@ -29,6 +29,7 @@ const archive = path.join(directory, pin.archive);
 await writeFile(archive, bytes);
 if (process.platform === 'darwin') {
   execFileSync('tar', ['-xf', archive, '-C', directory], { stdio: 'inherit' });
+  await rename(path.join(directory, 'LICENSE'), path.join(directory, 'Sparkle.LICENSE.txt'));
 } else {
   execFileSync('tar', ['-xf', archive, '-C', directory], { stdio: 'inherit' });
   const root = path.join(directory, 'WinSparkle-0.9.4');

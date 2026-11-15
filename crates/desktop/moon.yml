@@ -14,37 +14,39 @@ tasks:
       runInCI: false
   build-config:
     description: Generate MyGo packaging metadata from VERSION and the platform release environment.
-    script: >-
-      mise -C ../.. exec -- node --input-type=module -e '
-      import {readFileSync,writeFileSync} from "node:fs";
-      import {execFileSync} from "node:child_process";
-      const base="crates/desktop/";
-      const c=JSON.parse(readFileSync(base+"mygo.template.json","utf8"));
-      c.version=readFileSync("VERSION","utf8").trim();
-      const key=process.env.LISTENBOX_UPDATE_PUBLIC_KEY||"";
-      if(process.platform==="win32"){
-        c.name="listenbox-desktop";
-        const arch=process.arch==="arm64"?"ARM64":"x64";
-        c.resources.push("../../.cache/updaters/WinSparkle-0.9.4/"+arch+"/Release/WinSparkle.dll","../../.cache/updaters/WinSparkle-0.9.4/COPYING","../../.cache/updaters/WinSparkle-0.9.4/COPYING.expat");
-      }
-      if(process.platform==="darwin"){
-        c.macos.signingIdentity=process.env.LISTENBOX_SIGNING_IDENTITY||"-";
-        c.macos.infoPlist.ListenboxSourceCommit=process.env.LISTENBOX_SOURCE_COMMIT||execFileSync("git",["rev-parse","HEAD"],{encoding:"utf8"}).trim();
-        if(key){
-          c.resources.push("../../.cache/updaters/Sparkle.framework","../../.cache/updaters/LICENSE");
-          Object.assign(c.macos.infoPlist,{SUPublicEDKey:key,SUFeedURL:"https://github.com/listenbox/client/releases/latest/download/appcast-macos-arm64.xml",SUEnableAutomaticChecks:true,SUAutomaticallyUpdate:true,SUShowReleaseNotes:false,SUUpdateCheckInterval:86400});
-        }
-        if(process.env.LISTENBOX_PRODUCTION_RELEASE==="1"){
-          if(!key||!process.env.LISTENBOX_NOTARY_PROFILE||!process.env.LISTENBOX_SIGNING_KEYCHAIN)throw Error("Production packaging requires the existing update key and imported Apple signing profile");
-          c.macos.notarize={keychainProfile:process.env.LISTENBOX_NOTARY_PROFILE,keychain:process.env.LISTENBOX_SIGNING_KEYCHAIN};
-        }
-      }
-      writeFileSync(base+"mygo.json",JSON.stringify(c,null,2)+"\n");'
+    command: [mise, -C, ../.., exec, --, node, --input-type=module, -e]
+    args:
+      - |
+          import {readFileSync,writeFileSync} from "node:fs";
+          import {execFileSync} from "node:child_process";
+          const base="crates/desktop/";
+          const c=JSON.parse(readFileSync(base+"mygo.template.json","utf8"));
+          c.version=readFileSync("VERSION","utf8").trim();
+          const key=process.env.LISTENBOX_UPDATE_PUBLIC_KEY||"";
+          if(process.platform==="win32"){
+            c.name="listenbox-desktop";
+            const arch=process.arch==="arm64"?"ARM64":"x64";
+            c.resources.push("../../.cache/updaters/WinSparkle-0.9.4/"+arch+"/Release/WinSparkle.dll","../../.cache/updaters/WinSparkle-0.9.4/COPYING","../../.cache/updaters/WinSparkle-0.9.4/COPYING.expat");
+          }
+          if(process.platform==="darwin"){
+            c.macos.signingIdentity=process.env.LISTENBOX_SIGNING_IDENTITY||"-";
+            c.macos.infoPlist.ListenboxSourceCommit=process.env.LISTENBOX_SOURCE_COMMIT||execFileSync("git",["rev-parse","HEAD"],{encoding:"utf8"}).trim();
+            if(key){
+              c.resources.push("../../.cache/updaters/Sparkle.framework","../../.cache/updaters/Sparkle.LICENSE.txt");
+              Object.assign(c.macos.infoPlist,{SUPublicEDKey:key,SUFeedURL:"https://github.com/listenbox/client/releases/latest/download/appcast-macos-arm64.xml",SUEnableAutomaticChecks:true,SUAutomaticallyUpdate:true,SUShowReleaseNotes:false,SUUpdateCheckInterval:86400});
+            }
+            if(process.env.LISTENBOX_PRODUCTION_RELEASE==="1"){
+              if(!key||!process.env.LISTENBOX_NOTARY_PROFILE||!process.env.LISTENBOX_SIGNING_KEYCHAIN)throw Error("Production packaging requires the existing update key and imported Apple signing profile");
+              c.macos.notarize={keychainProfile:process.env.LISTENBOX_NOTARY_PROFILE,keychain:process.env.LISTENBOX_SIGNING_KEYCHAIN};
+            }
+          }
+          writeFileSync(base+"mygo.json",JSON.stringify(c,null,2)+"\n");
     inputs: [mygo.template.json, 'project://client?group=version']
     outputs: [mygo.json]
     options:
       cache: false
       internal: true
+      shell: false
   build:
     deps: [client:prerequisites]
     script: mise -C ../.. exec -- go build -buildvcs=false -o crates/desktop/dist/listenbox-desktop ./crates/desktop
@@ -62,46 +64,27 @@ tasks:
     inputs: []
   build-release:
     deps: [client:prerequisites, client:updaters, ~:build-config]
-    script: |
-      cd ../..
-      version="$(cat VERSION)"
-      commit="$(git rev-parse HEAD)"
-      key="${LISTENBOX_UPDATE_PUBLIC_KEY:-}"
-      if [[ "${LISTENBOX_PRODUCTION_RELEASE:-0}" = 1 ]]; then
-        : "${key:?A production release requires the existing Ed25519 update key}"
-      fi
-      export MYGO_LDFLAGS="-X github.com/listenbox/client/crates/sync-engine.Version=$version -X github.com/listenbox/client/crates/sync-engine.SourceCommit=$commit -X github.com/listenbox/client/crates/sync-engine.Production=1 -X main.updatePublicKey=$key -X main.updatePlatform=macos-arm64"
-      mise exec -- go tool mygo build -platform darwin/arm64 crates/desktop
+    command: [mise, -C, ../.., exec, --, bash, tools/build-desktop.sh, darwin/arm64]
     inputs: ['@group(sources)', 'project://client?group=sources']
     options:
       os: macos
       runInCI: false
   dmg:
     deps: [~:build-release]
-    script: |
-      version="$(cat ../../VERSION)"
-      mkdir -p dist/macos
-      cp "dist/mygo/darwin-arm64/listenbox-$version-arm64.dmg" "dist/macos/Listenbox-$version-macos-arm64.dmg"
-      codesign --verify --deep --strict dist/mygo/darwin-arm64/Listenbox.app
-      if [[ "${LISTENBOX_PRODUCTION_RELEASE:-0}" = 1 ]]; then
-        xcrun stapler validate dist/mygo/darwin-arm64/Listenbox.app
-        xcrun stapler validate "dist/macos/Listenbox-$version-macos-arm64.dmg"
-        spctl --assess --type execute --verbose=2 dist/mygo/darwin-arm64/Listenbox.app
-      fi
     inputs: ['@group(sources)', 'project://client?group=sources']
     options:
       os: macos
       runInCI: false
   build-release-windows-x64:
     deps: [client:prerequisites, client:updaters, ~:build-config]
-    command: [mise, -C, ../.., exec, --, pwsh, -NoProfile, -File, tools/build-windows.ps1, -Architecture, x64]
+    command: [mise, -C, ../.., exec, --, bash, tools/build-desktop.sh, windows/amd64]
     inputs: ['@group(sources)', 'project://client?group=sources']
     options:
       os: windows
       runInCI: false
   build-release-windows-arm64:
     deps: [client:prerequisites, client:updaters, ~:build-config]
-    command: [mise, -C, ../.., exec, --, pwsh, -NoProfile, -File, tools/build-windows.ps1, -Architecture, arm64]
+    command: [mise, -C, ../.., exec, --, bash, tools/build-desktop.sh, windows/arm64]
     inputs: ['@group(sources)', 'project://client?group=sources']
     options:
       os: windows

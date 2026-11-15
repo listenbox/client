@@ -20,6 +20,13 @@ and bundles; its macOS flow signs nested helpers and notarizes/staples the app
 and DMG. Windows keeps the Inno Setup installer so existing WinSparkle clients
 retain their installation identity and upgrade arguments.
 
+The native release workflow follows
+[MyGo Music's build matrix](https://github.com/egoist/mygo-music/blob/main/.github/workflows/release.yml):
+Bash on every runner, Go-reported cache paths and MyGo's build command. Each
+Windows architecture has its own native CGO/codec SDK. The shared
+`tools/build-desktop.sh` builds and checks each payload; successful master CI
+still reserves the next immutable version before dispatching native builds.
+
 Sparkle and WinSparkle continue to own update checks, preferences and signature
 verification. MyGo's own updater uses a different manifest format and is not
 enabled. See [native updates](../../docs/native-updates.md).
