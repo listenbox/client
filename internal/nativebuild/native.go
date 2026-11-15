@@ -65,7 +65,23 @@ func (toolchain Toolchain) Command(ctx context.Context, program string, args ...
 		program = filepath.Join(bin, program+".exe")
 	}
 	// #nosec G702 -- Build executables come from the trusted local native SDK.
-	return exec.CommandContext(ctx, program, args...)
+	command := exec.CommandContext(ctx, program, args...)
+	if toolchain.MSYSBin != "" {
+		// MSYS2 Bash must launch its own sed/make helpers. Git for Windows
+		// utilities use another MSYS runtime and corrupt configure's quoting.
+		paths := []string{toolchain.MSYSBin}
+		if toolchain.CompilerBin != "" {
+			paths = append([]string{toolchain.CompilerBin}, paths...)
+		}
+		if inherited := os.Getenv("PATH"); inherited != "" {
+			paths = append(paths, inherited)
+		}
+		command.Env = append(
+			os.Environ(),
+			"PATH="+strings.Join(paths, string(os.PathListSeparator)),
+		)
+	}
+	return command
 }
 
 func run(command *exec.Cmd) error {
@@ -200,6 +216,7 @@ func Build(ctx context.Context, root string) error {
 	}
 	stamp := "go-astiav-9.0.2-openh264-2.6.0-v2-" + runtime.GOOS + "-" + runtime.GOARCH
 	if runtime.GOOS == windowsOS {
+		stamp += "-msys-environment-v1"
 		version, err := toolchain.Command(ctx, "clang", "--version").Output()
 		if err != nil {
 			return fmt.Errorf("identify native Windows compiler: %w", err)
@@ -337,7 +354,7 @@ func buildNativeLibraries(
 	args := ffmpegArguments(ctx, toolchain, buildPrefix)
 	command := toolchain.Command(ctx, "bash", args...)
 	command.Dir = ffmpegRoot
-	command.Env = append(os.Environ(), "PKG_CONFIG_PATH="+buildPrefix+"/lib/pkgconfig")
+	command.Env = append(command.Environ(), "PKG_CONFIG_PATH="+buildPrefix+"/lib/pkgconfig")
 	if err := run(command); err != nil {
 		return err
 	}
