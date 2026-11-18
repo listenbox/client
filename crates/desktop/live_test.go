@@ -139,10 +139,22 @@ func (h *desktopHarness) beginImport(source, team string, kind p.ShowSourceKind)
 
 func (h *desktopHarness) importFinished() {
 	h.t.Helper()
-	h.wait(func() bool { return !h.w.creating && !h.w.loading && len(h.w.jobs) == 0 })
+	h.waitStages(h.importStage, func() bool { return !h.w.creating && !h.w.loading && len(h.w.jobs) == 0 })
 	if h.w.errorText != "" {
 		h.t.Fatal(h.w.errorText)
 	}
+}
+
+// importStage names the import's observable stage: podcast creation, library
+// refresh, running jobs and each transfer's phase. Byte progress is excluded.
+func (h *desktopHarness) importStage() string {
+	var stage strings.Builder
+	fmt.Fprintf(&stage, "creating=%t loading=%t preparation=%s jobs=%d",
+		h.w.creating, h.w.loading, h.w.preparation.Stage, len(h.w.jobs))
+	for _, item := range h.w.items {
+		fmt.Fprintf(&stage, " %s=%s", item.ID, item.Phase)
+	}
+	return stage.String()
 }
 
 func TestLivePlayerRuntime(t *testing.T) {
