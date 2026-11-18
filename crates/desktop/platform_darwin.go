@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,24 +25,21 @@ func nsString(value string) objc.ID {
 		Send(objc.RegisterName("stringWithUTF8String:"), value)
 }
 
+//nolint:ireturn // Each platform constructs the common native updater interface.
 func startUpdater(requestShutdown, changed func()) (nativeUpdater, error) {
 	if updatePublicKey == "" {
 		return nil, nil
 	}
 	key, err := base64.StdEncoding.DecodeString(updatePublicKey)
 	if err != nil || len(key) != 32 {
-		return nil, fmt.Errorf("invalid Sparkle public key")
+		return nil, errors.New("invalid Sparkle public key")
 	}
-	executable, err := os.Executable()
+	framework, err := loadSparkle()
 	if err != nil {
 		return nil, err
 	}
-	framework, err := purego.Dlopen(
-		filepath.Join(filepath.Dir(executable), "..", "Resources", "Sparkle.framework", "Sparkle"),
-		purego.RTLD_NOW|purego.RTLD_GLOBAL,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("load bundled Sparkle: %w", err)
+	if err := verifyBundledUpdaterConfig(); err != nil {
+		return nil, err
 	}
 	u := &sparkleUpdater{
 		framework: framework,
@@ -49,6 +47,32 @@ func startUpdater(requestShutdown, changed func()) (nativeUpdater, error) {
 			"canCheckForUpdates", "automaticallyChecksForUpdates", "automaticallyDownloadsUpdates",
 		},
 	}
+	if err := u.start(requestShutdown, changed); err != nil {
+		u.close()
+		return nil, err
+	}
+	return u, nil
+}
+
+// loadSparkle opens the Sparkle framework bundled inside the app's Resources.
+func loadSparkle() (uintptr, error) {
+	executable, err := os.Executable()
+	if err != nil {
+		return 0, err
+	}
+	framework, err := purego.Dlopen(
+		filepath.Join(filepath.Dir(executable), "..", "Resources", "Sparkle.framework", "Sparkle"),
+		purego.RTLD_NOW|purego.RTLD_GLOBAL,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("load bundled Sparkle: %w", err)
+	}
+	return framework, nil
+}
+
+// verifyBundledUpdaterConfig requires Info.plist to carry the injected key and feed,
+// because Sparkle reads them from the bundle rather than from the binary.
+func verifyBundledUpdaterConfig() error {
 	feed := "https://github.com/listenbox/client/releases/latest/download/appcast-" + updatePlatform + ".xml"
 	info := objc.ID(objc.GetClass("NSBundle")).
 		Send(objc.RegisterName("mainBundle")).
@@ -57,10 +81,16 @@ func startUpdater(requestShutdown, changed func()) (nativeUpdater, error) {
 		actual := info.Send(objc.RegisterName("objectForKey:"), nsString(name))
 		if actual == 0 ||
 			!objc.Send[bool](actual, objc.RegisterName("isEqualToString:"), nsString(expected)) {
-			return nil, fmt.Errorf("bundled %s does not match the updater configuration", name)
+			return fmt.Errorf("bundled %s does not match the updater configuration", name)
 		}
 	}
-	class, err := objc.RegisterClass(
+	return nil
+}
+
+// registerDelegateClass defines the Objective-C delegate that reports Sparkle
+// state changes and postpones relaunch until the app has shut down.
+func (u *sparkleUpdater) registerDelegateClass(requestShutdown, changed func()) (objc.Class, error) {
+	return objc.RegisterClass(
 		"ListenboxGoUpdaterDelegate",
 		objc.GetClass("NSObject"),
 		[]*objc.Protocol{objc.GetProtocol("SPUUpdaterDelegate")},
@@ -87,16 +117,21 @@ func startUpdater(requestShutdown, changed func()) (nativeUpdater, error) {
 			},
 		},
 	)
+}
+
+// start creates the Sparkle controller, observes its settings, and starts it.
+// The caller releases partially created state with close on error.
+func (u *sparkleUpdater) start(requestShutdown, changed func()) error {
+	class, err := u.registerDelegateClass(requestShutdown, changed)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	u.delegate = objc.ID(class).Send(objc.RegisterName("new"))
 	u.controller = objc.ID(objc.GetClass("SPUStandardUpdaterController")).
 		Send(objc.RegisterName("alloc")).
 		Send(objc.RegisterName("initWithStartingUpdater:updaterDelegate:userDriverDelegate:"), false, u.delegate, objc.ID(0))
 	if u.controller == 0 {
-		u.close()
-		return nil, fmt.Errorf("initialize Sparkle controller")
+		return errors.New("initialize Sparkle controller")
 	}
 	u.updater = u.controller.Send(objc.RegisterName("updater"))
 	for _, key := range u.observed {
@@ -106,14 +141,12 @@ func startUpdater(requestShutdown, changed func()) (nativeUpdater, error) {
 	var nativeError objc.ID
 	if !objc.Send[bool](u.updater, objc.RegisterName("startUpdater:"), &nativeError) {
 		description := nativeError.Send(objc.RegisterName("localizedDescription"))
-		err := fmt.Errorf(
+		return fmt.Errorf(
 			"start Sparkle: %s",
 			objc.Send[string](description, objc.RegisterName("UTF8String")),
 		)
-		u.close()
-		return nil, err
 	}
-	return u, nil
+	return nil
 }
 
 func (u *sparkleUpdater) canCheck() bool {
