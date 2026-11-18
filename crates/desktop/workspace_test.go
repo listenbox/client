@@ -60,18 +60,36 @@ func (h *desktopHarness) click(label string) {
 	desktopNoError(h.t, h.screen.Click(label))
 }
 
+// stageGuard bounds one observable stage of a desktop workflow.
+const stageGuard = 3 * time.Second
+
 func (h *desktopHarness) wait(condition func() bool) {
 	h.t.Helper()
-	guard := time.NewTimer(3 * time.Second)
+	h.waitStages(func() string { return "" }, condition)
+}
+
+// waitStages applies UI messages until condition holds. Each change in the
+// reported stage restarts the guard, so a loaded host may slow every stage
+// while any single stalled stage still fails within stageGuard. Progress ticks
+// inside one stage never restart it.
+func (h *desktopHarness) waitStages(stage func() string, condition func() bool) {
+	h.t.Helper()
+	guard := time.NewTimer(stageGuard)
 	defer guard.Stop()
+	current := stage()
 	for !condition() {
 		select {
 		case apply := <-h.messages:
 			apply()
 			h.screen.Frame()
+			if next := stage(); next != current {
+				current = next
+				guard.Reset(stageGuard)
+			}
 		case <-guard.C:
 			h.t.Fatalf(
-				"desktop state gate was not reached: error=%s texts=%q",
+				"desktop state gate was not reached: stage=%q error=%s texts=%q",
+				current,
 				h.w.errorText,
 				h.screen.Texts(),
 			)
