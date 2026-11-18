@@ -31,7 +31,7 @@ func startUpdater(requestShutdown func(), _ func()) (nativeUpdater, error) {
 	}
 	key, err := base64.StdEncoding.DecodeString(updatePublicKey)
 	if err != nil || len(key) != 32 {
-		return nil, fmt.Errorf("invalid WinSparkle public key")
+		return nil, errors.New("invalid WinSparkle public key")
 	}
 	executable, err := os.Executable()
 	if err != nil {
