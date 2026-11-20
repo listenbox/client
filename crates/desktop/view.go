@@ -147,7 +147,6 @@ func (w *Workspace) sidebar(c *ui.Context) {
 			w.teamSwitcher(c)
 			importButton := primaryButton(c, "").
 				FillWidth().
-				Padding(0, d.lg).
 				Gap(d.sm).
 				Label("Import from YouTube").
 				Disabled(w.creating)
@@ -162,7 +161,10 @@ func (w *Workspace) sidebar(c *ui.Context) {
 					w.importTeam = w.catalog.ImportTeam
 				}
 			}
-			ui.TextInput(c, &w.filter).Placeholder("Find a podcast").Label("Find a podcast").FillWidth()
+			textField(c, &w.filter).
+				Placeholder("Find a podcast").
+				Label("Find a podcast").
+				FillWidth()
 			w.library(c)
 			ui.Toolbar(c, func() {
 				if w.loading {
@@ -500,7 +502,7 @@ func (w *Workspace) importForm(c *ui.Context) {
 	d := tokens(c)
 	typePageTitle.set(c, ui.Text(c, "Import from YouTube"))
 	ui.Text(c, "Create a podcast from a playlist or channel.").TextColor(d.muted)
-	ui.TextInput(c, &w.importSource).
+	textField(c, &w.importSource).
 		Label("YouTube URL").
 		Placeholder("Paste a YouTube URL").
 		FillWidth().

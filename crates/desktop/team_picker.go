@@ -60,12 +60,9 @@ func (w *Workspace) teamSwitcher(c *ui.Context) {
 	if m.Trigger.Hovered() || m.Open() {
 		face = d.railControlHover
 	}
-	m.Trigger.
+	control(c, m.Trigger).
 		FillWidth().
-		Height(railControlHeight).
-		Padding(0, d.md).
 		Gap(d.sm).
-		Radius(radiusMD).
 		Background(face).
 		Border(1, d.border).
 		Label("Switch team").

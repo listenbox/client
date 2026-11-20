@@ -21,7 +21,7 @@
       "controlGap": "12px",
       "rowGap": "8px",
       "rowPaddingY": "12px",
-      "themeRadius": "14px (radiusMD); actions use radiusPill"
+      "themeRadius": "14px (controlRadius) for every control; capsules only for chips and badges"
     },
     "roleMap": {
       "background": {
@@ -65,8 +65,8 @@
       }
     },
     "primitives": {
-      "action": "primaryButton (ui.PrimaryButton, capsule)",
-      "quietAction": "button (ui.Button, capsule)",
+      "action": "primaryButton (ui.PrimaryButton, controlRadius)",
+      "quietAction": "button (ui.Button, controlRadius)",
       "field": "ui.TextInput",
       "menu": "ui.MenuBase",
       "progress": "ui.Progress",

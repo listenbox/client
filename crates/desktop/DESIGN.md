@@ -88,8 +88,12 @@ layered surfaces. Lists are flat rows with quiet dividers, not stacks of cards.
 ## Controls
 
 Use MyGo controls for focus, keyboard activation, disabled, pressed and pointer
-states. Actions are the root's 36-DIP capsules: the charcoal primary action and
-quiet secondary ones; fields take the root's field radius. Links to the web
+states. Every control (actions, fields and the team switcher) shares one
+shape: 36 DIPs tall, the root's 14-DIP field radius and its 12-DIP inline
+inset, so stacked and side-by-side controls line up and match. Actions are
+not capsules here, unlike the root's web actions: a capsule beside rounded
+fields reads as another family. Capsules are for chips and badges. View code
+never sizes or rounds a control itself. Links to the web
 are keyboard-focusable and underline on hover. Controls never move on hover.
 Custom-content buttons carry an explicit accessible label, and icon-only
 buttons add a tooltip.

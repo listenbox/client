@@ -100,12 +100,16 @@ func tokens(c *ui.Context) design {
 
 // The root's radius scale, in DIPs.
 const (
-	radiusXS      = 6  // micro-controls: menu items, chips inside badges
-	radiusSM      = 10 // rows and small artwork
-	radiusMD      = 14 // fields and icon tiles
-	radiusSurface = 16 // panels, popovers and cards
-	radiusMedia   = 20 // large artwork and overlays
-	radiusPill    = 999
+	radiusXS      = 6   // micro-controls: menu items, chips inside badges
+	radiusSM      = 10  // rows and small artwork
+	radiusMD      = 14  // fields and icon tiles
+	radiusSurface = 16  // panels, popovers and cards
+	radiusMedia   = 20  // large artwork and overlays
+	radiusPill    = 999 // chips and badges only, never controls
+
+	// controlRadius rounds every control alike: buttons, fields and the team
+	// switcher, so a capsule never sits beside a rounded rectangle.
+	controlRadius = radiusMD
 )
 
 // typeRole is one of the root DESIGN.md's type roles: its size in the root's
@@ -144,8 +148,7 @@ func overlay(e ui.Element) ui.Element {
 
 // Component metrics shared with the Dashboard and root components.
 const (
-	controlHeight      = 36  // root buttons and fields
-	railControlHeight  = 44  // the rail's team switcher
+	controlHeight      = 36  // every control: buttons, fields and the team switcher
 	menuWidth          = 288 // the Dashboard's dropdown (w-72)
 	menuItemHeight     = 36
 	menuListHeight     = 216 // six items before the team list scrolls
@@ -176,7 +179,7 @@ func applyTheme(c *ui.Context) {
 	p := colors(c)
 	theme := *c.Theme()
 	theme.FontSize = controlFontSize
-	theme.Radius = radiusMD
+	theme.Radius = controlRadius
 	theme.Background, theme.Surface = p.background, p.sheet
 	theme.SurfaceHover, theme.SurfacePressed = p.surfaceHover, p.selected
 	theme.Text, theme.TextMuted, theme.Border = p.ink, p.muted, p.border
@@ -187,11 +190,25 @@ func applyTheme(c *ui.Context) {
 	c.SetTheme(&theme)
 }
 
-// primaryButton and button are the root's actions: capsules, 36 DIPs high.
+// Every control shares one shape: controlHeight tall, controlRadius round,
+// its content inset by the root's 12 DIPs, so controls stacked or set side by
+// side line up. View code never sizes or rounds a control itself.
+
+// primaryButton and button are the root's actions, in the button type role.
 func primaryButton(c *ui.Context, label string) ui.Element {
-	return ui.PrimaryButton(c, label).Radius(radiusPill).MinHeight(controlHeight)
+	return control(c, ui.PrimaryButton(c, label)).FontWeight(typeButton.weight)
 }
 
 func button(c *ui.Context, label string) ui.Element {
-	return ui.Button(c, label).Radius(radiusPill).MinHeight(controlHeight)
+	return control(c, ui.Button(c, label)).FontWeight(typeButton.weight)
+}
+
+// textField is the root's input.
+func textField(c *ui.Context, value *string) ui.Element {
+	return control(c, ui.TextInput(c, value))
+}
+
+// control gives an element the shared control shape.
+func control(c *ui.Context, e ui.Element) ui.Element {
+	return e.Height(controlHeight).Radius(controlRadius).Padding(0, tokens(c).md)
 }
