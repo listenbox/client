@@ -10,6 +10,22 @@ import (
 	"github.com/jonboulle/clockwork"
 )
 
+// Transfer totals use decimal units. Both sides share the unit the whole
+// transfer needs, so "980.0 MB / 1.20 GB" never appears.
+const (
+	megabyte = 1e6
+	gigabyte = 1e9
+)
+
+// TransferTotals formats sent and total bytes in MB, or in GB once the total
+// reaches one gigabyte, with two decimals there so progress keeps moving.
+func TransferTotals(sent, total int64) string {
+	if total >= gigabyte {
+		return fmt.Sprintf("%.2f / %.2f GB", float64(sent)/gigabyte, float64(total)/gigabyte)
+	}
+	return fmt.Sprintf("%.1f / %.1f MB", float64(sent)/megabyte, float64(total)/megabyte)
+}
+
 type Phase struct{ value string }
 
 const (

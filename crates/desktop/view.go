@@ -12,9 +12,6 @@ import (
 	p "github.com/listenbox/client/crates/sync-engine/publicapi"
 )
 
-// megabyte is the decimal unit transfer totals are shown in.
-const megabyte = 1e6
-
 //nolint:lll // Preserve embedded JavaScript, vector assets or independent wire fixtures verbatim.
 var (
 	podcastIcon = ui.MustParseSVG(
@@ -392,14 +389,13 @@ func (w *Workspace) podcast(c *ui.Context, show p.Show) {
 			// A finished sync leaves no queued or active media, so the card drops
 			// back to its status line instead of a full bar and empty totals.
 			if total > 0 && (syncing || unfinished > 0) {
+				// Byte totals grow as each episode is prepared, so only the item
+				// count is a stable base for overall progress.
 				ratio := float64(complete) / float64(total)
-				if bytes > 0 {
-					ratio = float64(sent) / float64(bytes)
-				}
-				ui.Progress(c, ratio).FillWidth().Label("Prepared media upload progress")
+				ui.Progress(c, ratio).FillWidth().Label("Imported episode progress")
 				progress := fmt.Sprintf("%d of %d imported", complete, total)
 				if bytes > 0 {
-					progress += fmt.Sprintf(" · %.1f / %.1f MB sent", float64(sent)/megabyte, float64(bytes)/megabyte)
+					progress += " · " + s.TransferTotals(sent, bytes) + " sent"
 				}
 				ui.Text(c, progress).FontFeatures("tnum").TextColor(d.muted)
 			}

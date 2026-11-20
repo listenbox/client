@@ -190,7 +190,7 @@ func TestLiveUploadProgress(t *testing.T) {
 			func(item s.Download) bool { return item.Phase == s.Uploading() && item.Uploaded > 0 },
 		)
 	})
-	if _, exists := h.screen.Find("Prepared media upload progress"); !exists {
+	if _, exists := h.screen.Find("Imported episode progress"); !exists {
 		t.Fatal("transmitted body has no rendered progress")
 	}
 	if len(h.w.episodes) != 0 {
@@ -533,7 +533,7 @@ func TestLivePauseImports(t *testing.T) {
 	if h.screen.HasText("Pause") {
 		t.Fatal("finished sync still offers Pause")
 	}
-	if _, exists := h.screen.Find("Prepared media upload progress"); exists {
+	if _, exists := h.screen.Find("Imported episode progress"); exists {
 		t.Fatal("finished sync still renders upload progress")
 	}
 }

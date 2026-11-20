@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	engine "github.com/listenbox/client/crates/sync-engine"
 	p "github.com/listenbox/client/crates/sync-engine/publicapi"
@@ -22,6 +23,8 @@ type configPath struct {
 
 const (
 	interruptedExitCode = 130
+	// transferInterval spaces live sync totals so a log stays readable.
+	transferInterval = 2 * time.Second
 )
 
 const (
@@ -303,6 +306,7 @@ func (app *application) syncYouTube(c *cobra.Command, _ []string) error {
 		case <-done:
 		}
 	}()
+	go printTransfers(c.Context(), app.client.Engine.Downloads, done)
 	return app.client.SyncYouTube(c.Context(), show, watch, func(event engine.SyncEvent) {
 		switch {
 		case event.Slug != "":
@@ -313,6 +317,76 @@ func (app *application) syncYouTube(c *cobra.Command, _ []string) error {
 			printSyncCatalog(event.Shows)
 		}
 	})
+}
+
+// printTransfers reports each show with unfinished media whenever its totals
+// change, mirroring the desktop sync card, until the sync ends.
+func printTransfers(ctx context.Context, downloads *engine.DownloadManager, done <-chan struct{}) {
+	printed := make(map[string]string)
+	for {
+		changed := downloads.Changes()
+		select {
+		case <-ctx.Done():
+			return
+		case <-done:
+			return
+		case <-changed:
+		}
+		for _, line := range transferLines(downloads.Snapshot()) {
+			if printed[line.slug] != line.text {
+				printed[line.slug] = line.text
+				fmt.Fprintln(os.Stderr, line.text)
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-done:
+			return
+		case <-time.After(transferInterval):
+		}
+	}
+}
+
+type transferLine struct{ slug, text string }
+
+func transferLines(items []engine.Download) []transferLine {
+	type totals struct {
+		total, complete, unfinished int
+		sent, bytes                 int64
+	}
+	var slugs []string
+	shows := make(map[string]*totals)
+	for _, item := range items {
+		show := shows[item.SourceID]
+		if show == nil {
+			show = &totals{}
+			shows[item.SourceID] = show
+			slugs = append(slugs, item.SourceID)
+		}
+		show.total++
+		if item.Phase == engine.Complete() {
+			show.complete++
+		}
+		if item.Phase.Active() || item.Phase == engine.Queued() {
+			show.unfinished++
+		}
+		show.sent += item.Uploaded
+		show.bytes += item.UploadTotal
+	}
+	var lines []transferLine
+	for _, slug := range slugs {
+		show := shows[slug]
+		if show.unfinished == 0 {
+			continue
+		}
+		text := fmt.Sprintf("Syncing · %s · %d of %d imported", slug, show.complete, show.total)
+		if show.bytes > 0 {
+			text += " · " + engine.TransferTotals(show.sent, show.bytes) + " sent"
+		}
+		lines = append(lines, transferLine{slug, text})
+	}
+	return lines
 }
 
 func printShowSync(ctx context.Context, event engine.SyncEvent) {
@@ -369,7 +443,10 @@ func printShowSync(ctx context.Context, event engine.SyncEvent) {
 func (app *application) printSyncSummary(ctx context.Context, watch bool, failed int) {
 	items := app.client.Engine.Downloads.Snapshot()
 	imported, notImported := 0, 0
+	var sent, bytes int64
 	for _, item := range items {
+		sent += item.Uploaded
+		bytes += item.UploadTotal
 		if item.Phase == engine.Complete() {
 			imported++
 		}
@@ -377,13 +454,18 @@ func (app *application) printSyncSummary(ctx context.Context, watch bool, failed
 			notImported++
 		}
 	}
+	transfer := ""
+	if bytes > 0 {
+		transfer = " · " + engine.TransferTotals(sent, bytes) + " sent"
+	}
 	fmt.Fprintf(
 		os.Stderr,
-		"Sync finished · %d/%d episodes imported · %d not imported · %d shows failed\n",
+		"Sync finished · %d/%d episodes imported · %d not imported · %d shows failed%s\n",
 		imported,
 		len(items),
 		notImported,
 		failed,
+		transfer,
 	)
 	if watch && ctx.Err() == nil {
 		fmt.Fprintln(
