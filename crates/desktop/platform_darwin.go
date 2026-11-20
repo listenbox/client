@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"structs"
+	"unsafe"
 
 	"github.com/ebitengine/purego"
 	"github.com/ebitengine/purego/objc"
@@ -179,9 +181,28 @@ func (u *sparkleUpdater) drained() bool {
 	}
 	install := u.install
 	u.install = 0
-	install.Invoke()
+	invokeNativeBlock(install)
 	install.Release()
 	return true
+}
+
+// nativeBlockLiteral is the head of every block, as fixed by the Block ABI:
+// https://clang.llvm.org/docs/Block-ABI-Apple.html#high-level
+type nativeBlockLiteral struct {
+	_               structs.HostLayout
+	isa             uintptr
+	flags, reserved int32
+	invoke          uintptr
+}
+
+// invokeNativeBlock calls a void-returning, argument-less block that
+// Objective-C created. purego's Block.Invoke only dispatches blocks made by
+// objc.NewBlock and panics on Sparkle's, killing the app before the installer
+// is told to relaunch it; the ABI's invoke function takes the block itself.
+func invokeNativeBlock(block objc.Block) {
+	// The block lives on the Objective-C heap, outside Go's collector.
+	literal := *(**nativeBlockLiteral)(unsafe.Pointer(&block))
+	purego.SyscallN(literal.invoke, uintptr(block))
 }
 
 func (u *sparkleUpdater) close() {
