@@ -529,9 +529,12 @@ func TestLivePauseImports(t *testing.T) {
 	h.wait(
 		func() bool { return len(h.w.jobs) == 0 && !h.w.loading && h.w.reports[first].Skipped == 32 },
 	)
-	h.click("Pause")
-	if !h.w.paused[first] {
-		t.Fatal("idle podcast cannot be paused")
+	h.screen.Frame()
+	if h.screen.HasText("Pause") {
+		t.Fatal("finished sync still offers Pause")
+	}
+	if _, exists := h.screen.Find("Prepared media upload progress"); exists {
+		t.Fatal("finished sync still renders upload progress")
 	}
 }
 

@@ -327,13 +327,16 @@ func (w *Workspace) podcast(c *ui.Context, show p.Show) {
 			})
 		})
 	})
-	var total, complete int
+	var total, complete, unfinished int
 	var sent, bytes int64
 	for _, item := range w.items {
 		if item.SourceID == show.Slug {
 			total++
 			if item.Phase == s.Complete() {
 				complete++
+			}
+			if item.Phase.Active() || item.Phase == s.Queued() {
+				unfinished++
 			}
 			sent += item.Uploaded
 			bytes += item.UploadTotal
@@ -384,24 +387,21 @@ func (w *Workspace) podcast(c *ui.Context, show p.Show) {
 					if primaryButton(c, action).Clicked() {
 						w.sync(show.Slug)
 					}
-					if !w.paused[show.Slug] && button(c, "Pause").Clicked() {
-						w.pause(show.Slug)
-					}
 				}
 			})
-			if total > 0 {
+			// A finished sync leaves no queued or active media, so the card drops
+			// back to its status line instead of a full bar and empty totals.
+			if total > 0 && (syncing || unfinished > 0) {
 				ratio := float64(complete) / float64(total)
 				if bytes > 0 {
 					ratio = float64(sent) / float64(bytes)
 				}
 				ui.Progress(c, ratio).FillWidth().Label("Prepared media upload progress")
-				ui.Textf(
-					c,
-					"%d of %d imported · %.1f / %.1f MB sent",
-					complete, total, float64(sent)/megabyte, float64(bytes)/megabyte,
-				).
-					FontFeatures("tnum").
-					TextColor(d.muted)
+				progress := fmt.Sprintf("%d of %d imported", complete, total)
+				if bytes > 0 {
+					progress += fmt.Sprintf(" · %.1f / %.1f MB sent", float64(sent)/megabyte, float64(bytes)/megabyte)
+				}
+				ui.Text(c, progress).FontFeatures("tnum").TextColor(d.muted)
 			}
 		})
 	hasIssues := false
