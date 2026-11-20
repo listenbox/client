@@ -14,6 +14,7 @@ func MobileWeb() Client         { return Client{"MWEB"} }
 func EmbeddedWeb() Client       { return Client{"WEB_EMBEDDED"} }
 func CreatorWeb() Client        { return Client{"WEB_CREATOR"} }
 func VisionOS() Client          { return Client{"VISIONOS"} }
+func TV() Client                { return Client{"TV"} }
 func (c Client) String() string { return c.value }
 
 type Thumbnail struct {
@@ -127,6 +128,7 @@ func (format *Format) UnmarshalJSON(raw []byte) error {
 type Session struct {
 	UserAgent         string `json:"user_agent"`
 	VisionOSUserAgent string `json:"visionos_user_agent"`
+	TVUserAgent       string `json:"tv_user_agent"`
 }
 type SessionOptions struct {
 	Lang                    string `json:"lang,omitempty"`
@@ -205,7 +207,7 @@ globalThis.__bridge={
     const data=new Map();class Cache{get cache_dir(){return ''}async get(k){return data.get(k)}async set(k,v){data.set(k,v)}async remove(k){data.delete(k)}}
     YouTubeJS.Platform.load({...YouTubeJS.Platform.shim,runtime:'unknown',Cache,eval:(data,env)=>Function(...Object.keys(env),data.output)(...Object.values(env))});
     __innertube=await YouTubeJS.Innertube.create({...options,cache:new YouTubeJS.UniversalCache(false),fetch});
-    return {user_agent:__innertube.session.user_agent,visionos_user_agent:YouTubeJS.Constants.CLIENTS.VISIONOS.USER_AGENT};
+    return {user_agent:__innertube.session.user_agent,visionos_user_agent:YouTubeJS.Constants.CLIENTS.VISIONOS.USER_AGENT,tv_user_agent:YouTubeJS.Constants.CLIENTS.TV.USER_AGENT};
   },
   async playlistHead(id){const response=await __innertube.actions.execute('/browse',{browseId:'VL'+id,params:'wgYCCAA='});return __playlist(new YouTubeJS.YT.Playlist(__innertube.actions,response,false))},
   async continuation(handle){const page=__handles.get(handle);__handles.delete(handle);return __playlist(await page.getContinuation())},

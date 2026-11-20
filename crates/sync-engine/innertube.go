@@ -63,9 +63,10 @@ type (
 )
 
 type YouTube struct {
-	engine                 *youtubei.Engine
-	userAgent, visionAgent string
-	playbackClient         youtubei.Client
+	engine         *youtubei.Engine
+	userAgent      string
+	deviceAgents   map[youtubei.Client]string
+	playbackClient youtubei.Client
 }
 
 func NewYouTube(ctx context.Context, api *API) (*YouTube, error) {
@@ -105,9 +106,12 @@ func NewYouTube(ctx context.Context, api *API) (*YouTube, error) {
 		return nil, fmt.Errorf("initialize YouTube: %w", err)
 	}
 	return &YouTube{
-		engine:         engine,
-		userAgent:      session.UserAgent,
-		visionAgent:    session.VisionOSUserAgent,
+		engine:    engine,
+		userAgent: session.UserAgent,
+		deviceAgents: map[youtubei.Client]string{
+			youtubei.VisionOS(): session.VisionOSUserAgent,
+			youtubei.TV():       session.TVUserAgent,
+		},
 		playbackClient: client,
 	}, nil
 }
@@ -463,8 +467,8 @@ func (yt *YouTube) stream(
 	query.Add("cpn", cpn)
 	u.RawQuery = query.Encode()
 	agent := yt.userAgent
-	if client == youtubei.VisionOS() {
-		agent = yt.visionAgent
+	if device, ok := yt.deviceAgents[client]; ok {
+		agent = device
 	}
 	length := "None"
 	if format.ContentLength != nil {
@@ -735,6 +739,13 @@ func mediaPublication(metadata youtubei.VideoInfo, collection string) (time.Time
 	return published, nil
 }
 
+// unplayableAlternative names the client that replaces a preferred playback
+// client whose player response reports the video unplayable.
+var unplayableAlternative = map[youtubei.Client]youtubei.Client{
+	youtubei.EmbeddedWeb(): youtubei.CreatorWeb(),
+	youtubei.VisionOS():    youtubei.TV(),
+}
+
 func (yt *YouTube) playbackInfo(
 	ctx context.Context,
 	id string,
@@ -744,8 +755,8 @@ func (yt *YouTube) playbackInfo(
 	if err != nil {
 		return playback, client, "", err
 	}
-	if reason != "" && client == youtubei.EmbeddedWeb() {
-		client = youtubei.CreatorWeb()
+	if alternative, ok := unplayableAlternative[client]; ok && reason != "" {
+		client = alternative
 		playback, reason, err = yt.playerInfo(ctx, id, client)
 	}
 	if err != nil || reason != "" {
@@ -891,8 +902,11 @@ func resolvedMedia(
 		media.EstimatedSeconds = knownSeconds(*metadata.BasicInfo.Duration)
 		media.DurationSeconds = durationSeconds(*metadata.BasicInfo.Duration)
 	}
-	if client == youtubei.EmbeddedWeb() || client == youtubei.CreatorWeb() {
-		media.fallback = []youtubei.Client{youtubei.VisionOS()}
+	switch client {
+	case youtubei.EmbeddedWeb(), youtubei.CreatorWeb():
+		media.fallback = []youtubei.Client{youtubei.VisionOS(), youtubei.TV()}
+	case youtubei.VisionOS():
+		media.fallback = []youtubei.Client{youtubei.TV()}
 	}
 	return media
 }
