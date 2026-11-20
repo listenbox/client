@@ -400,7 +400,13 @@ func (db *Database) Snapshot(ctx context.Context,
 			return err
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	if !canRemove {
+		return nil
+	}
+	return db.forgetMissingTransfers(ctx, origin, show, present)
 }
 
 func (db *Database) Outcome(ctx context.Context, origin, show string, item Download) error {
@@ -528,6 +534,44 @@ func (db *Database) Items(ctx context.Context, origin, show string) ([]Download,
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+// forgetMissingTransfers drops resumable work for videos a complete scan no
+// longer lists. Failed transfers are otherwise kept until they succeed, which
+// never happens once their source is gone; the API expires abandoned packages.
+func (db *Database) forgetMissingTransfers(
+	ctx context.Context,
+	origin, show string,
+	present map[string]bool,
+) error {
+	rows, err := db.readers.QueryContext(ctx,
+		"SELECT DISTINCT source_url FROM transfers WHERE origin IS ? AND show_slug IS ?",
+		origin,
+		show,
+	)
+	if err != nil {
+		return err
+	}
+	var missing []string
+	for rows.Next() {
+		var source string
+		if err := rows.Scan(&source); err != nil {
+			rows.Close()
+			return err
+		}
+		if !present[source] {
+			missing = append(missing, source)
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, source := range missing {
+		if err := db.Forget(ctx, origin, show, source); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (db *Database) ensureSchema(ctx context.Context) error {

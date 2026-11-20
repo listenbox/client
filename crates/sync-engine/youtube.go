@@ -542,6 +542,10 @@ type videoImport struct {
 
 func (t *videoImport) prepare(ctx context.Context) (*p.CreateEpisodePackage, string, error) {
 	media, reason, err := t.download(ctx)
+	if err == nil && reason != "" {
+		// Nothing was downloaded for a skipped video, so nothing can resume.
+		err = t.journal.Forget(ctx, t.api.Config.APIOrigin, t.show, t.video.URL())
+	}
 	if err != nil || reason != "" {
 		return nil, reason, err
 	}
