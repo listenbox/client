@@ -1390,33 +1390,9 @@ url = "https://github.com/aubepkg/aube/releases/download/v2.5.1/aube-v2.5.1-aarc
 signer = "sigstore-oidc:https://github.com/aubepkg/aube/.github/workflows/release-plz.yml"
 repository_ids = { repository = "1214542327" }
 
-[tools.aube."platforms.linux-arm64-musl"]
-checksum = "sha256:343febcb1c4117d485b235a6efa2c3d090115661b1ccdf3cc7adbb0127a4b65a"
-url = "https://github.com/aubepkg/aube/releases/download/v2.5.1/aube-v2.5.1-aarch64-unknown-linux-musl.tar.gz"
-signer = "sigstore-oidc:https://github.com/aubepkg/aube/.github/workflows/release-plz.yml"
-repository_ids = { repository = "1214542327" }
-
 [tools.aube."platforms.linux-x64"]
 checksum = "sha256:16801e5a48272f3aa62533e626f18688ea97d8ee090fb5faac2e04900d374566"
 url = "https://github.com/aubepkg/aube/releases/download/v2.5.1/aube-v2.5.1-x86_64-unknown-linux-gnu.tar.gz"
-signer = "sigstore-oidc:https://github.com/aubepkg/aube/.github/workflows/release-plz.yml"
-repository_ids = { repository = "1214542327" }
-
-[tools.aube."platforms.linux-x64-baseline"]
-checksum = "sha256:16801e5a48272f3aa62533e626f18688ea97d8ee090fb5faac2e04900d374566"
-url = "https://github.com/aubepkg/aube/releases/download/v2.5.1/aube-v2.5.1-x86_64-unknown-linux-gnu.tar.gz"
-signer = "sigstore-oidc:https://github.com/aubepkg/aube/.github/workflows/release-plz.yml"
-repository_ids = { repository = "1214542327" }
-
-[tools.aube."platforms.linux-x64-musl"]
-checksum = "sha256:27c5b0f41dc11b5a8108983ca968cdd36fc3809a14ec841444587d73854d65ce"
-url = "https://github.com/aubepkg/aube/releases/download/v2.5.1/aube-v2.5.1-x86_64-unknown-linux-musl.tar.gz"
-signer = "sigstore-oidc:https://github.com/aubepkg/aube/.github/workflows/release-plz.yml"
-repository_ids = { repository = "1214542327" }
-
-[tools.aube."platforms.linux-x64-musl-baseline"]
-checksum = "sha256:27c5b0f41dc11b5a8108983ca968cdd36fc3809a14ec841444587d73854d65ce"
-url = "https://github.com/aubepkg/aube/releases/download/v2.5.1/aube-v2.5.1-x86_64-unknown-linux-musl.tar.gz"
 signer = "sigstore-oidc:https://github.com/aubepkg/aube/.github/workflows/release-plz.yml"
 repository_ids = { repository = "1214542327" }
 
@@ -1433,12 +1409,6 @@ signer = "sigstore-oidc:https://github.com/aubepkg/aube/.github/workflows/releas
 repository_ids = { repository = "1214542327" }
 
 [tools.aube."platforms.windows-x64"]
-checksum = "sha256:aa5ee899ab63ad192de7cd3790fbfb4dd8debfb104f7e57972504b980c05e589"
-url = "https://github.com/aubepkg/aube/releases/download/v2.5.1/aube-v2.5.1-x86_64-pc-windows-msvc.zip"
-signer = "sigstore-oidc:https://github.com/aubepkg/aube/.github/workflows/release-plz.yml"
-repository_ids = { repository = "1214542327" }
-
-[tools.aube."platforms.windows-x64-baseline"]
 checksum = "sha256:aa5ee899ab63ad192de7cd3790fbfb4dd8debfb104f7e57972504b980c05e589"
 url = "https://github.com/aubepkg/aube/releases/download/v2.5.1/aube-v2.5.1-x86_64-pc-windows-msvc.zip"
 signer = "sigstore-oidc:https://github.com/aubepkg/aube/.github/workflows/release-plz.yml"
