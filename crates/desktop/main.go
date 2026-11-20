@@ -60,6 +60,12 @@ func run() error {
 		fmt.Printf("Listenbox %s (%s)\n", s.BuildVersion(), s.SourceCommit)
 		return nil
 	}
+	// mygo dev cannot pass arguments to the app it relaunches, so the
+	// development task selects the local services' config through the
+	// environment it does pass through.
+	if *configPath == "" {
+		*configPath = os.Getenv("LISTENBOX_CLIENT_CONFIG")
+	}
 	config, err := s.LoadConfig(*configPath)
 	if err != nil {
 		return err

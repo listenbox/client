@@ -7,6 +7,7 @@ const (
 	quitHold    = 2 * time.Second
 	quitNotice  = 2 * time.Second
 	quitFade    = 200 * time.Millisecond
+	quitPoll    = 50 * time.Millisecond
 )
 
 // A shortcut confirms on release, so the key-up cannot reach the next app.

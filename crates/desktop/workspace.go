@@ -644,9 +644,9 @@ func (w *Workspace) managementURL() string {
 }
 
 type episodeRow struct {
-	key, title, source, artwork, status, reason string
-	duration                                    *int64
-	published                                   *int64
+	key, title, source, status, reason string
+	duration                           *int64
+	published                          *int64
 }
 
 func (w *Workspace) rows() []episodeRow {
@@ -676,7 +676,6 @@ func (w *Workspace) rows() []episodeRow {
 				key:       episode.Id,
 				title:     episode.Title,
 				source:    source,
-				artwork:   value(episode.ThumbnailUrl),
 				status:    string(episode.Status),
 				duration:  episode.DurationSeconds,
 				published: episode.RepublishedAt,

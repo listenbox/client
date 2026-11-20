@@ -61,7 +61,10 @@ tasks:
     inputs: ['@group(sources)', 'project://client?group=sources']
     outputs: [dist/listenbox-desktop-e2e]
   dev:
+    description: Hot-reload the desktop app against the local API and Dashboard from the root dev task.
     deps: [client:prerequisites, ~:build-config]
+    env:
+      LISTENBOX_CLIENT_CONFIG: $projectRoot/../../config/dev.yaml
     command: [mise, -C, ../.., exec, --, go, tool, mygo, dev, crates/desktop]
     preset: server
     inputs: []

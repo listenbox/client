@@ -60,6 +60,13 @@ func (h *desktopHarness) click(label string) {
 	desktopNoError(h.t, h.screen.Click(label))
 }
 
+// logout signs out from the team switcher, as the Dashboard does.
+func (h *desktopHarness) logout() {
+	h.t.Helper()
+	h.click("Switch team")
+	h.click("Log out")
+}
+
 // stageGuard bounds one observable stage of a desktop workflow.
 const stageGuard = 3 * time.Second
 
@@ -273,12 +280,12 @@ func TestTeamPickerScrollsToTheLastTeamWithoutMovingTheLibrary(t *testing.T) {
 	}
 	h.w.catalog.Shows[3].TeamId = h.w.catalog.Teams[31].Id
 	h.screen.Frame()
-	h.click("Choose team")
+	h.click("Switch team")
 	before, ok := h.screen.Find("Import from YouTube")
 	if !ok {
 		t.Fatal("missing import control")
 	}
-	list, ok := h.screen.Find("Teams")
+	list, ok := h.screen.Find("Team list")
 	if !ok {
 		t.Fatal("missing team list")
 	}
@@ -292,12 +299,29 @@ func TestTeamPickerScrollsToTheLastTeamWithoutMovingTheLibrary(t *testing.T) {
 	if !ok || before != after {
 		t.Fatal("team picker moved the library")
 	}
-	h.click("Choose team")
+	h.click("Switch team")
 	h.w.teamList.ScrollTo(0, ui.Start)
 	h.screen.Frame()
 	h.click("All teams")
 	if h.w.team != "" {
 		t.Fatal("All teams did not clear the filter")
+	}
+}
+
+func TestTeamSwitcherCreatesATeamInTheDashboard(t *testing.T) {
+	t.Parallel()
+	h := libraryDesktop(t)
+	team := h.w.catalog.Teams[1]
+	h.w.team = team.Id
+	h.screen.Frame()
+	h.click("Switch team")
+	h.click("Create team")
+	urls := h.screen.OpenedURLs()
+	if len(urls) != 1 || !strings.HasSuffix(urls[0], "/"+team.Id+"/teams/new") {
+		t.Fatal("Create team did not open the selected team's form", urls)
+	}
+	if h.w.teamPicker {
+		t.Fatal("Create team left the switcher open")
 	}
 }
 
@@ -345,6 +369,24 @@ func TestOptionArrowsNavigateVisiblePodcastsFromFocusedControls(t *testing.T) {
 			"/"+h.w.catalog.Teams[1].Id+"/shows/"+h.w.catalog.Shows[3].Id,
 		) {
 		t.Fatal("management link did not follow selection", urls)
+	}
+}
+
+func TestPublishedEpisodeTitleOpensItsYouTubeVideo(t *testing.T) {
+	t.Parallel()
+	h := libraryDesktop(t)
+	title := "דף יומי: ערכין ד' - " + t.Name()
+	video := "https://www.youtube.com/watch?v=" + strings.ToLower(t.Name())
+	h.w.episodes = []p.EpisodeListItem{{
+		Id:         "ep_" + t.Name(),
+		Title:      title,
+		Status:     p.EpisodeStatusPublished,
+		YoutubeUrl: &video,
+	}}
+	h.screen.Frame()
+	h.click("Open " + title + " on YouTube")
+	if urls := h.screen.OpenedURLs(); len(urls) != 1 || urls[0] != video {
+		t.Fatal("episode title did not open its video", urls)
 	}
 }
 

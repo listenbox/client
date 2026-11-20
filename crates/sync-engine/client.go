@@ -17,6 +17,7 @@ import (
 type Catalog struct {
 	Teams      []p.ClientTeam
 	ImportTeam string
+	Email      string
 	Shows      []p.Show
 }
 type SyncState struct {
@@ -124,6 +125,7 @@ func (c *Client) Catalog(ctx context.Context) (Catalog, error) {
 	if err := group.Wait(); err != nil {
 		return catalog, err
 	}
+	catalog.Email = account.Email
 	for _, team := range catalog.Teams {
 		if catalog.ImportTeam == "" || team.Id == account.TeamId {
 			catalog.ImportTeam = team.Id

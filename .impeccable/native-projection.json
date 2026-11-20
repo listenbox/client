@@ -6,7 +6,7 @@
     "directionContract": "../../../docs/client-design.md",
     "surfaceBrief": "surfaces/apps-client-crates-desktop.md",
     "finishReview": "review/mygo-finish-review.md",
-    "nativeTokens": "../crates/desktop/view.go",
+    "nativeTokens": "../crates/desktop/design.go",
     "nativeWorkspace": "../crates/desktop/workspace.go",
     "nativePlatform": "../crates/desktop/platform_darwin.go",
     "nativeLifecycle": "../crates/desktop/quit.go"
@@ -15,14 +15,13 @@
     "appearance": "system",
     "layout": {
       "rail": "240px",
-      "toolbar": "56px",
       "windowDefault": "1080px 760px",
       "windowMinimum": "840px 600px",
       "contentPadding": "24px",
       "controlGap": "12px",
       "rowGap": "8px",
       "rowPaddingY": "12px",
-      "themeRadius": "10px"
+      "themeRadius": "14px (radiusMD); actions use radiusPill"
     },
     "roleMap": {
       "background": {
@@ -66,11 +65,12 @@
       }
     },
     "primitives": {
-      "action": "ui.Button",
-      "quietAction": "ui.Button",
+      "action": "primaryButton (ui.PrimaryButton, capsule)",
+      "quietAction": "button (ui.Button, capsule)",
       "field": "ui.TextInput",
+      "menu": "ui.MenuBase",
       "progress": "ui.Progress",
-      "loading": "ui.Progress(c, -1)"
+      "loading": "ui.Spinner"
     }
   },
   "guardrails": [
@@ -78,7 +78,8 @@
     "Keep the native surface flat and border-led.",
     "Keep one clear action hierarchy in each selected-show state.",
     "Do not use Mazit UI as a visual reference.",
-    "Treat the DESIGN.md projection drift as recorded evidence, not a new token source."
+    "Treat the DESIGN.md projection drift as recorded evidence, not a new token source.",
+    "Match the Dashboard's component where one exists, such as the team switcher."
   ],
   "review": {
     "disposition": "ship",

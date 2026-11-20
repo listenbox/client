@@ -11,7 +11,7 @@ func (w *Workspace) updateSettings(c *ui.Context) {
 	if runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
 		return
 	}
-	ui.Text(c, "Updates").Bold()
+	typeLabel.set(c, ui.Text(c, "Updates"))
 	ui.Textf(c, "%s %s", applicationName, s.BuildVersion()).TextColor(c.Theme().TextMuted)
 	available := w.updater != nil
 	if !available {
@@ -23,7 +23,7 @@ func (w *Workspace) updateSettings(c *ui.Context) {
 		w.updater.setAutomatic(automatic)
 	}
 	w.updateDownloadSettings(c, available)
-	if ui.Button(c, "Check for Updates…").
+	if button(c, "Check for Updates…").
 		Disabled(!available || w.stopping || !w.updater.canCheck()).Clicked() {
 		w.updater.check()
 	}

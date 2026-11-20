@@ -312,7 +312,7 @@ func TestLiveLogoutContendedLock(t *testing.T) {
 		}
 	}()
 	h.wait(func() bool { return reached })
-	h.click("Sign out")
+	h.logout()
 	h.wait(func() bool { return !h.w.stopping && !h.w.authorized })
 	if h.w.client.HasCredentials() {
 		t.Fatal("logout retained credentials while a lock owner remained alive")
@@ -328,7 +328,7 @@ func TestLiveLogoutInitializing(t *testing.T) {
 	t.Parallel()
 	h, scenario := liveDesktop(t, true)
 	h.control(scenario, "initializing")
-	h.click("Sign out")
+	h.logout()
 	h.wait(func() bool { return !h.w.stopping && !h.w.authorized })
 	h.control(scenario, "disconnected")
 	if h.w.client.HasCredentials() || len(h.w.catalog.Shows) != 0 {
@@ -448,7 +448,7 @@ func TestLiveBackend(t *testing.T) {
 	request := h.w.episodeRequest
 	h.screen.Key(ui.Cmd, ui.KeyR)
 	h.wait(func() bool { return !h.w.loading && h.w.episodeRequest > request })
-	h.click("Sign out")
+	h.logout()
 	h.wait(func() bool { return !h.w.stopping && !h.w.authorized })
 	if h.w.client.HasCredentials() {
 		t.Fatal("workspace retained credentials")
