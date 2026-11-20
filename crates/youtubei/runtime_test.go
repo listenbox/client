@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -527,4 +528,81 @@ func TestCancellationInterruptsJavascriptExecution(t *testing.T) {
 		t.Fatal("cancellation did not interrupt JavaScript")
 	}
 	assertRuntime(t, engine, `()=>true`)
+}
+
+// A call sent while another call's JavaScript keeps fetching waits for it: it
+// never runs inside the first call, so cancelling the first still interrupts
+// it and the second then completes.
+func TestCancellationInterruptsAFetchingCallBeforeTheNextCall(t *testing.T) {
+	t.Parallel()
+	const pollsAfterSecondCall = 16
+	entered, advanced, nested := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var enter, advance, nest sync.Once
+	var polls, target atomic.Int64
+	target.Store(math.MaxInt64)
+	engine := runtimeEngine(t, func(_ context.Context, request FetchRequest) (FetchResponse, error) {
+		if strings.HasSuffix(request.URL, "/nested") {
+			nest.Do(func() { close(nested) })
+			return FetchResponse{Status: 200}, nil
+		}
+		enter.Do(func() { close(entered) })
+		if polls.Add(1) >= target.Load() {
+			advance.Do(func() { close(advanced) })
+		}
+		return FetchResponse{Status: 200}, nil
+	})
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	first := make(chan error, 1)
+	go func() {
+		first <- engine.Call(
+			ctx,
+			`()=>{for(let i=0;;i++){if(i%10000===0)fetch('https://fixture.invalid/poll')}}`,
+			nil,
+			nil,
+		)
+	}()
+	awaitClosed(t, entered, "first call did not start")
+	second := make(chan error, 1)
+	var valid bool
+	target.Store(polls.Load() + pollsAfterSecondCall)
+	go func() {
+		second <- engine.Call(t.Context(), `()=>{fetch('https://fixture.invalid/nested');return true}`, nil, &valid)
+	}()
+	select {
+	case <-advanced:
+	case <-nested:
+		t.Fatal("second call ran inside the first")
+	case <-time.After(2 * time.Second):
+		t.Fatal("first call stopped fetching")
+	}
+	cancel()
+	if err := awaitError(t, first, "first call did not end"); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	noRuntimeError(t, awaitError(t, second, "second call did not complete after the first was cancelled"))
+	if !valid {
+		t.Fatal("second call returned the wrong value")
+	}
+}
+
+// awaitClosed and awaitError wait for one test step under its guard.
+func awaitClosed(t *testing.T, signal <-chan struct{}, failure string) {
+	t.Helper()
+	select {
+	case <-signal:
+	case <-time.After(2 * time.Second):
+		t.Fatal(failure)
+	}
+}
+
+func awaitError(t *testing.T, result <-chan error, failure string) error {
+	t.Helper()
+	select {
+	case err := <-result:
+		return err
+	case <-time.After(2 * time.Second):
+		t.Fatal(failure)
+		return nil
+	}
 }

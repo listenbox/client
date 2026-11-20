@@ -155,32 +155,47 @@ func (engine *Engine) own(initial context.Context, fetch Fetch, ready chan<- err
 		}
 		return js.ParseJSON(string(raw))
 	}
-	bind("__hostFetch", func(ctx *q.Context, _ *q.Value, args []*q.Value) *q.Value {
+	// __hostFetchStart only starts the transport and returns an id; the JS
+	// promise and its resolvers live in hostPrimitives. QuickJS-go's NewPromise
+	// would evaluate JS and drain scheduled jobs inside this host call, so
+	// another call could run inside the caller and a cancellation could land
+	// in its internal evaluation, leaving the runtime in an exception state.
+	var nextFetch int64
+	bind("__hostFetchStart", func(ctx *q.Context, _ *q.Value, args []*q.Value) *q.Value {
 		var request FetchRequest
 		if len(args) != 1 || json.Unmarshal([]byte(args[0].JSONStringify()), &request) != nil {
 			return ctx.ThrowError(errors.New("invalid fetch request"))
 		}
+		nextFetch++
+		id := nextFetch
 		requestContext := operation
-		return ctx.NewPromise(func(resolve, reject func(*q.Value)) {
-			jobs.Go(func() error {
-				response, err := fetch(requestContext, request)
-				ctx.Schedule(func(ctx *q.Context) {
-					if err != nil {
-						nextError++
-						hostErrors[nextError] = err
-						failure := ctx.NewError(fmt.Errorf("fetch: %w", err))
-						defer failure.Free()
-						failure.Set("__goError", ctx.NewInt64(nextError))
-						reject(failure)
-					} else {
-						value := marshal(response)
-						defer value.Free()
-						resolve(value)
-					}
-				})
-				return nil
+		jobs.Go(func() error {
+			response, err := fetch(requestContext, request)
+			ctx.Schedule(func(ctx *q.Context) {
+				settled := ctx.NewInt64(id)
+				defer settled.Free()
+				var result *q.Value
+				if err != nil {
+					nextError++
+					hostErrors[nextError] = err
+					failure := ctx.NewError(fmt.Errorf("fetch: %w", err))
+					defer failure.Free()
+					failure.Set("__goError", ctx.NewInt64(nextError))
+					missing := ctx.NewNull()
+					defer missing.Free()
+					result = globals.Call("__hostFetchSettle", settled, missing, failure)
+				} else {
+					value := marshal(response)
+					defer value.Free()
+					result = globals.Call("__hostFetchSettle", settled, value)
+				}
+				if result != nil {
+					result.Free()
+				}
 			})
+			return nil
 		})
+		return ctx.NewInt64(id)
 	})
 	bind("__textEncode", func(ctx *q.Context, _ *q.Value, args []*q.Value) *q.Value {
 		return ctx.NewArrayBuffer([]byte(args[0].ToString()))

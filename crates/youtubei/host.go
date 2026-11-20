@@ -112,6 +112,9 @@ globalThis.Response=class Response extends Body{
   clone(){return new Response(this._bytes,{status:this.status,statusText:this.statusText,headers:this.headers,url:this.url})}
   static json(value,init={}){return new Response(JSON.stringify(value),{...init,headers:{'content-type':'application/json',...init.headers}})}
 };
+globalThis.__hostFetchWaiters=new Map();
+globalThis.__hostFetch=request=>new Promise((resolve,reject)=>{__hostFetchWaiters.set(__hostFetchStart(request),{resolve,reject})});
+globalThis.__hostFetchSettle=(id,response,error)=>{const waiter=__hostFetchWaiters.get(id);if(!waiter)return;__hostFetchWaiters.delete(id);if(error)waiter.reject(error);else waiter.resolve(response)};
 globalThis.fetch=async(input,init={})=>{const request=new Request(input,init);const response=await __hostFetch({url:request.url,method:request.method,headers:Array.from(request.headers),body:request._bytes.length?toBase64(request._bytes):null});return new Response(fromBase64(response.body),response)};
 globalThis.crypto={randomUUID:()=>__randomUUID(),getRandomValues:array=>{array.set(fromBase64(__randomBytes(array.byteLength)));return array},subtle:{digest:async(algorithm,bytes)=>__digest(typeof algorithm==='string'?algorithm:algorithm.name,toBase64(bytes))}};
 globalThis.CustomEvent=class CustomEvent{constructor(type,options={}){this.type=type;this.detail=options.detail}};
