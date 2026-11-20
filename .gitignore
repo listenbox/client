@@ -7,6 +7,7 @@
 
 /crates/*/dist/
 /crates/desktop/mygo.json
+/crates/desktop/.mygo/
 /crates/desktop/mygo_windows_*.syso
 /crates/sync-engine/clientconfig/
 /crates/sync-engine/publicapi/
