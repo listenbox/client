@@ -192,6 +192,7 @@ const bindings = `
 const __handles = new Map();let __nextHandle=0;let __innertube;
 const __retain=value=>{const id=++__nextHandle;__handles.set(id,value);return id};
 const __text=value=>value?.text??null;
+const __playability=status=>{if(!status)return null;const screen=status.error_screen;const message=screen?.content??screen;return {status:status.status,reason:status.reason??'',subreason:message?.subreason?.toString()??message?.reason?.toString()??''}};
 const __playlist=page=>({
   handle:__retain(page),title:page.info?.title??'',thumbnails:page.info?.thumbnails??[],
   has_continuation:page.has_continuation,is_complete:page.is_complete,
@@ -213,12 +214,9 @@ globalThis.__bridge={
   async continuation(handle){const page=__handles.get(handle);__handles.delete(handle);return __playlist(await page.getContinuation())},
   async videoInfo({id,client}){
     const info=await __innertube.getBasicInfo(id,{client});
-    const status=info.playability_status;
-    const screen=status?.error_screen;
-    const message=screen?.content??screen;
     const formats=[...(info.streaming_data?.formats??[]),...(info.streaming_data?.adaptive_formats??[])];
     const micro=info.page[0].microformat;
-    return {basic_info:info.basic_info,playability_status:status?{status:status.status,reason:status.reason??'',subreason:message?.subreason?.toString()??message?.reason?.toString()??''}:null,publish_date:micro?.publish_date??'',upload_date:micro?.upload_date??'',cpn:info.cpn,
+    return {basic_info:info.basic_info,playability_status:__playability(info.playability_status),publish_date:micro?.publish_date??'',upload_date:micro?.upload_date??'',cpn:info.cpn,
       formats:formats.map(f=>({handle:__retain(f),itag:f.itag,mime_type:f.mime_type,bitrate:f.bitrate,width:f.width,height:f.height,fps:f.fps,content_length:f.content_length,has_audio:f.has_audio,has_video:f.has_video,is_type_otf:f.is_type_otf,drm_families:f.drm_families,audio_track:f.audio_track,url:f.url,cipher:f.cipher,signature_cipher:f.signature_cipher}))};
   },
   async decipher(handle){const format=__handles.get(handle);if(!format)throw new Error('Released upstream format');if((format.cipher||format.signature_cipher||(format.url&&new URL(format.url).searchParams.has('n')))&&!__innertube.session.player){__innertube.session.player=await YouTubeJS.Player.create(__innertube.session.cache,fetch)}return format.decipher(__innertube.session.player)}

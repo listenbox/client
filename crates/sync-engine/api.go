@@ -42,6 +42,9 @@ var (
 		"YouTube needs a signed-in session. Open Settings → YouTube to paste fresh cook" +
 			"ies, or run listenbox youtube cookies import <cookies.txt>, then sync again.",
 	)
+	// ErrRateLimited reports that YouTube throttled this session's player
+	// requests; YouTube lifts it after up to an hour.
+	ErrRateLimited = errors.New("YouTube is rate-limiting this computer")
 )
 
 type HTTPError struct {

@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/listenbox/client/crates/youtubei"
@@ -29,6 +30,10 @@ const (
 	maximumPlaylistPages = 10000
 	youtubeVideoIDLength = 11
 	secondsPerMinute     = 60
+	liveReason           = "Live or upcoming video; sync after it has finished"
+	// rateLimitNotice is the playability text YouTube returns to every player
+	// request from a session it has rate-limited.
+	rateLimitNotice = "This content isn't available, try again later"
 )
 
 func (v Video) URL() string { return "https://www.youtube.com/watch?v=" + v.ID }
@@ -67,6 +72,9 @@ type YouTube struct {
 	userAgent      string
 	deviceAgents   map[youtubei.Client]string
 	playbackClient youtubei.Client
+	// limited holds the first rate-limit error; once YouTube throttles the
+	// session, further player requests are pointless until a later sync.
+	limited atomic.Pointer[error]
 }
 
 func NewYouTube(ctx context.Context, api *API) (*YouTube, error) {
@@ -264,7 +272,7 @@ func (yt *YouTube) Media(ctx context.Context, id, collection string) (*Media, st
 		return nil, reason, err
 	}
 	if metadata.BasicInfo.IsLive || metadata.BasicInfo.IsUpcoming {
-		return nil, "Live or upcoming video; sync after it has finished", nil
+		return nil, liveReason, nil
 	}
 	playback, client, reason, err := yt.playbackInfo(ctx, id)
 	if err != nil {
@@ -362,23 +370,38 @@ func (yt *YouTube) playerInfo(
 	id string,
 	client youtubei.Client,
 ) (youtubei.VideoInfo, string, error) {
+	if limited := yt.limited.Load(); limited != nil {
+		return youtubei.VideoInfo{}, "", *limited
+	}
 	info, err := yt.engine.VideoInfo(ctx, id, client)
 	if err != nil {
 		var upstream *youtubei.Error
 		if errors.As(err, &upstream) && upstream.PlayabilityStatus != nil &&
 			upstream.PlayabilityStatus.Status == "ERROR" {
-			return info, unavailableReason(*upstream.PlayabilityStatus), nil
+			return yt.unavailable(info, *upstream.PlayabilityStatus)
 		}
 		return info, "", err
 	}
 	if info.PlayabilityStatus == nil {
 		return info, "", errors.New("YouTube player response missing playability status")
 	}
+	if info.PlayabilityStatus.Status != "OK" {
+		return yt.unplayable(info, id)
+	}
+	if info.BasicInfo.ID != id {
+		return info, "", errors.New("YouTube metadata video ID differs from the requested video")
+	}
+	return info, "", nil
+}
+
+// unplayable classifies a player response whose status is not OK.
+func (yt *YouTube) unplayable(info youtubei.VideoInfo, id string) (youtubei.VideoInfo, string, error) {
 	status := info.PlayabilityStatus
 	switch status.Status {
-	case "OK":
 	case "UNPLAYABLE":
-		return info, unavailableReason(*status), nil
+		return yt.unavailable(info, *status)
+	case "LIVE_STREAM_OFFLINE":
+		return info, liveReason, nil
 	case "LOGIN_REQUIRED":
 		if status.Reason == "Private video" {
 			return info, unavailableReason(*status), nil
@@ -392,10 +415,21 @@ func (yt *YouTube) playerInfo(
 			status.Reason,
 		)
 	}
-	if info.BasicInfo.ID != id {
-		return info, "", errors.New("YouTube metadata video ID differs from the requested video")
+}
+
+// unavailable turns an unplayable status into a skip reason, except a rate
+// limit, which says nothing about the video and fails the whole session.
+func (yt *YouTube) unavailable(
+	info youtubei.VideoInfo,
+	status youtubei.PlayabilityStatus,
+) (youtubei.VideoInfo, string, error) {
+	reason := unavailableReason(status)
+	if !strings.Contains(strings.ReplaceAll(reason, "’", "'"), rateLimitNotice) {
+		return info, reason, nil
 	}
-	return info, "", nil
+	err := fmt.Errorf("%w: %s", ErrRateLimited, reason)
+	yt.limited.CompareAndSwap(nil, &err)
+	return info, "", *yt.limited.Load()
 }
 
 func (yt *YouTube) selectStreams(

@@ -18,7 +18,10 @@ import (
 
 type Report struct {
 	Added, Removed, Unchanged, Skipped int
-	Reordered, Stopped                 bool
+	// Deferred counts videos left queued for the next sync because YouTube
+	// rate-limited this session.
+	Deferred           int
+	Reordered, Stopped bool
 }
 type Engine struct {
 	Downloads *DownloadManager
@@ -33,6 +36,7 @@ type Engine struct {
 
 const (
 	maximumSyncWorkers = 26
+	deferredReason     = "YouTube is rate-limiting this computer; retrying on the next sync"
 )
 
 func NewEngine(clock clockwork.Clock) *Engine {
@@ -426,6 +430,7 @@ func (r *syncRun) transferAdditions(
 	group.SetLimit(maximumSyncWorkers)
 	var resultMu sync.Mutex
 	var failures []error
+	var limited error
 	stopped := false
 	for index, video := range additions {
 		id := ids[index]
@@ -435,6 +440,11 @@ func (r *syncRun) transferAdditions(
 			resultMu.Lock()
 			defer resultMu.Unlock()
 			switch {
+			case errors.Is(transferErr, ErrRateLimited):
+				r.report.Deferred++
+				if limited == nil {
+					limited = transferErr
+				}
 			case transferErr != nil:
 				failures = append(failures, transferErr)
 			case reason != "":
@@ -450,17 +460,25 @@ func (r *syncRun) transferAdditions(
 		r.report.Stopped = true
 		return nil
 	}
-	if len(failures) > 0 {
-		return fmt.Errorf(
-			"%d transfer(s) failed: %w",
-			len(failures),
-			errors.Join(failures...),
-		)
-	}
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	return nil
+	var errs []error
+	if len(failures) > 0 {
+		errs = append(errs, fmt.Errorf(
+			"%d transfer(s) failed: %w",
+			len(failures),
+			errors.Join(failures...),
+		))
+	}
+	if limited != nil {
+		errs = append(errs, fmt.Errorf(
+			"%d episode(s) will be retried on the next sync: %w",
+			r.report.Deferred,
+			limited,
+		))
+	}
+	return errors.Join(errs...)
 }
 
 func (r *syncRun) transferVideo(
@@ -474,6 +492,10 @@ func (r *syncRun) transferVideo(
 	reason, transferErr := r.retryVideo(ctx, cancel, mu, stopped, video, id)
 	r.engine.Downloads.update(id, func(item *Download) {
 		switch {
+		case errors.Is(transferErr, ErrRateLimited):
+			item.Phase = Queued()
+			item.Reason = deferredReason
+			item.Error = ""
 		case transferErr != nil:
 			item.Error = Redact(transferErr.Error())
 			if ctx.Err() != nil {
@@ -664,11 +686,27 @@ func (e *Engine) syncInventory(
 	if err != nil {
 		return report, err
 	}
-	if err := run.transferAdditions(ctx, cancel, additions, ids); err != nil || report.Stopped {
-		return report, err
+	return report, run.finish(ctx, cancel, additions, ids, remote)
+}
+
+// finish transfers the additions and reconciles the pass. Per-video failures
+// and deferrals leave those videos for the next sync; the rest of the pass
+// still reconciles what was published.
+func (r *syncRun) finish(
+	ctx context.Context,
+	cancel context.CancelFunc,
+	additions []Video,
+	ids []string,
+	remote map[string]bool,
+) error {
+	transferErr := r.transferAdditions(ctx, cancel, additions, ids)
+	if r.report.Stopped || ctx.Err() != nil {
+		return transferErr
 	}
-	err = run.reconcile(ctx, additions, remote)
-	return report, err
+	if err := r.reconcile(ctx, additions, remote); err != nil {
+		return errors.Join(transferErr, err)
+	}
+	return transferErr
 }
 
 func (r *syncRun) updateArtwork(ctx context.Context) error {
