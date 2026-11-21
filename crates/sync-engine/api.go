@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jonboulle/clockwork"
@@ -230,11 +231,23 @@ func (api *API) JSON(ctx context.Context, method, path string, body, out any) er
 	return nil
 }
 
-// Transport detaches in-flight connection setup from a request so another
-// request can reuse it. Keep CONNECT/TLS setup owned until GotConn transfers
-// the connection to Transport; cancelling a runtime must close that socket.
+// Transport detaches connection setup from the request that started it: when
+// another connection reaches the request first, the dial still finishes and
+// joins the idle pool for later requests. A request therefore owns the sockets
+// dialed for it only while send runs, so cancelling a runtime closes CONNECT/TLS
+// setup still in flight. GotConn hands the connection the request uses to
+// Transport, and send hands over every other one when Do returns; afterwards
+// the request's context no longer closes a socket another request may be using.
 type (
-	dialOwnerKey    struct{}
+	dialOwnerKey struct{}
+	dialOwner    struct {
+		// afterDone runs f once the request's context ends; it returns stop.
+		afterDone func(f func()) (stop func() bool)
+
+		mu       sync.Mutex
+		released bool
+		conns    []*ownedConnection
+	}
 	ownedConnection struct {
 		net.Conn
 
@@ -244,28 +257,51 @@ type (
 
 func (conn *ownedConnection) Close() error { conn.release(); return conn.Conn.Close() }
 
-//nolint:contextcheck // Restore the request owner carried through Transport's detached CONNECT/TLS context.
-func dialOwnedConnection(ctx context.Context, network, address string) (net.Conn, error) {
-	owner, ok := ctx.Value(dialOwnerKey{}).(context.Context)
-	if !ok {
-		owner = ctx
+// own closes conn with the request's context until the owner releases it.
+func (owner *dialOwner) own(conn net.Conn) net.Conn {
+	owner.mu.Lock()
+	defer owner.mu.Unlock()
+	if owner.released {
+		return conn
 	}
+	owned := &ownedConnection{
+		Conn:    conn,
+		release: owner.afterDone(func() { _ = conn.Close() }),
+	}
+	owner.conns = append(owner.conns, owned)
+	return owned
+}
+
+// releaseAll hands every socket dialed for the request to Transport.
+func (owner *dialOwner) releaseAll() {
+	owner.mu.Lock()
+	defer owner.mu.Unlock()
+	owner.released = true
+	for _, conn := range owner.conns {
+		conn.release()
+	}
+	owner.conns = nil
+}
+
+func dialOwnedConnection(ctx context.Context, network, address string) (net.Conn, error) {
+	owner, _ := ctx.Value(dialOwnerKey{}).(*dialOwner)
 	dialCtx, cancel := context.WithCancel(ctx)
-	stop := context.AfterFunc(owner, cancel)
+	defer cancel()
+	if owner != nil {
+		defer owner.afterDone(cancel)()
+	}
 	conn, err := (&net.Dialer{Timeout: httpConnectTimeout, KeepAlive: httpConnectTimeout}).DialContext(
 		dialCtx,
 		network,
 		address,
 	)
-	stop()
-	cancel()
 	if err != nil {
 		return nil, err
 	}
-	return &ownedConnection{
-		Conn:    conn,
-		release: context.AfterFunc(owner, func() { _ = conn.Close() }),
-	}, nil
+	if owner == nil {
+		return conn, nil
+	}
+	return owner.own(conn), nil
 }
 
 func responseError(response *http.Response) error {
@@ -306,8 +342,11 @@ func (api *API) TeamID(ctx context.Context) (string, error) {
 
 func (api *API) send(client *http.Client, request *http.Request) (*http.Response, error) {
 	started := time.Now()
-	owner := request.Context()
-	ctx := context.WithValue(owner, dialOwnerKey{}, owner)
+	//nolint:contextcheck // Transport dials without the request context; the owner keeps it.
+	owner := &dialOwner{afterDone: func(f func()) func() bool {
+		return context.AfterFunc(request.Context(), f)
+	}}
+	ctx := context.WithValue(request.Context(), dialOwnerKey{}, owner)
 	ctx = httptrace.WithClientTrace(
 		ctx,
 		&httptrace.ClientTrace{GotConn: func(info httptrace.GotConnInfo) {
@@ -323,6 +362,7 @@ func (api *API) send(client *http.Client, request *http.Request) (*http.Response
 	request = request.WithContext(ctx)
 	// #nosec G704 -- Client requests use explicitly configured API and provider endpoints.
 	response, err := client.Do(request)
+	owner.releaseAll()
 	api.logRequest(request, response, started)
 	if err != nil {
 		if urlError, ok := errors.AsType[*url.Error](err); ok {
