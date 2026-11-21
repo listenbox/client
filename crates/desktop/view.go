@@ -48,7 +48,7 @@ func (w *Workspace) view(c *ui.Context) {
 		w.navigate(1)
 	}
 	if c.Shortcut(ui.Cmd, ui.KeyR) {
-		w.reload()
+		w.reload(w.syncAll)
 	}
 	w.navigationObserved = false
 	if c.Shortcut(ui.Cmd, ui.KeyQ) {
@@ -171,7 +171,7 @@ func (w *Workspace) sidebar(c *ui.Context) {
 					Tooltip("Refresh library").
 					Children(func() { ui.Icon(c, refreshIcon).Size(iconMedium, iconMedium) }).
 					Clicked() {
-					w.reload()
+					w.reload(w.syncAll)
 				}
 				ui.Spacer(c)
 				if button(c, "Settings").Clicked() {
@@ -365,16 +365,15 @@ func (w *Workspace) podcast(c *ui.Context, show p.Show) {
 					}
 				default:
 					ui.Column(c).Grow(1).MinWidth(0).Gap(d.xs).Children(func() {
-						label := "Not synced on this device yet"
+						label := "Not synced yet"
 						if w.paused[show.Slug] {
 							label = "Paused for this session"
-						} else if w.state.LastSynced != nil {
-							label = "Last synced " + w.state.LastSynced.Local().Format("Jan 2, 15:04")
+						} else if synced := w.lastSynced(show); synced != nil {
+							label = "Last synced " + synced.Local().Format("Jan 2, 15:04")
 						}
 						ui.Text(c, label)
-						if show.Youtube.LastCheckedAt != nil {
-							ui.Text(c, "YouTube checked "+time.UnixMilli(*show.Youtube.LastCheckedAt).Local().Format("Jan 2, 15:04")).
-								TextColor(d.muted)
+						if w.checking || w.loading {
+							ui.Text(c, "Checking Listenbox…").TextColor(d.muted)
 						}
 					})
 					action := syncNowLabel
@@ -469,7 +468,11 @@ func (w *Workspace) episodeTable(c *ui.Context, rows []episodeRow) {
 			})
 	}).Grow(1).MinHeight(0).Label("Episode list")
 	if len(rows) == 0 {
-		ui.Text(c, "No episodes to show yet.").TextColor(d.muted)
+		empty := "No episodes to show yet."
+		if w.checking {
+			empty = "Loading episodes…"
+		}
+		ui.Text(c, empty).TextColor(d.muted)
 	}
 }
 

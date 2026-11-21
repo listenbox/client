@@ -35,6 +35,8 @@ type Engine struct {
 }
 
 const (
+	// scanInterval is how often every subscribed podcast is checked.
+	scanInterval       = time.Hour
 	maximumSyncWorkers = 26
 	deferredReason     = "YouTube is rate-limiting this computer; retrying on the next sync"
 )
@@ -100,7 +102,7 @@ func (e *Engine) Database(ctx context.Context, config Config) (*Database, error)
 
 func (e *Engine) NextScan(ctx context.Context) bool {
 	elapsed := e.clock.Now().Sub(e.anchor)
-	next := e.anchor.Add(elapsed.Truncate(time.Hour) + time.Hour)
+	next := e.anchor.Add(elapsed.Truncate(scanInterval) + scanInterval)
 	timer := e.clock.NewTimer(next.Sub(e.clock.Now()))
 	defer timer.Stop()
 	select {

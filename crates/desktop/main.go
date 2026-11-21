@@ -158,7 +158,7 @@ func installMenus(window *mygo.Window, w *Workspace, updater nativeUpdater, quit
 		{Label: "View", Submenu: []*mygo.MenuItem{
 			{
 				Label: "Reload", Accelerator: "CmdOrCtrl+R",
-				Click: func(*mygo.MenuItem, *mygo.Window) { window.Update(w.reload) },
+				Click: func(*mygo.MenuItem, *mygo.Window) { window.Update(func() { w.reload(w.syncAll) }) },
 			},
 		}},
 		{Label: "Podcast", Submenu: []*mygo.MenuItem{

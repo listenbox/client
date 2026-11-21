@@ -47,3 +47,15 @@ CREATE TABLE sync_completions (
     completed_at INTEGER NOT NULL CHECK (completed_at >= 0),
     PRIMARY KEY (origin, show_slug)
 );
+CREATE TABLE catalog_cache (
+    origin TEXT NOT NULL PRIMARY KEY,
+    credential TEXT NOT NULL,
+    catalog TEXT NOT NULL
+);
+CREATE TABLE episode_cache (
+    origin TEXT NOT NULL,
+    show_slug TEXT NOT NULL,
+    credential TEXT NOT NULL,
+    episodes TEXT NOT NULL,
+    PRIMARY KEY (origin, show_slug)
+);

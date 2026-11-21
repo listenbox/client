@@ -32,7 +32,7 @@ type Workspace struct {
 	tasks                                                     *errgroup.Group
 	generation                                                uint64
 	started, loaded, authorized, loading, stopping, signingIn bool
-	refreshPending                                            bool
+	refreshPending, catalogLive, episodesLive, checking       bool
 	loginCancel                                               context.CancelFunc
 	loginURL                                                  string
 	catalog                                                   s.Catalog
@@ -129,7 +129,7 @@ func (w *Workspace) start() {
 			return func() {
 				w.authorized, w.loaded = credentials, true
 				if credentials {
-					w.reload()
+					w.reload(w.syncDue)
 				}
 			}
 		})
@@ -185,9 +185,28 @@ func (w *Workspace) showError(err error, team string) {
 	}
 }
 
-func (w *Workspace) reload() {
+// reload renders the catalog cached by the last session at once, then
+// replaces it with Listenbox's and runs sync, when given, against that.
+func (w *Workspace) reload(sync func()) {
 	w.clearArtwork()
-	w.refreshCatalog(true)
+	if !w.catalogLive {
+		w.launch(func(ctx context.Context) func() {
+			catalog, found, err := w.client.CachedCatalog(ctx)
+			return func() {
+				if w.catalogLive {
+					return
+				}
+				if err != nil {
+					w.showError(err, "")
+					return
+				}
+				if found {
+					w.applyCatalog(catalog)
+				}
+			}
+		})
+	}
+	w.refreshCatalog(sync)
 }
 
 func (w *Workspace) clearArtwork() {
@@ -196,7 +215,7 @@ func (w *Workspace) clearArtwork() {
 	w.artworkOrder = nil
 }
 
-func (w *Workspace) refreshCatalog(autoSync bool) {
+func (w *Workspace) refreshCatalog(sync func()) {
 	if !w.authorized || w.stopping {
 		return
 	}
@@ -213,38 +232,43 @@ func (w *Workspace) refreshCatalog(autoSync bool) {
 				w.showError(err, "")
 				return
 			}
-			w.catalog = catalog
-			w.retainArtwork()
-			if w.team != "" &&
-				!slices.ContainsFunc(
-					catalog.Teams,
-					func(t p.ClientTeam) bool { return t.Id == w.team },
-				) {
-				w.team = ""
-			}
-			if w.importTeam == "" {
-				w.importTeam = catalog.ImportTeam
-			}
-			if !slices.ContainsFunc(
-				w.visibleShows(),
-				func(show p.Show) bool { return show.Slug == w.selected },
-			) {
-				w.selected = ""
-				if shows := w.visibleShows(); len(shows) > 0 {
-					w.selectShow(shows[0].Slug)
-				}
-			} else {
-				w.loadEpisodes()
-			}
-			if autoSync {
-				w.syncAll()
+			w.catalogLive = true
+			w.applyCatalog(catalog)
+			if sync != nil {
+				sync()
 			}
 			if w.refreshPending {
 				w.refreshPending = false
-				w.refreshCatalog(false)
+				w.refreshCatalog(nil)
 			}
 		}
 	})
+}
+
+func (w *Workspace) applyCatalog(catalog s.Catalog) {
+	w.catalog = catalog
+	w.retainArtwork()
+	if w.team != "" &&
+		!slices.ContainsFunc(
+			catalog.Teams,
+			func(t p.ClientTeam) bool { return t.Id == w.team },
+		) {
+		w.team = ""
+	}
+	if w.importTeam == "" {
+		w.importTeam = catalog.ImportTeam
+	}
+	if !slices.ContainsFunc(
+		w.visibleShows(),
+		func(show p.Show) bool { return show.Slug == w.selected },
+	) {
+		w.selected = ""
+		if shows := w.visibleShows(); len(shows) > 0 {
+			w.selectShow(shows[0].Slug)
+		}
+	} else {
+		w.loadEpisodes()
+	}
 }
 
 func (w *Workspace) login() {
@@ -274,7 +298,7 @@ func (w *Workspace) login() {
 				return
 			}
 			w.authorized, w.errorText = true, ""
-			w.reload()
+			w.reload(w.syncDue)
 		}
 	})
 }
@@ -313,6 +337,7 @@ func (w *Workspace) stop(logout bool) {
 			}
 			w.newLifetime()
 			w.started, w.stopping, w.authorized, w.signingIn, w.loading = false, false, false, false, false
+			w.catalogLive, w.episodesLive, w.checking = false, false, false
 			w.loaded = true
 			w.catalog, w.state = s.Catalog{}, s.SyncState{}
 			w.team, w.selected, w.errorText, w.upgradeURL, w.cookieInput = "", "", "", "", ""
@@ -352,7 +377,7 @@ func (w *Workspace) selectShow(slug string) {
 		return
 	}
 	w.selected, w.settingsOpen, w.importOpen, w.notImported = slug, false, false, false
-	w.episodes, w.state = nil, s.SyncState{}
+	w.episodes, w.state, w.episodesLive = nil, s.SyncState{}, false
 	w.episodeList = ui.ListState{}
 	w.loadEpisodes()
 }
@@ -387,29 +412,88 @@ func (w *Workspace) loadEpisodes() {
 	w.episodeCancel = cancel
 	w.episodeRequest++
 	request, slug := w.episodeRequest, w.selected
+	current := func() bool { return request == w.episodeRequest && ctx.Err() == nil }
+	w.checking = true
+	// This computer's journal renders the podcast at once; Listenbox's list
+	// replaces the cached one when it arrives.
 	w.launch(func(context.Context) func() {
 		var episodes []p.EpisodeListItem
-		var state s.SyncState
-		group, groupCtx := errgroup.WithContext(ctx)
-		group.Go(
-			func() error { var err error; episodes, err = w.client.Episodes(groupCtx, slug); return err },
-		)
-		group.Go(
-			func() error { var err error; state, err = w.client.SyncState(groupCtx, slug); return err },
-		)
-		err := group.Wait()
+		var found bool
+		state, err := w.client.SyncState(ctx, slug)
+		if err == nil {
+			episodes, found, err = w.client.CachedEpisodes(ctx, slug)
+		}
 		return func() {
-			if request != w.episodeRequest || ctx.Err() != nil {
+			if !current() {
 				return
 			}
 			if err != nil {
 				w.showError(err, "")
 				return
 			}
-			w.episodes, w.state = episodes, state
+			w.state = state
+			if found && !w.episodesLive {
+				w.episodes = episodes
+				w.retainArtwork()
+			}
+		}
+	})
+	w.launch(func(context.Context) func() {
+		episodes, err := w.client.Episodes(ctx, slug)
+		return func() {
+			if !current() {
+				return
+			}
+			w.checking = false
+			if err != nil {
+				w.showError(err, "")
+				return
+			}
+			w.episodes, w.episodesLive = episodes, true
 			w.retainArtwork()
 		}
 	})
+}
+
+// syncDue syncs, at sign-in or launch, only the podcasts that are due; the
+// hourly scan and Sync now still cover every podcast.
+func (w *Workspace) syncDue() {
+	if !w.authorized || w.stopping {
+		return
+	}
+	var shows []p.Show
+	for _, show := range w.catalog.Shows {
+		if show.HasActiveSubscription && !w.paused[show.Slug] {
+			shows = append(shows, show)
+		}
+	}
+	w.launch(func(ctx context.Context) func() {
+		due, err := w.client.SyncDue(ctx, shows)
+		return func() {
+			if err != nil {
+				w.showError(err, "")
+				return
+			}
+			for _, slug := range due {
+				if !w.paused[slug] {
+					w.sync(slug)
+				}
+			}
+		}
+	})
+}
+
+// lastSynced is when any client last finished syncing the podcast between
+// YouTube and Listenbox, or this computer did, whichever is later.
+func (w *Workspace) lastSynced(show p.Show) *time.Time {
+	latest := w.state.LastSynced
+	if show.Youtube.LastCheckedAt != nil {
+		checked := time.UnixMilli(*show.Youtube.LastCheckedAt)
+		if latest == nil || checked.After(*latest) {
+			latest = &checked
+		}
+	}
+	return latest
 }
 
 func (w *Workspace) syncAll() {
@@ -445,7 +529,7 @@ func (w *Workspace) sync(slug string) {
 			if err == nil {
 				w.reports[slug] = report
 			}
-			w.refreshCatalog(false)
+			w.refreshCatalog(nil)
 		}
 	})
 }
@@ -502,7 +586,7 @@ func (w *Workspace) importShow() {
 			if err == nil && slug != "" {
 				w.reports[slug] = report
 			}
-			w.refreshCatalog(false)
+			w.refreshCatalog(nil)
 		}
 	})
 }

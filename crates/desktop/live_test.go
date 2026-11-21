@@ -94,7 +94,7 @@ func liveDesktop(t *testing.T, automatic bool) (*desktopHarness, desktopScenario
 		h.w.authorized = h.w.client.HasCredentials()
 		h.w.started = false
 		h.w.start()
-		h.w.refreshCatalog(false)
+		h.w.refreshCatalog(nil)
 	}
 	h.wait(func() bool { return h.w.loaded && !h.w.loading })
 	if h.w.errorText != "" {

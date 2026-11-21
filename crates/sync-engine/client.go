@@ -87,7 +87,7 @@ func (c *Client) Logout() error {
 		return err
 	}
 	c.Engine.Downloads.Clear()
-	return nil
+	return c.clearCache()
 }
 func (c *Client) CookieJar() *CookieJar { return NewCookieJar(c.Config.Directory) }
 func (c *Client) Login(ctx context.Context, open func(string)) error {
@@ -131,6 +131,7 @@ func (c *Client) Catalog(ctx context.Context) (Catalog, error) {
 			catalog.ImportTeam = team.Id
 		}
 	}
+	c.saveCatalog(ctx, catalog)
 	return catalog, nil
 }
 
@@ -139,7 +140,11 @@ func (c *Client) Episodes(ctx context.Context, slug string) ([]p.EpisodeListItem
 	if err != nil {
 		return nil, err
 	}
-	return api.Episodes(ctx, slug, maximumEpisodePageSize)
+	episodes, err := api.Episodes(ctx, slug, maximumEpisodePageSize)
+	if err == nil {
+		c.saveEpisodes(ctx, slug, episodes)
+	}
+	return episodes, err
 }
 
 func (api *API) Episodes(ctx context.Context, slug string, limit int) ([]p.EpisodeListItem, error) {
