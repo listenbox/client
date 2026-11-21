@@ -19,6 +19,7 @@ import (
 	"github.com/gofrs/flock"
 	s "github.com/listenbox/client/crates/sync-engine"
 	p "github.com/listenbox/client/crates/sync-engine/publicapi"
+	"go.uber.org/goleak"
 )
 
 var desktopFixtureInvocation bool
@@ -54,7 +55,11 @@ func TestMain(m *testing.M) {
 			}
 		}
 	}
-	os.Exit(m.Run())
+	goleak.VerifyTestMain(
+		m,
+		// MyGo's rasterizer keeps a process-lifetime helper pool.
+		goleak.IgnoreTopFunction("github.com/egoist/mygo/internal/raster.help"),
+	)
 }
 
 type desktopScenario struct {

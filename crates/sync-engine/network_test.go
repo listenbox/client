@@ -16,6 +16,7 @@ import (
 
 	"github.com/jonboulle/clockwork"
 	p "github.com/listenbox/client/crates/sync-engine/publicapi"
+	"go.uber.org/goleak"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -42,7 +43,7 @@ func TestMain(m *testing.M) {
 			}
 		}
 	}
-	os.Exit(m.Run())
+	goleak.VerifyTestMain(m)
 }
 
 func liveConfig(t *testing.T) Config {
