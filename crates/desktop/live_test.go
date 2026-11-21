@@ -103,6 +103,17 @@ func liveDesktop(t *testing.T, automatic bool) (*desktopHarness, desktopScenario
 	return h, scenario
 }
 
+// waitLaunchSync applies UI messages until launch has started syncing slug.
+// Launch decides which podcasts are due off the UI thread, so the sync starts
+// from a queued message that a blocking control gate would never apply.
+func (h *desktopHarness) waitLaunchSync(slug string) {
+	h.t.Helper()
+	h.wait(func() bool {
+		_, running := h.w.jobs[slug]
+		return running
+	})
+}
+
 func (h *desktopHarness) control(scenario desktopScenario, action string) {
 	h.t.Helper()
 	ctx, cancel := context.WithTimeout(h.t.Context(), 2*time.Second)
@@ -188,6 +199,7 @@ func TestLivePlayerRuntime(t *testing.T) {
 func TestLiveUploadProgress(t *testing.T) {
 	t.Parallel()
 	h, scenario := liveDesktop(t, true)
+	h.waitLaunchSync(scenario.Slug)
 	h.control(scenario, "upload-body")
 	h.wait(func() bool {
 		return slices.ContainsFunc(
@@ -332,6 +344,7 @@ func TestLiveLogoutContendedLock(t *testing.T) {
 func TestLiveLogoutInitializing(t *testing.T) {
 	t.Parallel()
 	h, scenario := liveDesktop(t, true)
+	h.waitLaunchSync(scenario.Slug)
 	h.control(scenario, "initializing")
 	h.logout()
 	h.wait(func() bool { return !h.w.stopping && !h.w.authorized })
