@@ -13,6 +13,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// contactEmailFlag sets the email published as the RSS itunes:owner; an empty
+// value clears it.
+const contactEmailFlag = "contact-email"
+
 func (app *application) showCommands() *cobra.Command {
 	shows := &cobra.Command{Use: "shows", Short: "Manage shows by slug"}
 	list := &cobra.Command{
@@ -40,7 +44,7 @@ func (app *application) showCommands() *cobra.Command {
 	}
 	for _, name := range []string{
 		showFlag, titleFlag, slugFlag, "description", "artwork", "image",
-		"apple-podcasts-url", "spotify-url",
+		"apple-podcasts-url", "spotify-url", contactEmailFlag,
 	} {
 		update.Flags().String(name, "", name)
 	}
@@ -253,6 +257,7 @@ func showUpdateMetadata(c *cobra.Command) (p.UpdateShow, error) {
 		Description:      optionalFlag(c, "description"),
 		ApplePodcastsUrl: optionalFlag(c, "apple-podcasts-url"),
 		SpotifyUrl:       optionalFlag(c, "spotify-url"),
+		ContactEmail:     optionalFlag(c, contactEmailFlag),
 	}, nil
 }
 
@@ -284,6 +289,7 @@ func hasShowUpdate(body p.UpdateShow) bool {
 	return body.Title != nil || body.Slug != nil || body.Description != nil ||
 		body.ApplePodcastsUrl != nil ||
 		body.SpotifyUrl != nil ||
+		body.ContactEmail != nil ||
 		body.ImageAssetId != nil
 }
 
