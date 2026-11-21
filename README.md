@@ -24,10 +24,9 @@ The parent workspace's Mise config is inherited when working in its submodule.
 This checkout repeats shared pins so it also builds independently.
 
 Go tools, including MyGo, OASmith and golangci-lint, are pinned in `go.mod` and
-invoked with `go tool`. Code generation downloads the published OpenAPI document
-from [the public API](https://v1.listenbox.app/); it needs no private specification
-sources. Moon caches the document for a day. Run
-`moon run client:public-contract --force` to refresh it immediately.
+invoked with `go tool`. Code generation reads the committed public API
+contract in [contracts/public.yaml](contracts/public.yaml); it needs no private
+specification sources and never downloads a contract from a running API.
 Generated SDK and configuration code stay
 Git-ignored and are rebuilt before compilation.
 

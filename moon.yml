@@ -5,7 +5,7 @@ toolchains:
 tags: [client-workspace, go-lint]
 fileGroups:
   version: [VERSION]
-  contracts: [contracts/*.yaml, .cache/public.openapi.yaml]
+  contracts: [contracts/*.yaml]
   notices: [LICENSE, THIRD-PARTY-NOTICES.txt]
   sources:
     - '*.go'
@@ -45,35 +45,12 @@ tasks:
     options:
       runInCI: false
   codegen:
-    deps: [~:public-contract]
     command: [mise, exec, --, bash, tools/codegen.sh]
     inputs: ['@group(contracts)', go.mod, go.sum, tools/codegen.sh]
     outputs: [crates/sync-engine/publicapi/*.go, crates/sync-engine/clientconfig/*.go]
     options:
       internal: true
       shell: false
-  public-contract:
-    description: Download the public API contract without access to the private specification sources.
-    command: [mise, exec, --, node, --input-type=module, -e]
-    args:
-      - |
-        import {mkdir,rename,rm,writeFile} from "node:fs/promises";
-        const url="https://v1.listenbox.app/";
-        const response=await fetch(url,{headers:{Accept:"text/yaml"},signal:AbortSignal.timeout(15000)});
-        if(!response.ok)throw Error(`Download public OpenAPI contract: ${response.status} ${response.statusText}`);
-        const document=await response.text();
-        if(!/^openapi: 3\.[12]\.0\s*$/m.test(document))throw Error(`No supported OpenAPI document returned by ${url}`);
-        await mkdir(".cache",{recursive:true});
-        const temporary=".cache/public.openapi.yaml.tmp";
-        try{
-          await writeFile(temporary,document,{mode:0o600});
-          await rename(temporary,".cache/public.openapi.yaml");
-        }finally{await rm(temporary,{force:true});}
-    inputs: [moon.yml]
-    outputs: [.cache/public.openapi.yaml]
-    options:
-      shell: false
-      cacheLifetime: 1 day
   native-ffmpeg:
     deps: [~:native-setup]
     command: mise exec -- go run ./internal/nativebuild/cmd
