@@ -55,6 +55,6 @@ combined AAC/video and separate Opus/video, then asks Apple
 `mediastreamvalidator` to traverse every byte-range segment. It fails on MUST
 findings anywhere in the JSON report, including rendition-level findings, and
 on incomplete traversal. Each external validation has an eight-second failure
-guard; Nextest retains the hard 30-second test timeout. The tools must be
-installed locally on macOS; Linux CI installs the checked-in, checksum-verified
-Apple package with `tools/install-apple-hls-tools.sh`.
+guard; Nextest retains the hard 30-second test timeout. `mise install --locked`
+provides the validator on macOS and Linux x64 from Apple's checked-in archives
+in `tools/`, pinned by checksum in `mise.lock`.

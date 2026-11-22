@@ -22,6 +22,22 @@ make = { version = "4.4.1", os = ["linux", "macos"] }
 "conda:openssl" = { version = "4.1.0", os = ["linux", "macos"] }
 "conda:curl" = { version = "8.23.0", os = ["linux", "macos"] }
 
+# Apple's HLS validation CLIs: mediastreamvalidator and msvsummary, plus
+# hlsreport on macOS. Apple serves the archives only behind a developer sign-in,
+# so tools/ keeps Apple's originals and mise.lock pins their checksums. Apple
+# builds Linux tools for x64 only; the postinstall unpacks them without root.
+[tools."http:apple-hls-tools"]
+version = "2.0.284"
+os = ["linux/x64", "macos"]
+bin_path = "bin"
+postinstall = "bash '{{ config_root }}/tools/install-apple-hls-tools.sh'"
+
+[tools."http:apple-hls-tools".platforms]
+# Apple names this plain tar .tgz.
+linux-x64 = { url = "file://{{ config_root }}/tools/hlstools_validation_ubuntu_release_{{ version }}.tgz", format = "tar" }
+macos-arm64 = { url = "file://{{ config_root }}/tools/HTTPLiveStreamingTools_{{ version }}_Validation.dmg" }
+macos-x64 = { url = "file://{{ config_root }}/tools/HTTPLiveStreamingTools_{{ version }}_Validation.dmg" }
+
 [env]
 CGO_ENABLED = "1"
 CC = "{% if os() == 'windows' %}\"{{ get_env(name='MSYS2_LOCATION', default='C:/msys64') }}/{% if arch() == 'arm64' %}clangarm64{% else %}clang64{% endif %}/bin/clang.exe\"{% elif os() == 'macos' %}/usr/bin/clang{% else %}clang{% endif %}"

@@ -2588,6 +2588,31 @@ url = "https://dl.google.com/go/go1.27.4.windows-amd64.zip"
 checksum = "sha256:178ab98950ac69ab25069307dc6ade79f3816e414cce95b4da166a115cde1e7e"
 url = "https://dl.google.com/go/go1.27.4.windows-amd64.zip"
 
+[[tools."http:apple-hls-tools"]]
+version = "2.0.284"
+backend = "http:apple-hls-tools"
+specifiers = ["2.0.284"]
+
+[tools."http:apple-hls-tools".options]
+format = "tar"
+
+[tools."http:apple-hls-tools"."platforms.linux-x64"]
+checksum = "sha256:e6c8cc8a960176c50bbfa27ad5ac75cfca00dea38e4181bc8fd481425021831b"
+url = "file:///Users/meoyawn/Developer/listenbox/listenbox2/apps/client/tools/hlstools_validation_ubuntu_release_2.0.284.tgz"
+
+[[tools."http:apple-hls-tools"]]
+version = "2.0.284"
+backend = "http:apple-hls-tools"
+specifiers = ["2.0.284"]
+
+[tools."http:apple-hls-tools"."platforms.macos-arm64"]
+checksum = "sha256:84fa5d2a4237c5c6e791c3b94e7f0d654b537ea119f96334e4fc63adc758e8fe"
+url = "file:///Users/meoyawn/Developer/listenbox/listenbox2/apps/client/tools/HTTPLiveStreamingTools_2.0.284_Validation.dmg"
+
+[tools."http:apple-hls-tools"."platforms.macos-x64"]
+checksum = "sha256:84fa5d2a4237c5c6e791c3b94e7f0d654b537ea119f96334e4fc63adc758e8fe"
+url = "file:///Users/meoyawn/Developer/listenbox/listenbox2/apps/client/tools/HTTPLiveStreamingTools_2.0.284_Validation.dmg"
+
 [[tools.jq]]
 version = "1.8.1"
 backend = "aqua:jqlang/jq"

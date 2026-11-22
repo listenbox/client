@@ -273,6 +273,8 @@ func validateLongGOP(t *testing.T, separate bool) {
 	command := exec.CommandContext(
 		ctx,
 		"mediastreamvalidator",
+		// Keep the 1.x JSON, error codes and requirement levels read below.
+		"--compatible-output=full",
 		"--quiet",
 		"--timeout",
 		"5",
