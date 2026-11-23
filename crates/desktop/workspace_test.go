@@ -149,51 +149,6 @@ func libraryDesktop(t *testing.T) *desktopHarness {
 	return h
 }
 
-func TestQuickDoublePressAndHoldQuitOnlyAfterRelease(t *testing.T) {
-	t.Parallel()
-	now := time.Now()
-	var guard quitGuard
-	guard.press(now, false)
-	guard.press(now.Add(300*time.Millisecond), true)
-	if guard.release() {
-		t.Fatal("auto-repeat confirmed Quit")
-	}
-	guard.press(now.Add(500*time.Millisecond), false)
-	if !guard.release() || guard.release() {
-		t.Fatal("double press did not confirm exactly once")
-	}
-	var held quitGuard
-	held.press(now, false)
-	if held.holding(now.Add(time.Second)) || !held.holding(now.Add(quitHold)) || !held.release() {
-		t.Fatal("hold did not confirm on release")
-	}
-}
-
-func TestExpiredSecondPressIsANewAttempt(t *testing.T) {
-	t.Parallel()
-	now := time.Now()
-	var guard quitGuard
-	guard.press(now, false)
-	if guard.release() {
-		t.Fatal("first press confirmed Quit")
-	}
-	guard.press(now.Add(doublePress), false)
-	if guard.release() {
-		t.Fatal("expired attempt confirmed Quit")
-	}
-}
-
-func TestDoublePressRecoversAMissingFirstRelease(t *testing.T) {
-	t.Parallel()
-	now := time.Now()
-	var guard quitGuard
-	guard.press(now, false)
-	guard.press(now.Add(300*time.Millisecond), false)
-	if !guard.release() || guard.release() {
-		t.Fatal("fresh key-down did not recover a missing release")
-	}
-}
-
 func TestStartupRendersWhileCredentialsAreBlocked(t *testing.T) {
 	t.Parallel()
 	if runtime.GOOS == "windows" {
@@ -452,68 +407,6 @@ func TestUnpaidPodcastOpensItsTeamsUpgradePage(t *testing.T) {
 	}
 }
 
-func quitInstruction() string {
-	if runtime.GOOS == "darwin" {
-		return "Hold ⌘Q or press it again to quit"
-	}
-	return "Hold Ctrl+Q or press it again to quit"
-}
-
-func TestQuitHintExpiresWithoutAKeyUpEvent(t *testing.T) {
-	t.Parallel()
-	h := isolatedDesktop(t)
-	h.w.guard.press(h.screen.Now(), false)
-	h.w.quitShown = h.screen.Now()
-	h.screen.Frame()
-	if !h.screen.HasText(quitInstruction()) {
-		t.Fatal("Quit hint is absent")
-	}
-	h.screen.Advance(1900 * time.Millisecond)
-	if !h.screen.HasText(quitInstruction()) {
-		t.Fatal("Quit hint expired before it was readable")
-	}
-	h.screen.Advance(400 * time.Millisecond)
-	if h.screen.HasText(quitInstruction()) || h.w.stopping {
-		t.Fatal("stale quit attempt survived its lifetime")
-	}
-	h.screen.KeyUp(ui.KeyQ)
-	if h.w.stopping {
-		t.Fatal("a late release confirmed stale Quit")
-	}
-}
-
-func TestANewQuitHintOwnsItsFullLifetime(t *testing.T) {
-	t.Parallel()
-	h := isolatedDesktop(t)
-	h.screen.Key(ui.Cmd, ui.KeyQ)
-	h.screen.Advance(1500 * time.Millisecond)
-	h.screen.Key(ui.Cmd, ui.KeyQ)
-	h.screen.Advance(800 * time.Millisecond)
-	if !h.screen.HasText(quitInstruction()) || h.w.stopping {
-		t.Fatal("previous attempt dismissed the new hint")
-	}
-	h.screen.Advance(1500 * time.Millisecond)
-	if h.screen.HasText(quitInstruction()) {
-		t.Fatal("new hint did not expire")
-	}
-}
-
-func TestNativeKeyReleaseDoesNotTurnATapIntoAHold(t *testing.T) {
-	t.Parallel()
-	h := isolatedDesktop(t)
-	h.w.guard.press(h.screen.Now(), false)
-	h.w.quitShown = h.screen.Now()
-	h.screen.Frame()
-	h.screen.Advance(2100 * time.Millisecond)
-	if !h.w.guard.heldSince.IsZero() || h.w.stopping {
-		t.Fatal("a released native key became a held shortcut")
-	}
-	h.screen.Advance(200 * time.Millisecond)
-	if h.screen.HasText(quitInstruction()) {
-		t.Fatal("released-key hint remained visible")
-	}
-}
-
 func admittedDesktopWork(t *testing.T, h *desktopHarness) (chan struct{}, chan struct{}) {
 	t.Helper()
 	started, cancelled, commit := make(chan struct{}), make(chan struct{}), make(chan struct{})
@@ -528,7 +421,7 @@ func admittedDesktopWork(t *testing.T, h *desktopHarness) (chan struct{}, chan s
 	return cancelled, commit
 }
 
-func TestHeldShortcutWaitsForReleaseAndDrain(t *testing.T) {
+func TestConfirmedQuitWaitsForAdmittedWorkToDrain(t *testing.T) {
 	t.Parallel()
 	h := isolatedDesktop(t)
 	cancelled, commit := admittedDesktopWork(t, h)
@@ -539,20 +432,14 @@ func TestHeldShortcutWaitsForReleaseAndDrain(t *testing.T) {
 			close(commit)
 		}
 	}()
-	h.w.guard.press(h.screen.Now(), false)
-	h.w.quitShown = h.screen.Now()
-	h.screen.KeyDown(ui.KeyQ)
-	h.screen.Advance(quitHold)
-	if h.w.stopping {
-		t.Fatal("Quit ran while Q was held")
-	}
-	h.screen.KeyUp(ui.KeyQ)
+	h.w.stop(false)
+	h.screen.Frame()
 	select {
 	case <-cancelled:
 	case <-time.After(time.Second):
-		t.Fatal("release did not cancel admitted work")
+		t.Fatal("Quit did not cancel admitted work")
 	}
-	if !h.w.stopping || h.w.terminated {
+	if !h.w.stopping || h.w.terminated || !h.screen.HasText("Finishing up…") {
 		t.Fatal("Quit did not wait for the commit")
 	}
 	close(commit)

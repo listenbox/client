@@ -1,39 +1,32 @@
 package main
 
-import "time"
+import (
+	"log/slog"
+	"runtime"
 
-const (
-	doublePress = time.Second
-	quitHold    = 2 * time.Second
-	quitNotice  = 2 * time.Second
-	quitFade    = 200 * time.Millisecond
-	quitPoll    = 50 * time.Millisecond
+	"github.com/egoist/mygo"
 )
 
-// A shortcut confirms on release, so the key-up cannot reach the next app.
-type quitGuard struct {
-	lastPress, heldSince time.Time
-	confirmed            bool
-}
-
-func (q *quitGuard) press(now time.Time, repeat bool) {
-	if repeat {
-		return
+// confirmQuit warns that syncing stops with the app; closing the window keeps
+// it running from the tray instead.
+func confirmQuit(parent *mygo.Window) bool {
+	tray := "system tray"
+	if runtime.GOOS == "darwin" {
+		tray = "menu bar"
 	}
-	q.confirmed = !q.lastPress.IsZero() && now.Sub(q.lastPress) < doublePress
-	q.lastPress, q.heldSince = now, now
-}
-
-func (q *quitGuard) holding(now time.Time) bool {
-	q.confirmed = q.confirmed || (!q.heldSince.IsZero() && now.Sub(q.heldSince) >= quitHold)
-	return q.confirmed
-}
-
-func (q *quitGuard) release() bool {
-	if q.heldSince.IsZero() {
+	result, err := mygo.Dialog.Message(mygo.MessageOptions{
+		Parent:  parent,
+		Type:    mygo.MessageWarning,
+		Message: "Quit Listenbox?",
+		Detail: "YouTube sync only runs while Listenbox is open, so quitting pauses it. " +
+			"To keep syncing, close the window instead: Listenbox stays in the " + tray + ".",
+		Buttons:       []string{"Quit", "Cancel"},
+		DefaultButton: 0,
+		CancelButton:  1,
+	})
+	if err != nil {
+		slog.Error("quit confirmation failed", "error", err)
 		return false
 	}
-	confirmed := q.confirmed
-	q.heldSince, q.confirmed = time.Time{}, false
-	return confirmed
+	return result.Button == 0
 }

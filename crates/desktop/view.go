@@ -3,7 +3,6 @@ package main
 
 import (
 	"fmt"
-	"runtime"
 	"strings"
 	"time"
 
@@ -33,7 +32,7 @@ var (
 	youtubeMark   = ui.MustParseSVG(youtubeSVG)
 )
 
-//nolint:cyclop,funlen,gocognit // Keep the immediate-mode frame hierarchy and its actor callbacks together.
+//nolint:cyclop // Keep the immediate-mode frame hierarchy and its actor callbacks together.
 func (w *Workspace) view(c *ui.Context) {
 	w.start()
 	width, _ := c.Size()
@@ -53,23 +52,6 @@ func (w *Workspace) view(c *ui.Context) {
 		w.reload(w.syncAll)
 	}
 	w.navigationObserved = false
-	if c.Shortcut(ui.Cmd, ui.KeyQ) {
-		repeat := c.ShortcutRepeated()
-		w.guard.press(c.Now(), repeat)
-		if !repeat {
-			w.quitShown = c.Now()
-		}
-	}
-	if !w.guard.heldSince.IsZero() {
-		if !c.KeyDown(ui.KeyQ) {
-			if w.guard.release() {
-				w.stop(false)
-			}
-		} else {
-			w.quitConfirmed = w.guard.holding(c.Now())
-			c.After(quitPoll)
-		}
-	}
 	root := ui.Column(c).
 		Fill().
 		Background(colors(c).background).
@@ -81,15 +63,6 @@ func (w *Workspace) view(c *ui.Context) {
 					w.navigate(-1)
 				} else {
 					w.navigate(1)
-				}
-				return
-			}
-			if event.Key != ui.KeyQ {
-				return
-			}
-			if event.Kind == ui.InputKeyUp {
-				if w.guard.release() {
-					w.stop(false)
 				}
 			}
 		})
@@ -668,19 +641,10 @@ func (w *Workspace) cookieSettings(c *ui.Context) {
 	})
 }
 
+// quitHUD covers the window while a confirmed quit drains admitted work.
 func (w *Workspace) quitHUD(c *ui.Context) {
-	visible := w.stopping ||
-		(!w.quitShown.IsZero() && c.Now().Sub(w.quitShown) < quitNotice+quitFade)
-	if !visible {
-		return
-	}
-	opacity := float32(1)
 	if !w.stopping {
-		elapsed := c.Now().Sub(w.quitShown)
-		if elapsed > quitNotice {
-			opacity = 1 - float32(elapsed-quitNotice)/float32(quitFade)
-		}
-		c.After(min(quitPoll, max(time.Millisecond, quitNotice+quitFade-elapsed)))
+		return
 	}
 	d := tokens(c)
 	ui.Overlay(c, func() {
@@ -691,24 +655,10 @@ func (w *Workspace) quitHUD(c *ui.Context) {
 				Gap(d.md).
 				Radius(radiusSheet).
 				Background(d.sheet).
-				Border(1, d.line).
-				Opacity(opacity)).
+				Border(1, d.line)).
 				Children(func() {
-					shortcut := "⌘Q"
-					if runtime.GOOS != "darwin" {
-						shortcut = "Ctrl+Q"
-					}
-					if w.stopping {
-						typeTitle.set(c, ui.Text(c, "Finishing up…"))
-						ui.Text(c, "Saving progress and stopping active work.")
-					} else {
-						typeDisplay.set(c, ui.Text(c, shortcut))
-						instruction := fmt.Sprintf("Hold %s or press it again to quit", shortcut)
-						if w.quitConfirmed {
-							instruction = "Release to quit"
-						}
-						ui.Text(c, instruction)
-					}
+					typeTitle.set(c, ui.Text(c, "Finishing up…"))
+					ui.Text(c, "Saving progress and stopping active work.")
 				})
 		})
 	})

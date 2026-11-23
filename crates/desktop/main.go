@@ -108,7 +108,7 @@ func runDesktop(config s.Config) error {
 	mygo.App.OnBeforeQuit(func(event *mygo.QuitEvent) {
 		if !session.permitQuit {
 			event.PreventDefault()
-			session.requestQuit()
+			session.stop()
 		}
 	})
 	mygo.App.OnWindowAllClosed(func() {})
@@ -127,7 +127,7 @@ func runDesktop(config s.Config) error {
 	go func() {
 		select {
 		case <-signals:
-			mygo.RunOnMain(session.requestQuit)
+			mygo.RunOnMain(session.stop)
 		case <-finished:
 		}
 	}()
@@ -160,7 +160,10 @@ func installMenus(window *mygo.Window, w *Workspace, updater nativeUpdater, quit
 		{Type: mygo.MenuItemSeparator},
 		{Label: "Log out", Click: func(*mygo.MenuItem, *mygo.Window) { window.Update(func() { w.stop(true) }) }},
 		{Type: mygo.MenuItemSeparator},
-		{Label: "Quit Listenbox", Click: func(*mygo.MenuItem, *mygo.Window) { quit() }},
+		{
+			Label: "Quit Listenbox", Accelerator: "CmdOrCtrl+Q",
+			Click: func(*mygo.MenuItem, *mygo.Window) { quit() },
+		},
 	}
 	mygo.App.SetMenu(mygo.NewMenu([]*mygo.MenuItem{
 		{Label: applicationName, Submenu: appItems},
@@ -202,9 +205,26 @@ type desktopSession struct {
 	workspace  *Workspace
 	updater    nativeUpdater
 	permitQuit bool
+	confirming bool
 }
 
+// requestQuit confirms a quit the user asked for. System, signal and updater
+// shutdowns stop directly, so they never wait on a dialog.
 func (d *desktopSession) requestQuit() {
+	if d.workspace == nil || d.workspace.stopping || d.confirming {
+		return
+	}
+	d.confirming = true
+	d.window.Show()
+	d.window.Focus()
+	confirmed := confirmQuit(d.window)
+	d.confirming = false
+	if confirmed {
+		d.stop()
+	}
+}
+
+func (d *desktopSession) stop() {
 	if d.workspace != nil {
 		d.workspace.stop(false)
 	}
@@ -235,7 +255,7 @@ func (d *desktopSession) ready() {
 		}
 	})
 	d.updater, err = startUpdater(
-		func() { mygo.RunOnMain(func() { d.window.Show(); d.requestQuit() }) },
+		func() { mygo.RunOnMain(func() { d.window.Show(); d.stop() }) },
 		func() { d.window.Update(func() {}) },
 	)
 	d.workspace.updater = d.updater

@@ -203,7 +203,6 @@ type typeRole struct {
 const rootControlRem = 0.875
 
 var (
-	typeDisplay      = typeRole{3, 700, -0.03}    // the quit shortcut
 	typePageTitle    = typeRole{2.5, 700, -0.03}  // the Dashboard's h1 at desktop widths
 	typeTitle        = typeRole{1.25, 700, -0.02} // panel title
 	typeFeatureTitle = typeRole{1.0625, 600, 0}   // label, largest

@@ -66,9 +66,7 @@ type Workspace struct {
 	cookieInput, cookieError, cookieMessage                   string
 	cookieEditor                                              uint64
 	openURLs                                                  []string
-	guard                                                     quitGuard
-	quitShown                                                 time.Time
-	quitConfirmed, terminated                                 bool
+	terminated                                                bool
 }
 
 const (
