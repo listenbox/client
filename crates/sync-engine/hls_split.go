@@ -51,7 +51,23 @@ func splitHLSSingleFile(playlistPath string) error {
 		return err
 	}
 	directory := filepath.Dir(playlistPath)
-	source, err := os.Open(filepath.Join(directory, playlist.payload)) // #nosec G304 -- generated package file.
+	payload := filepath.Join(directory, playlist.payload)
+	if err := writeHLSParts(payload, playlist); err != nil {
+		return err
+	}
+	output := []byte(strings.Join(playlist.output, "\n") + "\n")
+	// #nosec G703 -- These package files are generated inside the owned media directory.
+	if err := os.WriteFile(playlistPath, output, privateFileMode); err != nil {
+		return err
+	}
+	return os.Remove(payload)
+}
+
+// writeHLSParts copies the playlist's init and segment ranges out of payload.
+// It closes payload before returning: Windows refuses to delete a file that
+// any handle, including this one, still holds open.
+func writeHLSParts(payload string, playlist *hlsSingleFile) error {
+	source, err := os.Open(payload) // #nosec G304 -- generated package file.
 	if err != nil {
 		return err
 	}
@@ -62,8 +78,9 @@ func splitHLSSingleFile(playlistPath string) error {
 	}
 	last := playlist.segments[len(playlist.segments)-1]
 	if last.offset+last.length != info.Size() {
-		return fmt.Errorf("HLS playlist %q ranges do not cover its payload", playlistPath)
+		return fmt.Errorf("HLS playlist %q ranges do not cover its payload", playlist.path)
 	}
+	directory := filepath.Dir(payload)
 	if err := writeHLSPart(source, filepath.Join(directory, hlsInitName), playlist.init); err != nil {
 		return err
 	}
@@ -72,12 +89,7 @@ func splitHLSSingleFile(playlistPath string) error {
 			return err
 		}
 	}
-	output := []byte(strings.Join(playlist.output, "\n") + "\n")
-	// #nosec G703 -- These package files are generated inside the owned media directory.
-	if err := os.WriteFile(playlistPath, output, privateFileMode); err != nil {
-		return err
-	}
-	return os.Remove(filepath.Join(directory, playlist.payload))
+	return nil
 }
 
 func parseHLSSingleFile(playlistPath, body string) (*hlsSingleFile, error) {
