@@ -19,8 +19,14 @@ import (
 	s "github.com/listenbox/client/crates/sync-engine"
 )
 
-//go:embed assets/tray.svg
-var traySVG []byte
+// The Listenbox mark serves the menu-bar item and Listenbox handoffs; the
+// YouTube mark, in its platform colors, YouTube handoffs.
+//
+//go:embed assets/listenbox.svg
+var listenboxSVG []byte
+
+//go:embed assets/youtube.svg
+var youtubeSVG []byte
 
 const (
 	initialWindowWidth  = 1080
@@ -241,7 +247,7 @@ func (d *desktopSession) installTray() {
 	var icon bytes.Buffer
 	_ = png.Encode(
 		&icon,
-		ui.MustParseSVG(traySVG).Image(trayIconSize, trayIconSize, color.Black),
+		ui.MustParseSVG(listenboxSVG).Image(trayIconSize, trayIconSize, color.Black),
 	)
 	_, trayErr := mygo.NewTray(
 		mygo.TrayOptions{

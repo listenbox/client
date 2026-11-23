@@ -31,7 +31,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
 
 **Import.** A full-width charcoal action beneath the switcher, label at the start and a plus at the end. The form names the team that will own the new podcast and locks while creation runs. A source is fixed at creation; there are no Save playlist, Disconnect or Keep syncing controls.
 
-**Podcast.** Cover beside the title, one muted line of episode count, format and latest release, then Open in YouTube and Manage podcast as content-width actions. One bordered panel carries sync status, the last YouTube check, Sync now, Pause or Resume, and transfer progress while a sync runs. Loading or failed episode lists never claim a zero count.
+**Podcast.** Cover beside the title, one muted line of episode count, format and latest release, then Manage podcast and Open in YouTube as content-width actions, Listenbox first, each led by its destination's mark: the Listenbox mark in ink, YouTube's red play mark. One bordered panel carries sync status, the last YouTube check, Sync now, Pause or Resume, and transfer progress while a sync runs. Loading or failed episode lists never claim a zero count.
 
 **Episodes.** Flat rows: release date (and state, when not published) above the title, duration at the row's end. Every title with a YouTube video links to it; there is no separate handoff button. Published rows keep the API order and pending source rows sit around them by saved position. The Not imported filter appears only while failed or skipped items exist, shows each reason, and its Retry imports action reuses the engine's saved work.
 

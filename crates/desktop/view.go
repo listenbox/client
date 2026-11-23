@@ -29,6 +29,8 @@ var (
 			`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>`,
 		),
 	)
+	listenboxMark = ui.MustParseSVG(listenboxSVG)
+	youtubeMark   = ui.MustParseSVG(youtubeSVG)
 )
 
 //nolint:cyclop,funlen,gocognit // Keep the immediate-mode frame hierarchy and its actor callbacks together.
@@ -313,13 +315,14 @@ func (w *Workspace) podcast(c *ui.Context, show p.Show) {
 			}
 			ui.Text(c, meta).TextColor(d.muted)
 			ui.Row(c).Wrap().Gap(d.sm).Margin(d.sm, 0, 0, 0).Children(func() {
+				// Both open the browser; the leading mark names the destination.
+				if handoffButton(c, "Manage podcast", listenboxMark).Clicked() {
+					c.OpenURL(w.managementURL())
+				}
 				if source := value(show.Youtube.Url); source != "" {
-					if button(c, "Open in YouTube").Label("YouTube source").Clicked() {
+					if handoffButton(c, "Open in YouTube", youtubeMark).Label("YouTube source").Clicked() {
 						c.OpenURL(source)
 					}
-				}
-				if button(c, "Manage podcast").Clicked() {
-					c.OpenURL(w.managementURL())
 				}
 			})
 		})

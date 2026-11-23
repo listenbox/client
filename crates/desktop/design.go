@@ -158,6 +158,7 @@ const (
 	readableWidth      = 420
 	iconSmall          = 14
 	iconMedium         = 16
+	iconMark           = 18 // a destination mark leading a handoff action
 	minimumSidebar     = 240
 	maximumSidebar     = 480
 	minimumWorkspace   = 360
@@ -201,6 +202,17 @@ func primaryButton(c *ui.Context, label string) ui.Element {
 
 func button(c *ui.Context, label string) ui.Element {
 	return control(c, ui.Button(c, label)).FontWeight(typeButton.weight)
+}
+
+// handoffButton is a quiet action that leaves the app, led by the mark of
+// where it goes: YouTube in its platform colors, Listenbox in the ink.
+func handoffButton(c *ui.Context, label string, mark *ui.SVG) ui.Element {
+	e := button(c, "").Label(label).Gap(tokens(c).sm)
+	e.Children(func() {
+		ui.Image(c, mark).Size(iconMark, iconMark).Shrink(0)
+		ui.Text(c, label).SingleLine()
+	})
+	return e
 }
 
 // textField is the root's input.
