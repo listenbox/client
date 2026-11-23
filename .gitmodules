@@ -1,3 +1,4 @@
 [submodule "vendor/youtubejs"]
 	path = third_party/youtubejs
 	url = git@github.com:listenbox/YouTube.js.git
+	branch = master
