@@ -1302,6 +1302,45 @@ paths:
           description: Package is no longer writable.
         "423":
           $ref: "#/components/responses/YouTubeSyncStoppedResponse"
+  /s/episode-packages/{upload_session_id}/segments:
+    parameters:
+      - name: upload_session_id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/UploadSessionID"
+    post:
+      description: Sign single-request PUT uploads for normal HLS rendition objects.
+        Signatures never outlive the package. Re-uploading an identical object
+        is harmless; completion verifies every object its playlists reference.
+      operationId: presignEpisodePackageSegments
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PresignEpisodePackageSegments"
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: "200"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PresignedEpisodePackageSegments"
+        "400":
+          description: "400"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationErr"
+        "401":
+          description: Missing or invalid token.
+        "409":
+          description: Package is no longer writable.
+        "423":
+          $ref: "#/components/responses/YouTubeSyncStoppedResponse"
   /s/episode-packages/{upload_session_id}/complete:
     parameters:
       - name: upload_session_id
@@ -3342,13 +3381,15 @@ components:
             hashing media. An audio show accepts one audio.m4a object
             (audio/mp4). A video show requires both video.mp4 (video/mp4) and
             audio.m4a (audio/mp4), plus a complete relative HLS package rooted
-            at hls/master.m3u8. Both progressive outputs are mandatory
-            regardless of configured RSS feeds, belong to the episode media
-            version, and are published atomically. Creating or deleting an RSS
-            feed does not generate or delete media. The client processes media
-            locally and uploads signed parts directly to storage; the server
-            validates object lengths, content types and HLS structure before
-            publication.
+            at hls/master.m3u8. Normal HLS renditions are separate init.mp4 and
+            <ordinal>.m4s objects listed by their playlists; they are not
+            manifest objects and upload through the segments endpoint. Both
+            progressive outputs are mandatory regardless of configured RSS
+            feeds, belong to the episode media version, and are published
+            atomically. Creating or deleting an RSS feed does not generate or
+            delete media. The client processes media locally and uploads signed
+            parts directly to storage; the server validates object lengths,
+            content types and HLS structure before publication.
       required:
         - show_slug
         - youtube_url
@@ -3539,6 +3580,78 @@ components:
       required:
         - upload_session_id
         - parts
+      additionalProperties: false
+    EpisodePackageSegment:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 200
+          description: "A normal HLS rendition object: hls/<rendition>/init.mp4 or
+            hls/<rendition>/<ordinal>.m4s. The rendition's index.m3u8 must be in
+            the package manifest."
+          pattern: ^hls/[A-Za-z0-9_-]+/(init\.mp4|(0|[1-9][0-9]{0,8})\.m4s)$
+        content_type:
+          type: string
+          enum:
+            - video/mp4
+            - audio/mp4
+        byte_length:
+          minimum: 1
+          maximum: 134217728
+          type: integer
+          format: int64
+      required:
+        - name
+        - content_type
+        - byte_length
+      additionalProperties: false
+    PresignEpisodePackageSegments:
+      type: object
+      properties:
+        segments:
+          type: array
+          items:
+            $ref: "#/components/schemas/EpisodePackageSegment"
+          minItems: 1
+          maxItems: 1000
+      required:
+        - segments
+      additionalProperties: false
+    PresignedEpisodePackageSegment:
+      type: object
+      properties:
+        name:
+          $ref: "#/components/schemas/NonEmptyString"
+        method:
+          type: string
+          const: PUT
+        upload_url:
+          type: string
+          format: uri
+          pattern: ^https?://\S+$
+        expires_at:
+          $ref: "#/components/schemas/UnixMillis"
+      required:
+        - name
+        - method
+        - upload_url
+        - expires_at
+      additionalProperties: false
+    PresignedEpisodePackageSegments:
+      type: object
+      properties:
+        upload_session_id:
+          $ref: "#/components/schemas/UploadSessionID"
+        segments:
+          type: array
+          items:
+            $ref: "#/components/schemas/PresignedEpisodePackageSegment"
+          minItems: 1
+          maxItems: 1000
+      required:
+        - upload_session_id
+        - segments
       additionalProperties: false
     EpisodeUploadContentType:
       type: string

@@ -6,12 +6,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -239,16 +242,16 @@ func (e *Engine) importVideo(
 			operation,
 		)
 	}
-	total := int64(0)
-	for _, object := range manifest.Objects {
-		total += object.ByteLength
+	segments, total, err := packageUploadPlan(directory, manifest)
+	if err != nil {
+		return "", err
 	}
 	e.Downloads.update(id, func(item *Download) { item.UploadTotal = total; item.Uploaded = 0 })
 	release, err := e.Downloads.acquireStage(ctx, id, UploadStage())
 	if err != nil {
 		return "", err
 	}
-	err = e.uploadPackage(ctx, api, journal, directory, *manifest, id)
+	err = e.uploadPackage(ctx, api, journal, directory, *manifest, segments, id)
 	release(err)
 	if err != nil {
 		return "", err
@@ -280,6 +283,9 @@ func packageInventory(root string, audio bool) ([]p.PreparedMediaObject, error) 
 			(audio || (name != "video.mp4" && !strings.HasPrefix(name, "hls/"))) {
 			return nil
 		}
+		if packageSegmentName(name) {
+			return nil
+		}
 		contentType := packageContentType(name)
 		info, err := entry.Info()
 		if err != nil {
@@ -298,12 +304,89 @@ func packageInventory(root string, audio bool) ([]p.PreparedMediaObject, error) 
 	return objects, err
 }
 
+var packageRenditionDirectory = regexp.MustCompile(`^hls/[A-Za-z0-9_-]+/$`)
+
+// packageSegmentName reports a normal rendition object. Segments are uploaded
+// with single-request PUTs and have no manifest entry: their playlists, which
+// are manifest objects, name them.
+func packageSegmentName(name string) bool {
+	directory, file := path.Split(name)
+	if !packageRenditionDirectory.MatchString(directory) {
+		return false
+	}
+	digits, numbered := strings.CutSuffix(file, ".m4s")
+	if numbered {
+		ordinal, err := strconv.Atoi(digits)
+		numbered = err == nil && ordinal >= 0 && len(digits) <= 9 && strconv.Itoa(ordinal) == digits
+	}
+	return file == hlsInitName || numbered
+}
+
+// packageSegments lists the prepared segment objects in a stable order.
+// packageUploadPlan returns the package's segments and the bytes of every
+// object the upload sends.
+func packageUploadPlan(
+	root string,
+	manifest *p.CreateEpisodePackage,
+) ([]p.EpisodePackageSegment, int64, error) {
+	segments, err := packageSegments(root)
+	if err != nil {
+		return nil, 0, err
+	}
+	total := int64(0)
+	for _, object := range manifest.Objects {
+		total += object.ByteLength
+	}
+	for _, segment := range segments {
+		total += segment.ByteLength
+	}
+	return segments, total, nil
+}
+
+func packageSegments(root string) ([]p.EpisodePackageSegment, error) {
+	var segments []p.EpisodePackageSegment
+	hls := filepath.Join(root, "hls")
+	err := filepath.WalkDir(hls, func(file string, entry os.DirEntry, err error) error {
+		if errors.Is(err, fs.ErrNotExist) && file == hls {
+			return fs.SkipDir
+		}
+		if err != nil || entry.IsDir() {
+			return err
+		}
+		name, err := filepath.Rel(root, file)
+		if err != nil {
+			return err
+		}
+		name = filepath.ToSlash(name)
+		if !packageSegmentName(name) {
+			return nil
+		}
+		if !entry.Type().IsRegular() {
+			return errors.New("media package contains a non-regular object")
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		segments = append(segments, p.EpisodePackageSegment{
+			Name: name, ContentType: packageContentType(name), ByteLength: info.Size(),
+		})
+		return nil
+	})
+	slices.SortFunc(
+		segments,
+		func(a, b p.EpisodePackageSegment) int { return strings.Compare(a.Name, b.Name) },
+	)
+	return segments, err
+}
+
 func (e *Engine) uploadPackage(
 	ctx context.Context,
 	api *API,
 	journal *Database,
 	directory string,
 	manifest p.CreateEpisodePackage,
+	segments []p.EpisodePackageSegment,
 	id string,
 ) error {
 	var session p.EpisodePackage
@@ -328,7 +411,11 @@ func (e *Engine) uploadPackage(
 	if err != nil {
 		return err
 	}
-	e.Downloads.update(id, func(item *Download) { item.Uploaded = saved })
+	pending, savedSegments, err := transfer.pendingSegments(ctx, segments)
+	if err != nil {
+		return err
+	}
+	e.Downloads.update(id, func(item *Download) { item.Uploaded = saved + savedSegments })
 	var group errgroup.Group
 	group.SetLimit(maximumPartWorkers)
 	for ordinal, object := range manifest.Objects {
@@ -343,6 +430,9 @@ func (e *Engine) uploadPackage(
 		}
 	}
 	if err := group.Wait(); err != nil {
+		return err
+	}
+	if err := transfer.uploadSegments(ctx, pending); err != nil {
 		return err
 	}
 	e.Downloads.update(id, func(item *Download) { item.Phase = Publishing() })
@@ -838,6 +928,75 @@ func (t *packageUpload) signedPart(
 		signed = &refreshed.Parts[0]
 	}
 	return signed, nil
+}
+
+// packageSegmentBatch bounds how many segment URLs are signed at once, so a
+// batch uploads well within the signatures' lifetime.
+const packageSegmentBatch = 32
+
+// pendingSegments returns the segments this session has not stored yet and
+// the bytes of those it already has.
+func (t *packageUpload) pendingSegments(
+	ctx context.Context,
+	segments []p.EpisodePackageSegment,
+) ([]p.EpisodePackageSegment, int64, error) {
+	pending := make([]p.EpisodePackageSegment, 0, len(segments))
+	saved := int64(0)
+	for _, segment := range segments {
+		has, err := t.journal.HasSegment(ctx, t.manifest.OperationId, segment.Name)
+		if err != nil {
+			return nil, 0, err
+		}
+		if has {
+			saved += segment.ByteLength
+		} else {
+			pending = append(pending, segment)
+		}
+	}
+	return pending, saved, nil
+}
+
+func (t *packageUpload) uploadSegments(ctx context.Context, segments []p.EpisodePackageSegment) error {
+	for batch := range slices.Chunk(segments, packageSegmentBatch) {
+		var signed p.PresignedEpisodePackageSegments
+		if err := t.api.JSON(
+			ctx,
+			"POST",
+			fmt.Sprintf("/s/episode-packages/%s/segments", t.session.UploadSessionId),
+			p.PresignEpisodePackageSegments{Segments: batch},
+			&signed,
+		); err != nil {
+			return err
+		}
+		if len(signed.Segments) != len(batch) {
+			return errors.New("invalid signed package segments")
+		}
+		var group errgroup.Group
+		group.SetLimit(maximumPartWorkers)
+		for index, segment := range batch {
+			upload := signed.Segments[index]
+			if upload.Name != segment.Name {
+				return errors.New("invalid signed package segment")
+			}
+			group.Go(func() error {
+				if err := t.api.UploadObject(
+					ctx,
+					filepath.Join(t.directory, filepath.FromSlash(segment.Name)),
+					segment.ContentType,
+					upload.Method,
+					upload.UploadUrl,
+					func(n int64) { t.engine.Downloads.uploadProgress(t.id, n) },
+				); err != nil {
+					return err
+				}
+				return t.journal.SaveSegment(ctx, t.manifest.OperationId, segment.Name)
+			})
+		}
+		if err := group.Wait(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func packageContentType(name string) string {

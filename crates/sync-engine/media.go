@@ -1334,7 +1334,19 @@ func (p *videoPreparation) finish(ctx context.Context) (int64, error) {
 		return 0, err
 	}
 	_, _, audioDuration, err := playlistBandwidth(p.audioPlaylist)
-	return int64(math.Ceil(math.Min(audioDuration, p.duration))), err
+	if err != nil {
+		return 0, err
+	}
+	// Measurement and the progressive mux read the single-file payloads; the
+	// published normal renditions are separate init and segment objects.
+	// Trick-play stays one byte-range file: it is small and I-frame-only.
+	// p.playlists is audio, the normal variants, then the seek playlist.
+	for _, playlist := range p.playlists[:len(p.playlists)-1] {
+		if err := splitHLSSingleFile(playlist); err != nil {
+			return 0, err
+		}
+	}
+	return int64(math.Ceil(math.Min(audioDuration, p.duration))), nil
 }
 
 func (p *videoPreparation) markSeekPlaylist() error {

@@ -46,21 +46,36 @@ func (api *API) UploadPart(
 	method, uploadURL string,
 	progress func(int64),
 ) (string, error) {
-	if offset < 0 || length <= 0 {
-		return "", fmt.Errorf("invalid upload range offset=%d length=%d", offset, length)
+	return api.upload(ctx, path, offset, length, "", method, uploadURL, progress)
+}
+
+// UploadObject uploads a whole file with one signed request whose signature
+// covers its content type and length.
+func (api *API) UploadObject(
+	ctx context.Context,
+	path, contentType, method, uploadURL string,
+	progress func(int64),
+) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
 	}
-	file, err := os.Open(path)
+	_, err = api.upload(ctx, path, 0, info.Size(), contentType, method, uploadURL, progress)
+	return err
+}
+
+func (api *API) upload(
+	ctx context.Context,
+	path string,
+	offset, length int64,
+	contentType, method, uploadURL string,
+	progress func(int64),
+) (string, error) {
+	file, err := openUploadRange(path, offset, length)
 	if err != nil {
 		return "", err
 	}
 	defer file.Close()
-	info, err := file.Stat()
-	if err != nil {
-		return "", err
-	}
-	if offset > info.Size() || length > info.Size()-offset {
-		return "", fmt.Errorf("upload range offset=%d length=%d exceeds file", offset, length)
-	}
 	requestCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 	body := &uploadReader{
@@ -74,6 +89,9 @@ func (api *API) UploadPart(
 		return "", err
 	}
 	request.ContentLength = length
+	if contentType != "" {
+		request.Header.Set("Content-Type", contentType)
+	}
 	done, watchDone := api.watchUpload(requestCtx, body, cancel)
 	response, err := api.send(api.UploadHTTP, request)
 	if err == nil {
@@ -93,6 +111,26 @@ func (api *API) UploadPart(
 		return "", errors.New("upload part returned no ETag")
 	}
 	return etag, nil
+}
+
+// openUploadRange opens path after checking the range lies inside it.
+func openUploadRange(path string, offset, length int64) (*os.File, error) {
+	if offset < 0 || length <= 0 {
+		return nil, fmt.Errorf("invalid upload range offset=%d length=%d", offset, length)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	info, err := file.Stat()
+	if err == nil && (offset > info.Size() || length > info.Size()-offset) {
+		err = fmt.Errorf("upload range offset=%d length=%d exceeds file", offset, length)
+	}
+	if err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	return file, nil
 }
 
 func (api *API) watchUpload(

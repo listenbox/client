@@ -159,7 +159,6 @@ func prepareVideoFixture(t *testing.T, separate, long bool) string {
 	return directory
 }
 
-//nolint:cyclop // Verify all generated variants, codecs and playlist relationships together.
 func assertVideoPackage(t *testing.T, separate bool) {
 	t.Helper()
 	directory := prepareVideoFixture(t, separate, false)
@@ -180,33 +179,49 @@ func assertVideoPackage(t *testing.T, separate bool) {
 			t.Fatalf("master missing %s: %s", required, master)
 		}
 	}
-	for _, kind := range []string{"audio", "video"} {
-		root := filepath.Join(directory, "hls", kind)
-		playlist, err := os.ReadFile(filepath.Join(root, "index.m3u8"))
-		requireNoError(t, err)
-		for _, required := range []string{"#EXT-X-ENDLIST", `#EXT-X-MAP:URI="media.mp4",BYTERANGE="`, "#EXT-X-BYTERANGE:"} {
-			if !strings.Contains(string(playlist), required) {
-				t.Fatalf("%s playlist missing %s", kind, required)
-			}
+	assertSeparateRendition(t, filepath.Join(directory, "hls", "audio"), a.MediaTypeAudio)
+	assertSeparateRendition(t, filepath.Join(directory, "hls", "video"), a.MediaTypeVideo)
+}
+
+// assertSeparateRendition requires a published rendition of separate init.mp4
+// and <ordinal>.m4s objects whose concatenation decodes.
+func assertSeparateRendition(t *testing.T, root string, typ a.MediaType) {
+	t.Helper()
+	playlist, err := os.ReadFile(filepath.Join(root, "index.m3u8"))
+	requireNoError(t, err)
+	for _, required := range []string{"#EXT-X-ENDLIST", `#EXT-X-MAP:URI="init.mp4"` + "\n"} {
+		if !strings.Contains(string(playlist), required) {
+			t.Fatalf("%s playlist missing %s", root, required)
 		}
-		segments := 0
-		for line := range strings.SplitSeq(string(playlist), "\n") {
-			if line != "" && !strings.HasPrefix(line, "#") {
-				if line != "media.mp4" {
-					t.Fatalf("non-relative segment %q", line)
-				}
-				segments++
-			}
-		}
-		if segments < 1 || segments > 2 {
-			t.Fatalf("segments=%d", segments)
-		}
-		typ := a.MediaTypeAudio
-		if kind == "video" {
-			typ = a.MediaTypeVideo
-		}
-		decodedMedia(t, filepath.Join(root, "media.mp4"), typ)
 	}
+	if strings.Contains(string(playlist), "BYTERANGE") {
+		t.Fatalf("%s playlist still addresses byte ranges", root)
+	}
+	joined, err := os.ReadFile(filepath.Join(root, "init.mp4"))
+	requireNoError(t, err)
+	segments := 0
+	for line := range strings.SplitSeq(string(playlist), "\n") {
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if line != hlsSegmentName(segments) {
+			t.Fatalf("segment %d is %q", segments, line)
+		}
+		body, err := os.ReadFile(filepath.Join(root, line))
+		requireNoError(t, err)
+		joined = append(joined, body...)
+		segments++
+	}
+	if segments < 1 || segments > 2 {
+		t.Fatalf("segments=%d", segments)
+	}
+	if _, err := os.Stat(filepath.Join(root, "media.mp4")); !os.IsNotExist(err) {
+		t.Fatalf("%s single-file payload remains: %v", root, err)
+	}
+	payload := filepath.Join(t.TempDir(), "joined.mp4")
+	// #nosec G703 -- The test writes inside its own temporary directory.
+	requireNoError(t, os.WriteFile(payload, joined, 0o600))
+	decodedMedia(t, payload, typ)
 }
 
 func TestCombinedAvcAacProducesPlayableMp4AndHls(t *testing.T) {

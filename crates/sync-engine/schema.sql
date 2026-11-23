@@ -14,6 +14,11 @@ CREATE TABLE parts (
     part_number INTEGER NOT NULL CHECK (part_number > 0),
     PRIMARY KEY (operation_id, object_index, part_number)
 );
+CREATE TABLE segments (
+    operation_id TEXT NOT NULL REFERENCES transfers(operation_id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    PRIMARY KEY (operation_id, name)
+);
 CREATE TABLE downloads (
     operation_id TEXT NOT NULL REFERENCES transfers(operation_id) ON DELETE CASCADE,
     name TEXT NOT NULL,

@@ -23,7 +23,8 @@ ffmpeg -i avc-aac-long-gop.mp4 -vn -c:a libopus -b:a 96k opus-long.webm
 
 `hls-long-gop/` is an independently generated, single-file HLS package of the
 same recording for the parent Dashboard browser regression. It exercises
-real byte-range delivery and decoded frames, with Chrome advertising native
+the published layout, separate `init.mp4` and `<ordinal>.m4s` objects, and
+decoded frames, with Chrome advertising native
 HLS support. Apple validation reports no MUST findings for this package, so
 the browser regression isolates player selection and media CORS from the
 producer's manifest errors. Regenerate its renditions with:
@@ -35,8 +36,8 @@ for kind in video audio; do
   [ "$kind" = audio ] && stream=a
   ffmpeg -i avc-aac-long-gop.mp4 -map "0:$stream" -c copy \
     -hls_time 6 -hls_playlist_type vod -hls_segment_type fmp4 \
-    -hls_flags single_file \
-    -hls_segment_filename "hls-long-gop/$kind/media.mp4" \
+    -hls_fmp4_init_filename init.mp4 \
+    -hls_segment_filename "hls-long-gop/$kind/%d.m4s" \
     "hls-long-gop/$kind/index.m3u8"
 done
 ```

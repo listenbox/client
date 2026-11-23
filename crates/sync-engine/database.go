@@ -217,6 +217,17 @@ func (db *Database) Session(ctx context.Context, operation, session string) erro
 	); err != nil {
 		return err
 	}
+	// Segment objects live below the package prefix of one upload session.
+	if _, err := tx.ExecContext(
+		ctx,
+		"DELETE FROM segments WHERE operation_id IS ? AND NOT EXISTS (SELECT 1 FROM trans"+
+			"fers WHERE operation_id IS ? AND upload_session_id IS ?)",
+		operation,
+		operation,
+		session,
+	); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx,
 		"UPDATE transfers SET upload_session_id=? WHERE operation_id IS ?",
 		session,
@@ -249,6 +260,25 @@ func (db *Database) SavePart(ctx context.Context, operation string, object int, 
 		operation,
 		object,
 		part,
+	)
+	return err
+}
+
+func (db *Database) HasSegment(ctx context.Context, operation, name string) (bool, error) {
+	ctx = context.WithoutCancel(ctx)
+	var exists int
+	err := db.readers.QueryRowContext(
+		ctx, "SELECT count(*) FROM segments WHERE operation_id IS ? AND name IS ?", operation, name).
+		Scan(&exists)
+	return exists > 0, err
+}
+
+func (db *Database) SaveSegment(ctx context.Context, operation, name string) error {
+	ctx = context.WithoutCancel(ctx)
+	_, err := db.writer.ExecContext(ctx,
+		"INSERT INTO segments VALUES (?,?) ON CONFLICT DO NOTHING",
+		operation,
+		name,
 	)
 	return err
 }
