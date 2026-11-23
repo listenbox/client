@@ -25,7 +25,7 @@
     },
     "roleMap": {
       "background": {
-        "light": "paper",
+        "light": "#ffffff",
         "dark": "ink"
       },
       "sheet": {

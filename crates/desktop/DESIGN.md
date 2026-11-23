@@ -3,7 +3,7 @@ name: Listenbox Desktop Native
 description: The monorepo's Listenbox design system, projected onto MyGo's native UI.
 extends: ../../../../DESIGN.md
 colors:
-  background-light: "{colors.paper}"
+  background-light: "#ffffff"
   background-dark: "{colors.ink}"
   sheet-light: "#ffffff"
   sheet-dark: "{colors.ink-raised}"
@@ -64,17 +64,19 @@ page inside the window.
 
 ## Color
 
-The root's Desktop surface: a paper window, white panels (the sidebar, the
+The root's Desktop surface: a white window, white panels (the sidebar, the
 sync panel, notices and popovers), periwinkle primary actions with white text,
 graphite and slate text, `line` hairlines. Map those roles onto the MyGo
-theme, each with its paper and ink value: background, sheet, rail, control,
+theme, each with its light and ink value: background, sheet, rail, control,
 fg, fg-soft, edge, line, selected, action, focus, danger and success.
 Dark appearance swaps to the root's ink tone set (ink window, ink-raised
 panels, snow text); it is never a translucent overlay on the light theme.
 The desktop speaks the Dashboard's language. The sidebar is an inset white
-panel (28-DIP corners, soft shadow, a 10-DIP paper frame) with no visible
-divider; the sync status and the episode list are white 28-DIP cards on the
-paper window. Periwinkle marks primary actions, focus, progress and paid plan
+panel (28-DIP corners, a `line` hairline, soft shadow, a 10-DIP margin) with
+no visible divider; the sync status and the episode list are white 28-DIP
+cards on the white window, each lifted by its hairline and the soft shadow.
+Warm paper is never the window; it fills wells only: fields, quiet controls,
+skeletons and empty tracks. Periwinkle marks primary actions, focus, progress and paid plan
 badges; the selected podcast is mist with its title in deep periwinkle, as the
 Dashboard's current nav item (on ink: #1f2235 with light periwinkle). Quiet
 actions are white with a 12% hairline, fields are paper recesses, and the
@@ -83,8 +85,8 @@ on its black tile), never the bare mark.
 
 Contrast follows the root: text and placeholders at least 4.5:1, control edges
 and focus indicators at least 3:1 against what they sit on. `line` is too faint
-to bound a control, so controls take `edge` (pewter on paper, snow-faint on
-ink). The root's danger is 4.0:1 on paper, so it edges failures while their
+to bound a control, so controls take `edge` (pewter on white, snow-faint on
+ink). The root's danger is 4.0:1 on paper wells, so it edges failures while their
 text darkens it 20% toward graphite. Measure the composed native result,
 including hover, pressed, selected and focus states.
 
@@ -111,8 +113,8 @@ from 12 to 24 by size. The sidebar is inset 10 DIPs (the frame) with 20 DIPs
 inside; cards take the root's card-pad floor, 24 DIPs, a 24-DIP gap between
 them, and the content pane keeps a 40-DIP margin (the gutter). Every page
 section (sync status, episodes, the import form, each settings group) is a
-card; nothing sits loose on the paper but the page title. White cards take the
-root's soft shadow; popovers and the quit notice take its float shadow.
+card; nothing sits loose on the window but the page title. White cards take a
+`line` hairline and the root's soft shadow; popovers and the quit notice take its float shadow.
 Episode rows are flat, split by `line` hairlines, as the Dashboard's panel
 rows.
 

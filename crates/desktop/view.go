@@ -72,7 +72,7 @@ func (w *Workspace) view(c *ui.Context) {
 				w.signIn(c)
 			} else {
 				// The sidebar floats as an inset panel, so the divider between the
-				// panes is drawn in the paper and shows only under the pointer.
+				// panes is drawn in the window ground and shows only under the pointer.
 				divided := *c.Theme()
 				divided.Border = colors(c).background
 				c.SetTheme(&divided)
@@ -119,7 +119,7 @@ func (w *Workspace) sidebar(c *ui.Context) {
 	})
 }
 
-// sidebarPanel is the Dashboard's rail: a white panel inset in the paper.
+// sidebarPanel is the Dashboard's rail: a white panel inset in the window.
 func (w *Workspace) sidebarPanel(c *ui.Context) {
 	d := tokens(c)
 	panel(c, ui.Column(c).

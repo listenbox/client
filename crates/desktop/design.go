@@ -49,13 +49,14 @@ const (
 	dangerTextMix = 0.2
 )
 
-// palette holds the root DESIGN.md's color roles for one tone: paper in the
-// light appearance, ink in the dark. Roles the MyGo theme lacks live only
+// palette holds the root DESIGN.md's color roles for one tone: a white ground
+// in the light appearance, ink in the dark; warm paper only fills wells. Roles the MyGo theme lacks live only
 // here. Every text-carrying role has its ink counterpart (the root's
 // Two-Tone Rule), and the dark appearance swaps the whole set.
 type palette struct {
 	// background is the window; sheet the white panels, popovers and the
-	// quit notice; rail the sidebar, a white panel beside the paper.
+	// quit notice; rail the sidebar, a white panel lifted off the white window by a
+	// hairline and the soft shadow.
 	background, sheet, rail ui.Color
 	// control is the face of quiet actions, fields and the team switcher,
 	// controlHover their hovered and pressed face.
@@ -87,7 +88,7 @@ type palette struct {
 }
 
 var lightPalette = palette{
-	background:    paper,
+	background:    white,
 	sheet:         white,
 	rail:          white,
 	control:       paper,     // button-quiet, the paper field
@@ -241,15 +242,12 @@ func soft(e ui.Element) ui.Element {
 	return e.Shadow(0, 12, 32, -14, softShadow)
 }
 
-// panel is the Dashboard's white card on the paper window: 28-DIP corners and
-// the soft shadow; on ink, an ink-raised card with the ink-line hairline.
+// panel is the Dashboard's white card on the white window: 28-DIP corners, the
+// line hairline and the soft shadow; on ink, an ink-raised card with the
+// ink-line hairline.
 func panel(c *ui.Context, e ui.Element) ui.Element {
 	d := tokens(c)
-	e = soft(e.Radius(radiusCard).Background(d.sheet))
-	if c.Theme().Dark {
-		e = e.Border(1, d.line)
-	}
-	return e
+	return soft(e.Radius(radiusCard).Background(d.sheet)).Border(1, d.line)
 }
 
 // card is a panel holding one section of a page: cardPad inside, its parts
@@ -271,7 +269,7 @@ const (
 	menuWidth          = 288 // the Dashboard's dropdown (w-72)
 	menuItemHeight     = 36
 	menuListHeight     = 216 // six items before the team list scrolls
-	frame              = 10  // the paper frame around the inset sidebar
+	frame              = 10  // the margin around the inset sidebar
 	coverSmall         = 44
 	coverLarge         = 120
 	hudWidth           = 280
