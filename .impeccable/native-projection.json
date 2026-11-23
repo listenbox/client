@@ -21,47 +21,84 @@
       "controlGap": "12px",
       "rowGap": "8px",
       "rowPaddingY": "12px",
-      "themeRadius": "14px (controlRadius) for every control; capsules only for chips and badges"
+      "themeRadius": "14px (ctl) for every control; 10px menu items, 12px small covers, 18px rows/panels/popovers, 22px quit notice, 24px large covers; capsules only for badges"
     },
     "roleMap": {
       "background": {
-        "light": "bg",
-        "dark": "dark-bg"
+        "light": "paper",
+        "dark": "ink"
       },
       "sheet": {
-        "light": "sheet",
-        "dark": "dark-sheet"
+        "light": "#ffffff",
+        "dark": "ink-raised"
       },
       "rail": {
-        "light": "rail",
-        "dark": "dark-rail"
+        "light": "#ffffff",
+        "dark": "ink-raised"
       },
-      "ink": {
-        "light": "ink",
-        "dark": "dark-ink"
+      "control": {
+        "light": "paper (button-quiet)",
+        "dark": "ink-tile"
       },
-      "muted": {
-        "light": "muted",
-        "dark": "dark-muted"
+      "controlHover": {
+        "light": "paper-deep",
+        "dark": "ink-line"
       },
-      "border": {
-        "light": "border",
-        "dark": "dark-border"
+      "fg": {
+        "light": "fg",
+        "dark": "snow"
       },
-      "divider": {
-        "light": "divider",
-        "dark": "dark-divider"
+      "fgSoft": {
+        "light": "fg-soft",
+        "dark": "snow-soft"
+      },
+      "edge": {
+        "light": "fg / 0.12",
+        "dark": "snow / 0.12"
+      },
+      "line": {
+        "light": "line",
+        "dark": "ink-line"
       },
       "selected": {
-        "light": "navigation-active",
-        "dark": "dark-navigation-active"
+        "light": "mist, title accent-hover",
+        "dark": "#1f2235, title accent-light"
+      },
+      "placeholder": {
+        "light": "paper-deep",
+        "dark": "ink-line"
+      },
+      "track": {
+        "light": "paper-deep",
+        "dark": "ink-line"
       },
       "action": {
-        "light": "primary",
-        "dark": "dark-primary"
+        "light": "accent (hover accent-hover, white text)",
+        "dark": "accent (hover accent-hover, white text)"
       },
-      "status": {
-        "danger": "native status colors in view.go"
+      "focus": {
+        "light": "accent",
+        "dark": "accent-light"
+      },
+      "badge": {
+        "light": "accent / white; Free: mist / accent-hover",
+        "dark": "accent / white; Free: #1f2235 / accent-light"
+      },
+      "danger": {
+        "light": "danger (edges); text danger mixed 20% toward fg",
+        "dark": "danger-on-ink"
+      },
+      "success": {
+        "light": "ok",
+        "dark": "ok-on-ink"
+      },
+      "selection": {
+        "light": "lavender",
+        "dark": "accent-light / 0.32"
+      },
+      "button": {
+        "light": "white",
+        "dark": "ink-raised"
       }
     },
     "primitives": {
@@ -75,15 +112,17 @@
   },
   "guardrails": [
     "Use semantic role mappings rather than local colors.",
-    "Keep the native surface flat and border-led.",
+    "Paper window, white panels with the root's soft shadow; hairlines for structure, 3:1 edges for controls.",
     "Keep one clear action hierarchy in each selected-show state.",
     "Do not use Mazit UI as a visual reference.",
     "Treat the DESIGN.md projection drift as recorded evidence, not a new token source.",
     "Match the Dashboard's component where one exists, such as the team switcher."
   ],
   "review": {
-    "disposition": "ship",
-    "materialFixes": "none",
-    "captures": []
+    "disposition": "unreviewed",
+    "materialFixes": "reskinned to the ink-on-paper DESIGN.md; finish review pending",
+    "captures": [
+      "../../../.impeccable/review/desktop/after/"
+    ]
   }
 }

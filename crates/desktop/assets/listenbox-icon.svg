@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" fill="none">
+  <!-- The Listenbox app icon, as the monorepo favicon (apps/shared-ts/src/assets/favicon.svg): it leads the Manage podcast handoff. -->
+  <rect width="200" height="200" rx="44" fill="#151514" />
+  <path
+    fill="#FFFEFA"
+    d="M64 44h8a14 14 0 0 1 14 14v54a8 8 0 0 0 8 8h42a14 14 0 0 1 14 14v8a14 14 0 0 1-14 14H64a14 14 0 0 1-14-14V58a14 14 0 0 1 14-14Z"
+  />
+  <rect x="114" y="44" width="36" height="36" rx="12" fill="#FFFEFA" />
+</svg>

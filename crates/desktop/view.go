@@ -29,7 +29,7 @@ var (
 			`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>`,
 		),
 	)
-	listenboxMark = ui.MustParseSVG(listenboxSVG)
+	listenboxIcon = ui.MustParseSVG(listenboxIconSVG)
 	youtubeMark   = ui.MustParseSVG(youtubeSVG)
 )
 
@@ -98,7 +98,12 @@ func (w *Workspace) view(c *ui.Context) {
 			if !w.authorized {
 				w.signIn(c)
 			} else {
-				ui.Split(c, &w.sidebarWidth, func() { w.sidebar(c) }, func() { w.content(c) }).
+				// The sidebar floats as an inset panel, so the divider between the
+				// panes is drawn in the paper and shows only under the pointer.
+				divided := *c.Theme()
+				divided.Border = colors(c).background
+				c.SetTheme(&divided)
+				ui.Split(c, &w.sidebarWidth, func() { applyTheme(c); w.sidebar(c) }, func() { applyTheme(c); w.content(c) }).
 					Grow(1).
 					FillWidth().
 					SplitReset(initialSidebarWidth)
@@ -111,14 +116,15 @@ func (w *Workspace) view(c *ui.Context) {
 func (w *Workspace) signIn(c *ui.Context) {
 	d := tokens(c)
 	ui.Column(c).Fill().Center().Padding(d.xl).Gap(d.lg).Children(func() {
-		ui.Icon(c, podcastIcon).Size(coverSmall, coverSmall).TextColor(d.muted)
+		// The Dashboard's auth screens lead with the app icon, never a glyph.
+		ui.Image(c, listenboxIcon).Size(coverSmall, coverSmall).Label("Listenbox")
 		typePageTitle.set(c, ui.Text(c, "Your podcasts, always in sync")).TextAlign(ui.Center)
 		ui.Text(c, "Sign in to import from YouTube and keep your library up to date.").
-			MaxWidth(readableWidth).
+			MaxWidth(readableWidth + readableWidth/2).
 			TextAlign(ui.Center).
-			TextColor(d.muted)
+			TextColor(d.fgSoft)
 		if w.errorText != "" {
-			ui.Text(c, w.errorText).MaxWidth(readableWidth).TextColor(d.danger)
+			ui.Text(c, w.errorText).MaxWidth(readableWidth).TextColor(d.dangerText)
 		}
 		if w.signingIn {
 			ui.Text(c, "Finish signing in your browser.")
@@ -135,20 +141,25 @@ func (w *Workspace) signIn(c *ui.Context) {
 }
 
 func (w *Workspace) sidebar(c *ui.Context) {
+	ui.Column(c).Fill().MinWidth(minimumSidebar).Padding(frame, 0, frame, frame).Children(func() {
+		w.sidebarPanel(c)
+	})
+}
+
+// sidebarPanel is the Dashboard's rail: a white panel inset in the paper.
+func (w *Workspace) sidebarPanel(c *ui.Context) {
 	d := tokens(c)
-	ui.Column(c).
+	panel(c, ui.Column(c).
 		Fill().
-		MinWidth(minimumSidebar).
-		Padding(d.lg, d.sm, d.sm, d.sm).
-		Gap(d.md).
+		Padding(railPad).
+		Gap(d.md)).
 		Background(d.rail).
 		Children(func() {
 			w.teamSwitcher(c)
-			importButton := primaryButton(c, "").
+			importButton := primaryAction(c, "", w.creating).
 				FillWidth().
 				Gap(d.sm).
-				Label("Import from YouTube").
-				Disabled(w.creating)
+				Label("Import from YouTube")
 			importButton.Children(func() {
 				ui.Text(c, "Import from YouTube").Grow(1).SingleLine()
 				ui.Icon(c, plusIcon).Size(iconMedium, iconMedium)
@@ -194,23 +205,31 @@ func (w *Workspace) library(c *ui.Context) {
 			FillWidth().
 			Padding(d.sm).
 			Gap(d.md).
-			Radius(radiusSM).
+			Radius(radiusTile).
 			AlignItems(ui.Center).
 			Label(show.Title)
-		if show.Slug == w.selected {
+		chosen := show.Slug == w.selected
+		switch {
+		case chosen:
 			row.Background(d.selected)
+		case row.Hovered():
+			row.Background(d.control)
 		}
 		row.Children(func() {
 			w.coverView(c, value(show.ImageUrl), coverSmall)
 			ui.Column(c).Grow(1).MinWidth(0).Gap(d.xs).Children(func() {
-				startAligned(c, typeLabel.set(c, ui.Text(c, show.Title)).SingleLine())
+				title := typeLabel.set(c, ui.Text(c, show.Title)).SingleLine()
+				if chosen {
+					title.TextColor(d.selectedText)
+				}
+				startAligned(c, title)
 				label := episodeCount(show.EpisodeCount)
 				if w.paused[show.Slug] {
 					label = "Paused"
 				} else if w.jobs[show.Slug] != nil {
 					label = "Syncing…"
 				}
-				typeField.set(c, ui.Text(c, label)).TextColor(d.muted).SingleLine()
+				typeField.set(c, ui.Text(c, label)).TextColor(d.fgSoft).SingleLine()
 			})
 		})
 		if row.Clicked() {
@@ -237,19 +256,33 @@ func episodeCount(count int64) string {
 	return fmt.Sprintf("%d episodes", count)
 }
 
-//nolint:cyclop // Render the mutually exclusive workspace and error states in one immediate-mode tree.
 func (w *Workspace) content(c *ui.Context) {
+	// Settings scroll as a whole page, so no scroll edge clips a card's shadow.
+	if w.settingsOpen {
+		ui.Scroll(c).Fill().MinWidth(0).Children(func() {
+			ui.Column(c).FillWidth().Padding(pageInset, pageInset, gridGap, pageInset).Gap(gridGap).Children(func() {
+				w.contentBody(c)
+			})
+		})
+		return
+	}
+	ui.Column(c).Fill().MinWidth(0).Padding(pageInset, pageInset, gridGap, pageInset).Gap(gridGap).Children(func() {
+		w.contentBody(c)
+	})
+}
+
+// contentBody is the content pane's page: a notice, then settings, the import
+// form, the selected podcast or the empty library.
+//
+//nolint:cyclop // Render the mutually exclusive workspace and error states in one immediate-mode tree.
+func (w *Workspace) contentBody(c *ui.Context) {
 	d := tokens(c)
-	ui.Column(c).Fill().MinWidth(0).Padding(d.xl).Gap(d.lg).Children(func() {
+	{
 		if w.errorText != "" && !w.settingsOpen {
-			ui.Column(c).
-				FillWidth().
-				Padding(d.md).
-				Gap(d.sm).
-				Background(d.danger.Alpha(dangerTint)).
-				Radius(radiusMD).
+			panel(c, ui.Column(c).FillWidth().Padding(cardPad).Gap(d.md)).
+				Border(1, d.danger).
 				Children(func() {
-					ui.Text(c, w.errorText).TextColor(d.danger)
+					ui.Text(c, w.errorText).TextColor(d.dangerText)
 					ui.Row(c).Gap(d.sm).Children(func() {
 						if w.upgradeURL != "" && button(c, "Upgrade plan").Clicked() {
 							c.OpenURL(w.upgradeURL)
@@ -273,32 +306,37 @@ func (w *Workspace) content(c *ui.Context) {
 		default:
 			ui.Column(c).Fill().Center().Gap(d.lg).Children(func() {
 				typePageTitle.set(c, ui.Text(c, "Your podcast library"))
-				ui.Text(c, "Import a YouTube playlist or channel to get started.").TextColor(d.muted)
+				ui.Text(c, "Import a YouTube playlist or channel to get started.").TextColor(d.fgSoft)
 				if primaryButton(c, "Import a podcast").Clicked() {
 					w.importOpen = true
 					w.importTeam = w.team
 				}
 			})
 		}
-	})
+	}
 }
 
 func (w *Workspace) coverView(c *ui.Context, target string, size float32) {
 	d := tokens(c)
-	radius := float32(radiusSM)
+	radius := float32(radiusSmall)
 	if size >= coverLarge {
-		radius = radiusMedia
+		radius = radiusCover
 	}
+	var art ui.Element
 	if bitmap := w.cover(target); bitmap != nil {
-		ui.Image(c, bitmap).Size(size, size).Shrink(0).Radius(radius)
+		art = ui.Image(c, bitmap).Size(size, size).Shrink(0).Radius(radius)
 	} else {
-		ui.Box(c).
+		art = ui.Box(c).
 			Size(size, size).
 			Shrink(0).
 			Radius(radius).
-			Background(d.selected).
+			Background(d.placeholder).
 			Center().
-			Children(func() { ui.Icon(c, podcastIcon).Size(size*placeholderIcon, size*placeholderIcon).TextColor(d.muted) })
+			Children(func() { ui.Icon(c, podcastIcon).Size(size*placeholderIcon, size*placeholderIcon).TextColor(d.fgSoft) })
+	}
+	// Large artwork sits on the page with the soft shadow, as on podcast sites.
+	if size >= coverLarge {
+		soft(art)
 	}
 }
 
@@ -313,10 +351,10 @@ func (w *Workspace) podcast(c *ui.Context, show p.Show) {
 			if show.LastEpisodeAt != nil {
 				meta += " · Latest " + time.UnixMilli(*show.LastEpisodeAt).Local().Format("Jan 2, 2006")
 			}
-			ui.Text(c, meta).TextColor(d.muted)
+			ui.Text(c, meta).TextColor(d.fgSoft)
 			ui.Row(c).Wrap().Gap(d.sm).Margin(d.sm, 0, 0, 0).Children(func() {
 				// Both open the browser; the leading mark names the destination.
-				if handoffButton(c, "Manage podcast", listenboxMark).Clicked() {
+				if handoffButton(c, "Manage podcast", listenboxIcon).Clicked() {
 					c.OpenURL(w.managementURL())
 				}
 				if source := value(show.Youtube.Url); source != "" {
@@ -343,13 +381,7 @@ func (w *Workspace) podcast(c *ui.Context, show p.Show) {
 		}
 	}
 	syncing := w.jobs[show.Slug] != nil
-	ui.Column(c).
-		FillWidth().
-		Padding(d.md, d.md, d.md, d.lg).
-		Gap(d.md).
-		Radius(radiusSurface).
-		Background(d.sheet).
-		Border(1, d.border).
+	panel(c, ui.Column(c).FillWidth().Padding(railPad, railPad, railPad, cardPad).Gap(d.md)).
 		Children(func() {
 			ui.Row(c).Gap(d.md).AlignItems(ui.Center).Children(func() {
 				switch {
@@ -376,7 +408,7 @@ func (w *Workspace) podcast(c *ui.Context, show p.Show) {
 						}
 						ui.Text(c, label)
 						if w.checking || w.loading {
-							ui.Text(c, "Checking Listenbox…").TextColor(d.muted)
+							ui.Text(c, "Checking Listenbox…").TextColor(d.fgSoft)
 						}
 					})
 					action := syncNowLabel
@@ -394,12 +426,12 @@ func (w *Workspace) podcast(c *ui.Context, show p.Show) {
 				// Byte totals grow as each episode is prepared, so only the item
 				// count is a stable base for overall progress.
 				ratio := float64(complete) / float64(total)
-				ui.Progress(c, ratio).FillWidth().Label("Imported episode progress")
+				ui.Progress(c, ratio).FillWidth().Background(d.track).Label("Imported episode progress")
 				progress := fmt.Sprintf("%d of %d imported", complete, total)
 				if bytes > 0 {
 					progress += " · " + s.TransferTotals(sent, bytes) + " sent"
 				}
-				ui.Text(c, progress).FontFeatures("tnum").TextColor(d.muted)
+				ui.Text(c, progress).FontFeatures("tnum").TextColor(d.fgSoft)
 			}
 		})
 	hasIssues := false
@@ -414,10 +446,18 @@ func (w *Workspace) podcast(c *ui.Context, show p.Show) {
 		w.notImported = false
 	}
 	rows := w.rows()
-	ui.Row(c).Gap(d.md).AlignItems(ui.Center).Margin(d.sm, 0, 0, 0).Children(func() {
+	panel(c, ui.Column(c).FillWidth().Grow(1).MinHeight(0).Padding(cardPad, cardPad, d.sm, cardPad).Gap(d.sm)).
+		Children(func() { w.episodeCard(c, show, rows, hasIssues, syncing) })
+}
+
+// episodeCard is the episode card: its heading, the not-imported filter and the
+// list.
+func (w *Workspace) episodeCard(c *ui.Context, show p.Show, rows []episodeRow, hasIssues, syncing bool) {
+	d := tokens(c)
+	ui.Row(c).Gap(d.md).AlignItems(ui.Center).Children(func() {
 		typeTitle.set(c, ui.Text(c, "Episodes"))
 		if len(rows) > 0 {
-			ui.Textf(c, "%d", len(rows)).FontFeatures("tnum").TextColor(d.muted)
+			ui.Textf(c, "%d", len(rows)).FontFeatures("tnum").TextColor(d.fgSoft)
 		}
 		ui.Spacer(c)
 		if hasIssues {
@@ -436,47 +476,50 @@ func (w *Workspace) podcast(c *ui.Context, show p.Show) {
 // its YouTube video, the duration at the end.
 func (w *Workspace) episodeTable(c *ui.Context, rows []episodeRow) {
 	d := tokens(c)
-	w.episodeList.Key = func(index int) any { return rows[index].key }
-	ui.List(c, &w.episodeList, len(rows), func(index int) {
-		row := rows[index]
-		ui.Row(c.Key(row.key)).
-			FillWidth().
-			Padding(d.md, d.xs, d.md, 0).
-			Gap(d.lg).
-			AlignItems(ui.Center).
-			Border(1, d.divider).
-			BorderWidth(1, 0, 0, 0).
-			Children(func() {
-				ui.Column(c).Grow(1).MinWidth(0).Gap(d.xs).Children(func() {
-					if meta := row.meta(); meta != "" {
-						ui.Text(c, meta).TextColor(d.muted).SingleLine()
-					}
-					var title ui.Element
-					if row.source != "" {
-						title = ui.Link(c, row.title, row.source).
-							Label("Open " + row.title + " on YouTube").
-							TextColor(d.ink)
-					} else {
-						title = ui.Text(c, row.title)
-					}
-					startAligned(c, typeFeatureTitle.set(c, title).MaxLines(titleLines-1).AlignSelf(ui.Start))
-					if row.reason != "" {
-						startAligned(c, ui.Text(c, row.reason).TextColor(d.danger))
-					}
-				})
-				ui.Text(c, duration(row.duration)).
-					Shrink(0).
-					FontFeatures("tnum").
-					TextColor(d.muted)
-			})
-	}).Grow(1).MinHeight(0).Label("Episode list")
 	if len(rows) == 0 {
 		empty := "No episodes to show yet."
 		if w.checking {
 			empty = "Loading episodes…"
 		}
-		ui.Text(c, empty).TextColor(d.muted)
+		ui.Text(c, empty).TextColor(d.fgSoft)
+		return
 	}
+	w.episodeList.Key = func(index int) any { return rows[index].key }
+	ui.List(c, &w.episodeList, len(rows), func(index int) {
+		row := rows[index]
+		// Rows are split by hairlines, as the Dashboard's panel rows.
+		tile := ui.Row(c.Key(row.key)).
+			FillWidth().
+			Padding(d.lg, 0).
+			Gap(d.lg).
+			AlignItems(ui.Center)
+		if index > 0 {
+			tile.Border(1, d.line).BorderWidth(1, 0, 0, 0)
+		}
+		tile.Children(func() {
+			ui.Column(c).Grow(1).MinWidth(0).Gap(d.xs).Children(func() {
+				if meta := row.meta(); meta != "" {
+					ui.Text(c, meta).TextColor(d.fgSoft).SingleLine()
+				}
+				var title ui.Element
+				if row.source != "" {
+					title = ui.Link(c, row.title, row.source).
+						Label("Open " + row.title + " on YouTube").
+						TextColor(d.fg)
+				} else {
+					title = ui.Text(c, row.title)
+				}
+				startAligned(c, typeFeatureTitle.set(c, title).MaxLines(titleLines-1).AlignSelf(ui.Start))
+				if row.reason != "" {
+					startAligned(c, ui.Text(c, row.reason).TextColor(d.dangerText))
+				}
+			})
+			ui.Text(c, duration(row.duration)).
+				Shrink(0).
+				FontFeatures("tnum").
+				TextColor(d.fgSoft)
+		})
+	}).Grow(1).MinHeight(0).Label("Episode list")
 }
 
 // meta is the line above an episode title: its release date and any state
@@ -499,11 +542,19 @@ func sourceKindLabel(kind p.ShowSourceKind) string {
 	return "Audio"
 }
 
-//nolint:cyclop // Render the import form and its mutually exclusive preparation states together.
 func (w *Workspace) importForm(c *ui.Context) {
 	d := tokens(c)
 	typePageTitle.set(c, ui.Text(c, "Import from YouTube"))
-	ui.Text(c, "Create a podcast from a playlist or channel.").TextColor(d.muted)
+	ui.Text(c, "Create a podcast from a playlist or channel.").TextColor(d.fgSoft)
+	card(c, func() { w.importFields(c) })
+}
+
+// importFields is the import card: the source, its format, the owning team,
+// preparation progress and the actions.
+//
+//nolint:cyclop // Render the import form and its mutually exclusive preparation states together.
+func (w *Workspace) importFields(c *ui.Context) {
+	d := tokens(c)
 	textField(c, &w.importSource).
 		Label("YouTube URL").
 		Placeholder("Paste a YouTube URL").
@@ -529,21 +580,21 @@ func (w *Workspace) importForm(c *ui.Context) {
 		case "creating_podcast":
 			heading = "Creating your podcast…"
 		}
-		ui.Progress(c, -1).FillWidth()
+		ui.Progress(c, -1).FillWidth().Background(d.track)
 		typeLabel.set(c, ui.Text(c, heading))
 		if scan := w.preparation.Scan; scan != nil {
 			ui.Textf(c, "%d videos · %s estimated", scan.Videos, duration(&scan.EstimatedSeconds))
 			if scan.UnknownDurations > 0 {
-				ui.Textf(c, "%d videos have an unknown duration", scan.UnknownDurations).TextColor(d.muted)
+				ui.Textf(c, "%d videos have an unknown duration", scan.UnknownDurations).TextColor(d.fgSoft)
 			}
 		}
 		if remaining := w.preparation.VideoRemainingSeconds; remaining != nil {
-			ui.Textf(c, "%s of video storage available", duration(remaining)).TextColor(d.muted)
+			ui.Textf(c, "%s of video storage available", duration(remaining)).TextColor(d.fgSoft)
 		}
 	}
 	ui.Row(c).Gap(d.md).Children(func() {
-		if primaryButton(c, "Import").
-			Disabled(w.creating || strings.TrimSpace(w.importSource) == "" || w.importTeam == "").
+		if primaryAction(c, "Import",
+			w.creating || strings.TrimSpace(w.importSource) == "" || w.importTeam == "").
 			Clicked() {
 			w.importShow()
 		}
@@ -557,20 +608,31 @@ func (w *Workspace) importForm(c *ui.Context) {
 }
 
 func (w *Workspace) settings(c *ui.Context) {
-	d := tokens(c)
 	ui.Row(c).AlignItems(ui.Center).Children(func() {
 		typePageTitle.set(c, ui.Text(c, "Settings")).Grow(1)
 		if button(c, "Done").Disabled(w.cookieBusy).Clicked() {
 			w.settingsOpen = false
 		}
 	})
-	typeLabel.set(c, ui.Text(c, "YouTube"))
-	ui.Text(c, "If YouTube asks you to sign in, add cookies from a private browser session to co"+
-		"ntinue importing.").
-		TextColor(d.muted)
-	ui.Text(c, "Cookies stay on this computer and are shared with the Listenbox CLI. "+
-		"Keep them private, like a password.").TextColor(d.muted)
-	if button(c, "How to export YouTube cookies").Clicked() {
+	card(c, func() { w.cookieSettings(c) })
+	if updatesSupported() {
+		card(c, func() { w.updateSettings(c) })
+	}
+}
+
+// cookieSettings is the YouTube card: why cookies, the guide, the editor and
+// its actions.
+func (w *Workspace) cookieSettings(c *ui.Context) {
+	d := tokens(c)
+	typeTitle.set(c, ui.Text(c, "YouTube"))
+	ui.Column(c).Gap(d.xs).Children(func() {
+		ui.Text(c, "If YouTube asks you to sign in, add cookies from a private browser session to co"+
+			"ntinue importing.").
+			TextColor(d.fgSoft)
+		ui.Text(c, "Cookies stay on this computer and are shared with the Listenbox CLI. "+
+			"Keep them private, like a password.").TextColor(d.fgSoft)
+	})
+	if button(c, "How to export YouTube cookies").AlignSelf(ui.Start).Clicked() {
 		c.OpenURL(s.CookieGuideURL)
 	}
 	typeLabel.set(c, ui.Text(c, "YouTube cookies"))
@@ -578,21 +640,24 @@ func (w *Workspace) settings(c *ui.Context) {
 	if w.cookieSaved {
 		label = "A session is saved. Pasting a new export replaces it."
 	}
-	ui.Text(c, label).TextColor(d.muted)
+	ui.Text(c, label).TextColor(d.fgSoft)
 	ui.TextArea(c.Key(w.cookieEditor), &w.cookieInput).
 		Placeholder("Paste the complete Netscape cookies.txt export here").
 		Label("YouTube cookies").
 		FillWidth().
 		Height(cookieEditorHeight).
+		Radius(controlRadius).
+		Background(d.control).
+		Padding(d.md, fieldInset).
 		Disabled(w.cookieBusy)
 	if w.cookieError != "" {
-		ui.Text(c, w.cookieError).TextColor(d.danger)
+		ui.Text(c, w.cookieError).TextColor(d.dangerText)
 	}
 	if w.cookieMessage != "" {
-		ui.Text(c, w.cookieMessage).TextColor(d.muted)
+		ui.Text(c, w.cookieMessage).TextColor(d.fgSoft)
 	}
 	ui.Row(c).Gap(d.md).Children(func() {
-		if primaryButton(c, "Save cookies").Disabled(w.cookieBusy).Clicked() {
+		if primaryAction(c, "Save cookies", w.cookieBusy).Clicked() {
 			w.saveCookies(false)
 		}
 		if button(c, "Remove cookies").
@@ -601,7 +666,6 @@ func (w *Workspace) settings(c *ui.Context) {
 			w.saveCookies(true)
 		}
 	})
-	w.updateSettings(c)
 }
 
 func (w *Workspace) quitHUD(c *ui.Context) {
@@ -625,9 +689,9 @@ func (w *Workspace) quitHUD(c *ui.Context) {
 				Width(hudWidth).
 				Padding(d.xl).
 				Gap(d.md).
-				Radius(radiusMedia).
+				Radius(radiusSheet).
 				Background(d.sheet).
-				Border(1, d.border).
+				Border(1, d.line).
 				Opacity(opacity)).
 				Children(func() {
 					shortcut := "⌘Q"

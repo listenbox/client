@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -245,7 +246,7 @@ func TestSidebarResizesWithoutResettingOnNavigation(t *testing.T) {
 	h.screen.Move(1200, 400)
 	h.screen.Release(1200, 400)
 	h.screen.Frame()
-	if h.w.sidebarWidth > 480 || h.w.sidebarWidth < 240 {
+	if h.w.sidebarWidth > maximumSidebar || h.w.sidebarWidth < minimumSidebar {
 		t.Fatal("sidebar constraints", h.w.sidebarWidth)
 	}
 	if directory := os.Getenv("LISTENBOX_UI_REVIEW_DIR"); directory != "" {
@@ -305,6 +306,38 @@ func TestTeamPickerScrollsToTheLastTeamWithoutMovingTheLibrary(t *testing.T) {
 	h.click("All teams")
 	if h.w.team != "" {
 		t.Fatal("All teams did not clear the filter")
+	}
+}
+
+func TestTeamSwitcherShowsEachTeamsPlan(t *testing.T) {
+	t.Parallel()
+	h := libraryDesktop(t)
+	for index, family := range []p.TeamPlanFamily{
+		p.TeamPlanFamilyFree, p.TeamPlanFamilyAudio, p.TeamPlanFamilyVideo4k,
+	} {
+		h.w.catalog.Teams[index].PlanFamily = &family
+	}
+	shows := func(labels ...string) bool {
+		texts := h.screen.Texts()
+		for _, label := range labels {
+			if !slices.Contains(texts, label) {
+				return false
+			}
+		}
+		return true
+	}
+	h.screen.Frame()
+	if shows("Free") || shows("Audio") || shows("Video") {
+		t.Fatalf("All teams shows a plan: %q", h.screen.Texts())
+	}
+	h.click("Switch team")
+	if !shows("Free", "Audio", "Video", "4K") {
+		t.Fatalf("team menu misses a plan: %q", h.screen.Texts())
+	}
+	h.click("Library 2")
+	h.screen.Frame()
+	if !shows("Audio") || shows("Free") || shows("Video") {
+		t.Fatalf("switcher misses the selected team's plan: %q", h.screen.Texts())
 	}
 }
 

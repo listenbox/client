@@ -17,7 +17,7 @@ OWN-WORLD: none. The desktop is the root DESIGN.md projected onto MyGo's native 
 
 STORY: sign in, import a fresh playlist or select an existing import, then let automatic sync keep it current. See what is downloading, preparing, or uploading; Pause saves a podcast’s progress and skips its automatic scans until Resume or the next app session; Reload preserves the pause and other podcasts keep syncing.
 
-FIRST VIEWPORT: the native window title names the app; there is no in-app title bar. A resizable sidebar holds the Dashboard's team switcher, the charcoal import action, a podcast search, the podcast list and a footer toolbar with Reload and Settings. The main pane shows the selected podcast: cover, title, one line of facts, browser handoffs, one bordered sync panel, then the episode list.
+FIRST VIEWPORT: the native window title names the app; there is no in-app title bar. A resizable sidebar holds the Dashboard's team switcher, the accent import action, a podcast search, the podcast list and a footer toolbar with Reload and Settings. The main pane shows the selected podcast: cover, title, one line of facts, browser handoffs, one white sync panel, then the episode list.
 
 FORM: code-led extension of the existing product workspace, selected from the established design authority. Seed key: existing-listenbox-native-workspace; no new visual-world tournament.
 
@@ -29,9 +29,9 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
 
 **Team switcher.** The Dashboard's switcher: team name and plan badge on the trigger; teams with plan badges and a check, Create team, the signed-in account and Log out in the panel. The desktop library can span every team, so All teams leads the list when there is more than one team. Create team opens the Dashboard's form in the browser.
 
-**Import.** A full-width charcoal action beneath the switcher, label at the start and a plus at the end. The form names the team that will own the new podcast and locks while creation runs. A source is fixed at creation; there are no Save playlist, Disconnect or Keep syncing controls.
+**Import.** A full-width accent (periwinkle) action beneath the switcher, label at the start and a plus at the end. The form names the team that will own the new podcast and locks while creation runs. A source is fixed at creation; there are no Save playlist, Disconnect or Keep syncing controls.
 
-**Podcast.** Cover beside the title, one muted line of episode count, format and latest release, then Manage podcast and Open in YouTube as content-width actions, Listenbox first, each led by its destination's mark: the Listenbox mark in ink, YouTube's red play mark. One bordered panel carries sync status, the last YouTube check, Sync now, Pause or Resume, and transfer progress while a sync runs. Loading or failed episode lists never claim a zero count.
+**Podcast.** Cover beside the title, one muted line of episode count, format and latest release, then Manage podcast and Open in YouTube as content-width actions, Listenbox first, each led by its destination's mark: the Listenbox app icon (white mark on its black tile), YouTube's red play mark. One white panel carries sync status, the last YouTube check, Sync now, Pause or Resume, and transfer progress while a sync runs. Loading or failed episode lists never claim a zero count.
 
 **Episodes.** Flat rows: release date (and state, when not published) above the title, duration at the row's end. Every title with a YouTube video links to it; there is no separate handoff button. Published rows keep the API order and pending source rows sit around them by saved position. The Not imported filter appears only while failed or skipped items exist, shows each reason, and its Retry imports action reuses the engine's saved work.
 

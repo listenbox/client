@@ -72,7 +72,7 @@ type Workspace struct {
 }
 
 const (
-	initialSidebarWidth = 240
+	initialSidebarWidth = 300
 	artworkCacheEntries = 128
 	secondsPerHour      = 3600
 	secondsPerMinute    = 60

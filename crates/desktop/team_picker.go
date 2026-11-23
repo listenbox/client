@@ -56,15 +56,15 @@ func (w *Workspace) teamSwitcher(c *ui.Context) {
 		name = shown.Name
 	}
 	m := ui.MenuBase(c.Key("team-switcher"), &w.teamPicker)
-	face := d.railControl
+	face := d.control
 	if m.Trigger.Hovered() || m.Open() {
-		face = d.railControlHover
+		face = d.controlHover
 	}
 	control(c, m.Trigger).
 		FillWidth().
 		Gap(d.sm).
 		Background(face).
-		Border(1, d.border).
+		Border(1, d.edge).
 		Label("Switch team").
 		Children(func() {
 			ui.Row(c).Grow(1).MinWidth(0).Gap(d.sm).AlignItems(ui.Center).Children(func() {
@@ -73,7 +73,7 @@ func (w *Workspace) teamSwitcher(c *ui.Context) {
 					planBadge(c, *shown.PlanFamily)
 				}
 			})
-			ui.Icon(c, chevronsUpDownIcon).Size(iconSmall, iconSmall).Shrink(0).TextColor(d.muted)
+			ui.Icon(c, chevronsUpDownIcon).Size(iconSmall, iconSmall).Shrink(0).TextColor(d.fgSoft)
 		})
 	m.Popup(func(panel ui.Element) { w.teamMenu(c, m, panel, shown) })
 }
@@ -85,9 +85,9 @@ func (w *Workspace) teamMenu(c *ui.Context, m ui.MenuParts, panel ui.Element, sh
 		Width(menuWidth).
 		Padding(d.sm).
 		Gap(d.xs).
-		Radius(radiusSurface).
+		Radius(radiusTile).
 		Background(d.sheet).
-		Border(1, d.border))
+		Border(1, d.line))
 	menuHeading(c, "Teams")
 	w.teamItems(c, m, shown)
 	createTeam := w.catalog.ImportTeam
@@ -97,7 +97,7 @@ func (w *Workspace) teamMenu(c *ui.Context, m ui.MenuParts, panel ui.Element, sh
 	if createTeam != "" {
 		menuSeparator(c)
 		if menuItem(c, m.Item(), ui.Color{}, func() {
-			ui.Icon(c, plusIcon).Size(iconMedium, iconMedium).TextColor(d.muted)
+			ui.Icon(c, plusIcon).Size(iconMedium, iconMedium).TextColor(d.fgSoft)
 			ui.Text(c, "Create team")
 		}).Clicked() {
 			c.OpenURL(strings.TrimRight(w.client.Config.DashboardOrigin, "/") +
@@ -107,11 +107,11 @@ func (w *Workspace) teamMenu(c *ui.Context, m ui.MenuParts, panel ui.Element, sh
 	menuSeparator(c)
 	if w.catalog.Email != "" {
 		ui.Column(c).Padding(d.sm).Gap(d.xs).Children(func() {
-			ui.Text(c, "Signed in").TextColor(d.muted)
+			ui.Text(c, "Signed in").TextColor(d.fgSoft)
 			typeLabel.set(c, ui.Text(c, w.catalog.Email)).SingleLine()
 		})
 	}
-	if menuItem(c, m.Item(), d.danger, func() {
+	if menuItem(c, m.Item(), d.dangerText, func() {
 		ui.Icon(c, logOutIcon).Size(iconMedium, iconMedium)
 		ui.Text(c, "Log out")
 	}).Clicked() {
@@ -163,7 +163,7 @@ func (w *Workspace) teamItems(c *ui.Context, m ui.MenuParts, shown *p.ClientTeam
 // the keys, in a tint where it has one, as Log out's danger.
 func menuItem(c *ui.Context, item ui.Element, tint ui.Color, content func()) ui.Element {
 	d := tokens(c)
-	fill := d.surfaceHover
+	fill := d.controlHover
 	if tint != (ui.Color{}) {
 		item.TextColor(tint)
 		fill = tint.Alpha(hoverTint)
@@ -172,7 +172,7 @@ func menuItem(c *ui.Context, item ui.Element, tint ui.Color, content func()) ui.
 		Height(menuItemHeight).
 		Padding(0, d.sm).
 		Gap(d.sm).
-		Radius(radiusXS).
+		Radius(radiusItem).
 		AlignItems(ui.Center)
 	if item.Highlighted() {
 		item.Background(fill)
@@ -182,22 +182,22 @@ func menuItem(c *ui.Context, item ui.Element, tint ui.Color, content func()) ui.
 
 func menuHeading(c *ui.Context, label string) {
 	d := tokens(c)
-	ui.Text(c, label).TextColor(d.muted).Padding(d.xs, d.sm)
+	ui.Text(c, label).TextColor(d.fgSoft).Padding(d.xs, d.sm)
 }
 
 func menuSeparator(c *ui.Context) {
 	d := tokens(c)
-	ui.Box(c).FillWidth().Height(1).Background(d.divider).Margin(d.xs, 0)
+	ui.Box(c).FillWidth().Height(1).Background(d.line).Margin(d.xs, 0)
 }
 
-// planBadge is the Dashboard's plan pill: Free in the soft primary role with a
-// faint outline, paid plans solid in the rail's plan role, Video 4K's
-// resolution set apart.
+// planBadge is the plan pill, a badge in the root's tag type: Free quiet as
+// the root's New badge, paid plans solid in the text colour, Video 4K's resolution
+// set apart.
 func planBadge(c *ui.Context, family p.TeamPlanFamily) {
 	d := tokens(c)
-	background, border, text := d.railPlan, d.actionInk.Alpha(badgeRing), d.actionInk
+	background, text := d.badge, d.badgeText
 	if family == p.TeamPlanFamilyFree {
-		background, border, text = d.primarySoft, d.accentStrong.Alpha(badgeOutline), d.accentStrong
+		background, text = d.badgeSoft, d.badgeSoftText
 	}
 	ui.Row(c).
 		Height(badgeHeight).
@@ -207,7 +207,6 @@ func planBadge(c *ui.Context, family p.TeamPlanFamily) {
 		Radius(radiusPill).
 		AlignItems(ui.Center).
 		Background(background).
-		Border(1, border).
 		Children(func() {
 			label := planFamilyLabel(family)
 			if family == p.TeamPlanFamilyVideo4k {
@@ -218,8 +217,8 @@ func planBadge(c *ui.Context, family p.TeamPlanFamily) {
 				typeBadgeDetail.set(c, ui.Text(c, "4K")).
 					TextColor(text).
 					Padding(0, d.xs).
-					Radius(radiusXS).
-					Background(d.actionInk.Alpha(badgeDetailFill))
+					Radius(radiusPill).
+					Background(text.Alpha(badgeDetailFill))
 			}
 		})
 }

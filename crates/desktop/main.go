@@ -19,11 +19,15 @@ import (
 	s "github.com/listenbox/client/crates/sync-engine"
 )
 
-// The Listenbox mark serves the menu-bar item and Listenbox handoffs; the
-// YouTube mark, in its platform colors, YouTube handoffs.
+// The Listenbox mark serves the menu-bar item; the Listenbox app icon (the
+// mark on its black tile) leads Listenbox handoffs; the YouTube mark, in its
+// platform colors, YouTube handoffs.
 //
 //go:embed assets/listenbox.svg
 var listenboxSVG []byte
+
+//go:embed assets/listenbox-icon.svg
+var listenboxIconSVG []byte
 
 //go:embed assets/youtube.svg
 var youtubeSVG []byte

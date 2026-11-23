@@ -7,11 +7,16 @@ import (
 	s "github.com/listenbox/client/crates/sync-engine"
 )
 
+// updatesSupported reports whether this platform ships the in-app updater.
+func updatesSupported() bool {
+	return runtime.GOOS == "darwin" || runtime.GOOS == "windows"
+}
+
 func (w *Workspace) updateSettings(c *ui.Context) {
-	if runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
+	if !updatesSupported() {
 		return
 	}
-	typeLabel.set(c, ui.Text(c, "Updates"))
+	typeTitle.set(c, ui.Text(c, "Updates"))
 	ui.Textf(c, "%s %s", applicationName, s.BuildVersion()).TextColor(c.Theme().TextMuted)
 	available := w.updater != nil
 	if !available {
