@@ -69,8 +69,15 @@ tasks:
     outputs: [third_party/bundle/quickjs.bytecode]
     options:
       internal: true
+  youtubejs-identity:
+    deps: [youtubejs:bundle]
+    command: mise exec -- bash tools/youtubejs-identity.sh
+    inputs: []
+    options:
+      cache: false
+      internal: true
   prerequisites:
-    deps: [~:codegen, ~:native-ffmpeg, ~:youtubejs-bytecode]
+    deps: [~:codegen, ~:native-ffmpeg, ~:youtubejs-bytecode, ~:youtubejs-identity]
     inputs: []
     options:
       internal: true

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	_ "embed"
 	"errors"
 	"flag"
@@ -104,6 +105,7 @@ func runDesktop(config s.Config) error {
 	if !mygo.App.RequestSingleInstanceLock() {
 		return nil
 	}
+	defer client.WatchYouTubeJS(context.Background())()
 	session := desktopSession{client: client}
 	mygo.App.OnBeforeQuit(func(event *mygo.QuitEvent) {
 		if !session.permitQuit {

@@ -78,6 +78,7 @@ type API struct {
 	UploadHTTP *http.Client
 	Public     *p.Client
 	Clock      clockwork.Clock
+	youtubeJS  *youtubeJSUpdates
 }
 
 type StoredAuth struct {

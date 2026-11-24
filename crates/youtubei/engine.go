@@ -17,7 +17,6 @@ import (
 
 	q "github.com/buke/quickjs-go"
 	"github.com/google/uuid"
-	thirdparty "github.com/listenbox/client/third_party"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -70,10 +69,13 @@ type Engine struct {
 	closed    bool
 }
 
-func New(ctx context.Context, fetch Fetch) (*Engine, error) {
+func New(ctx context.Context, fetch Fetch, bundle Bundle) (*Engine, error) {
+	if len(bundle.bytecode) == 0 {
+		return nil, errors.New("empty YouTube.js bundle")
+	}
 	engine := &Engine{calls: make(chan call), done: make(chan struct{})}
 	ready := make(chan error, 1)
-	go engine.own(ctx, fetch, ready)
+	go engine.own(ctx, fetch, bundle, ready)
 	if err := <-ready; err != nil {
 		return nil, err
 	}
@@ -117,7 +119,7 @@ func (engine *Engine) Call(ctx context.Context, expression string, arguments, ou
 }
 
 //nolint:cyclop,gocognit,gocyclo,fatcontext,funlen,lll,maintidx // The thread-confined bindings and event loop share one request scope.
-func (engine *Engine) own(initial context.Context, fetch Fetch, ready chan<- error) {
+func (engine *Engine) own(initial context.Context, fetch Fetch, bundle Bundle, ready chan<- error) {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 	defer close(engine.done)
@@ -323,7 +325,7 @@ func (engine *Engine) own(initial context.Context, fetch Fetch, ready chan<- err
 	})
 	for _, evaluate := range []func() *q.Value{
 		func() *q.Value { return js.Eval(hostPrimitives) },
-		func() *q.Value { return js.EvalBytecode(thirdparty.YouTubeJSBytecode) },
+		func() *q.Value { return js.EvalBytecode(bundle.bytecode) },
 		func() *q.Value { return js.Eval(bindings) },
 	} {
 		result := evaluate()
@@ -332,7 +334,7 @@ func (engine *Engine) own(initial context.Context, fetch Fetch, ready chan<- err
 			if result != nil {
 				result.Free()
 			}
-			ready <- fmt.Errorf("initialize embedded YouTube.js: %w", err)
+			ready <- fmt.Errorf("initialize YouTube.js: %w", err)
 			return
 		}
 		result.Free()

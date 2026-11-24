@@ -94,7 +94,12 @@ func NewYouTube(ctx context.Context, api *API) (*YouTube, error) {
 		}
 	}
 	transport := youtubeTransport{api: api, jar: jar, continuations: make(map[string]bool)}
-	engine, err := youtubei.New(ctx, transport.fetch)
+	bundle := api.youtubeJS.bundle()
+	engine, err := youtubei.New(ctx, transport.fetch, bundle.bundle)
+	if err != nil && bundle.downloaded && ctx.Err() == nil {
+		api.youtubeJS.reject(bundle, err)
+		engine, err = youtubei.New(ctx, transport.fetch, youtubei.Embedded())
+	}
 	if err != nil {
 		return nil, err
 	}

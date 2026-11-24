@@ -218,7 +218,11 @@ func WritePrivateJSON(path string, value any) error {
 	if err != nil {
 		return err
 	}
-	raw = append(raw, '\n')
+	return writePrivateFile(path, append(raw, '\n'))
+}
+
+// writePrivateFile durably replaces path with raw, readable only by the user.
+func writePrivateFile(path string, raw []byte) error {
 	directory := filepath.Dir(path)
 	if err := os.MkdirAll(directory, profileDirectoryMode); err != nil {
 		return err

@@ -33,7 +33,7 @@ func runtimeEngine(t *testing.T, fetch Fetch) *Engine {
 			return FetchResponse{}, errors.New("unexpected provider request")
 		}
 	}
-	engine, err := New(ctx, fetch)
+	engine, err := New(ctx, fetch, Embedded())
 	noRuntimeError(t, err)
 	t.Cleanup(func() { cancel(); engine.Close() })
 	_, err = engine.Initialize(
@@ -432,7 +432,7 @@ func TestIndependentWorkerThreadsEachOwnAReusableEngine(t *testing.T) {
 			defer cancel()
 			engine, err := New(ctx, func(context.Context, FetchRequest) (FetchResponse, error) {
 				return FetchResponse{}, errors.New("unexpected fetch")
-			})
+			}, Embedded())
 			if err != nil {
 				return err
 			}

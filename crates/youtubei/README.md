@@ -8,8 +8,12 @@ This package owns the QuickJS runtime, its host primitives and live objects.
 Initialize submodules recursively, provision `mise install --locked`, then run
 `moon run client-youtubei:build` and `moon run client:test`. Moon bundles the pinned
 `third_party/youtubejs` source using Aube's lockfile. `third_party/youtubejs.go`
-embeds the resulting bundle. End users need no JavaScript runtime or network
-bootstrap download. The original Mazit extraction retains its MIT attribution
+embeds the resulting bytecode, so the first engine starts without a download.
+`New` takes a `Bundle`: `Embedded()` or `Compile(js)`, which compiles a JS bundle
+in-process. Bytecode is never loaded from anywhere else. Which bundle to run, and
+how newer ones are fetched and verified, is `sync-engine` policy. Bump
+`BundleABI` whenever bindings or host primitives and bundles stop being
+interchangeable. The original Mazit extraction retains its MIT attribution
 in `THIRD-PARTY-NOTICES.txt`.
 
 `New(ctx, fetch)` starts a dedicated, locked OS thread. Every QuickJS value is

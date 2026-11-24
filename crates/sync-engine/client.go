@@ -40,6 +40,7 @@ type Client struct {
 	mu           sync.Mutex
 	http, upload *http.Client
 	artwork      *artworkHTTP
+	youtubeJS    *youtubeJSUpdates
 }
 
 const (
@@ -74,10 +75,11 @@ func (c *Client) API(ctx context.Context) (*API, error) {
 			return nil, err
 		}
 		c.http, c.upload = httpClient, upload
+		c.youtubeJS = newYouTubeJSUpdates(c.Config.Directory)
 	}
 	api, err := NewAPIWithClients(c.Config, c.http, c.upload)
 	if err == nil {
-		api.Clock = c.Engine.clock
+		api.Clock, api.youtubeJS = c.Engine.clock, c.youtubeJS
 	}
 	return api, err
 }
@@ -218,13 +220,15 @@ func (c *Client) Sync(ctx context.Context, slug string) (Report, error) {
 	return c.Engine.Once(ctx, api, slug)
 }
 
-//nolint:nilerr // User cancellation ends the CLI watch successfully after its workers drain.
 func (c *Client) SyncYouTube(
 	ctx context.Context,
 	show string,
 	watch bool,
 	event func(SyncEvent),
 ) error {
+	if watch {
+		defer c.WatchYouTubeJS(ctx)()
+	}
 	for {
 		if ctx.Err() != nil {
 			return nil
