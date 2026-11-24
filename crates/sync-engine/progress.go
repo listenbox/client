@@ -276,6 +276,26 @@ func (m *DownloadManager) rangeProgress(id string, start, received int64, comple
 	}
 }
 
+// streamProgress counts bytes of a download whose length is unknown until
+// it finishes, such as the segments of a post-live recording.
+func (m *DownloadManager) streamProgress(id string, received int64, network bool) {
+	m.mu.Lock()
+	item := m.items[id]
+	if network {
+		m.bytes[0] += received
+		item.rate.record(received, m.clock.Now())
+	}
+	item.Received += received
+	m.items[id] = item
+	m.sampleLocked()
+	m.signalLocked()
+	notify := m.Changed
+	m.mu.Unlock()
+	if notify != nil {
+		notify()
+	}
+}
+
 func (m *DownloadManager) uploadProgress(id string, count int64) {
 	m.mu.Lock()
 	item := m.items[id]

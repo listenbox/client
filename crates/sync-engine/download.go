@@ -46,11 +46,14 @@ func (api *API) download(
 	journal *Database,
 	operation string,
 ) error {
-	total, validator, err := api.probeMediaStream(ctx, source)
+	probe, err := api.probeMediaStream(ctx, source)
 	if err != nil {
 		return err
 	}
-	revision := validator
+	if probe.head >= 0 {
+		return api.downloadLiveSegments(ctx, source, path, manager, id, journal, operation, probe.head)
+	}
+	total, revision := probe.total, probe.validator
 	if revision == "" {
 		u, err := url.Parse(source.URL)
 		if err != nil {
@@ -84,7 +87,7 @@ func (api *API) download(
 		journal:   journal,
 		operation: operation,
 		name:      name,
-		validator: validator,
+		validator: probe.validator,
 		total:     total,
 	}
 	var group errgroup.Group
@@ -97,36 +100,52 @@ func (api *API) download(
 	return group.Wait()
 }
 
-func (api *API) probeMediaStream(ctx context.Context, source MediaStream) (int64, string, error) {
+// mediaProbe describes a stream: its byte length and validator, or, for a
+// post-live recording without a byte length, the last segment number. head
+// is -1 for an ordinary byte-addressed stream.
+type mediaProbe struct {
+	total     int64
+	validator string
+	head      int64
+}
+
+func (api *API) probeMediaStream(ctx context.Context, source MediaStream) (mediaProbe, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, source.URL, nil)
 	if err != nil {
-		return 0, "", err
+		return mediaProbe{}, err
 	}
 	request.Header.Set("Range", "bytes=0-0")
 	request.Header.Set("Origin", "https://youtube.com")
 	request.Header.Set("User-Agent", source.UserAgent)
 	response, err := api.send(api.HTTP, request)
 	if err != nil {
-		return 0, "", err
+		return mediaProbe{}, err
 	}
 	if response.StatusCode == http.StatusForbidden {
 		response.Body.Close()
-		return 0, "", ErrMediaUnavailable
+		return mediaProbe{}, ErrMediaUnavailable
 	}
 	if response.StatusCode != http.StatusPartialContent {
-		return 0, "", errors.New("download source: " + responseError(response).Error())
-	}
-	value, ok := strings.CutPrefix(response.Header.Get("Content-Range"), "bytes 0-0/")
-	total, parseErr := strconv.ParseInt(value, 10, 64)
-	validator := response.Header.Get("ETag")
-	if validator == "" || strings.HasPrefix(validator, "W/") {
-		validator = response.Header.Get("Last-Modified")
+		return mediaProbe{}, errors.New("download source: " + responseError(response).Error())
 	}
 	response.Body.Close()
-	if !ok || parseErr != nil || total <= 0 || total > 5_000_000_000_000 {
-		return 0, "", errors.New("invalid initial media range")
+	if head, ok := liveHead(response); ok {
+		return mediaProbe{head: head}, nil
 	}
-	return total, validator, nil
+	return byteProbe(response.Header)
+}
+
+func byteProbe(header http.Header) (mediaProbe, error) {
+	value, ok := strings.CutPrefix(header.Get("Content-Range"), "bytes 0-0/")
+	total, err := strconv.ParseInt(value, 10, 64)
+	if !ok || err != nil || total <= 0 || total > 5_000_000_000_000 {
+		return mediaProbe{}, errors.New("invalid initial media range")
+	}
+	validator := header.Get("ETag")
+	if validator == "" || strings.HasPrefix(validator, "W/") {
+		validator = header.Get("Last-Modified")
+	}
+	return mediaProbe{total: total, validator: validator, head: -1}, nil
 }
 
 type rangeDownload struct {
