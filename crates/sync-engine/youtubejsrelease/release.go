@@ -65,9 +65,9 @@ func mustDecode(value string) []byte {
 }
 
 // TagPrefix starts every release tag for one bundle ABI. Releases are
-// versioned quickjs-v<ABI>.<release>: the major version is the host contract
+// versioned bundle-v<ABI>.<release>: the major version is the host contract
 // and the release number only grows, so clients list just their ABI's tags.
-func TagPrefix(abi int) string { return "quickjs-v" + strconv.Itoa(abi) + "." }
+func TagPrefix(abi int) string { return "bundle-v" + strconv.Itoa(abi) + "." }
 
 // Tag names the GitHub release that carries the manifest.
 func (m Manifest) Tag() string { return TagPrefix(m.ABI) + strconv.FormatInt(m.Release, 10) }

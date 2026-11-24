@@ -9,25 +9,25 @@ resolution belongs to this directory's `aube-lock.yaml`.
 Clients embed the bundle they were built with and pick up newer ones from
 signed GitHub releases of the fork, so YouTube.js fixes ship without a client
 release. Like the client, the fork releases itself: every push to its `master`
-runs [`quickjs-release.yml`](youtubejs/.github/workflows/quickjs-release.yml),
+runs [`bundle-release.yml`](youtubejs/.github/workflows/bundle-release.yml),
 which builds the minified bundle, takes the next immutable version
-`quickjs-v<ABI>.<N>`, signs it and publishes it. Superseded and already released
+`bundle-v<ABI>.<N>`, signs it and publishes it. Superseded and already released
 commits are skipped. Push the fork only after the pinned commit passes the
 client's integrated E2E, and bump the pin here.
 
-- The major version is the bundle ABI in `youtubejs/.github/quickjs/abi`. It must
+- The major version is the bundle ABI in `youtubejs/.github/bundle/abi`. It must
   equal `youtubei.BundleABI`; bump both together when bindings or host primitives
   and bundles stop being interchangeable.
 - Assets: the bundle (`youtubejs.js`) and an Ed25519-signed manifest
   (`youtubejs.json`) carrying ABI, release number, sequence (the fork commit's
   committer time), size, SHA-256 and commit.
-- The signing seed lives only in the fork's `quickjs-release` environment secret
-  `QUICKJS_SIGNING_SEED`, restricted to `master`, with an offline copy at
+- The signing seed lives only in the fork's `bundle-release` environment secret
+  `BUNDLE_SIGNING_SEED`, restricted to `master`, with an offline copy at
   `~/.secrets/listenbox/youtubejs-signing.key`. Clients pin its public half in
   `crates/sync-engine/youtubejsrelease`.
 
 The CLI's `--watch` mode and the desktop app check every ten minutes with
-`GET /repos/listenbox/YouTube.js/git/matching-refs/tags/quickjs-v<ABI>.` and
+`GET /repos/listenbox/YouTube.js/git/matching-refs/tags/bundle-v<ABI>.` and
 `If-None-Match`. The tag list changes only when a release is published, so
 checks are 304s. Clients fetch the latest release's manifest. They evaluate it
 only when its signature verifies against the pinned key, it names its own tag
