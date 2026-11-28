@@ -3,7 +3,7 @@ layer: application
 tags: [client-component]
 dependsOn: [client]
 fileGroups:
-  sources: ['*.go', 'assets/**/*', 'mygo.template.json', COPYING, 'tests/fixtures/**/*']
+  sources: ['*.go', 'assets/**/*', 'mygo.template.json', 'tests/fixtures/**/*']
 tasks:
   package:
     description: Build the native desktop bundle with MyGo's distribution tools.

@@ -6,7 +6,7 @@ tags: [client-workspace, go-lint]
 fileGroups:
   version: [VERSION]
   contracts: [contracts/*.yaml]
-  notices: [LICENSE, crates/desktop/COPYING, THIRD-PARTY-NOTICES.txt]
+  notices: [LICENSE, THIRD-PARTY-NOTICES.txt]
   sources:
     - '*.go'
     - internal/**/*.go

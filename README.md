@@ -59,5 +59,9 @@ See [native updates](docs/native-updates.md).
 
 ## License
 
-[MIT](LICENSE), except the desktop app in [crates/desktop](crates/desktop/),
-which is [GPL-3.0-or-later](crates/desktop/COPYING).
+The Listenbox client is free software: you can redistribute it and/or modify it
+under the terms of the GNU General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option) any
+later version (`GPL-3.0-or-later`); see [LICENSE](LICENSE). It is distributed
+WITHOUT ANY WARRANTY. Bundled and adapted third-party code keeps its own
+licenses, listed in [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt).

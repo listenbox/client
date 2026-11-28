@@ -75,7 +75,7 @@ if [[ "$platform" == darwin/arm64 ]]; then
     echo 'The installed app must use the original Listenbox icon PNG.' >&2
     exit 1
   fi
-  resources=(COPYING LICENSE THIRD-PARTY-NOTICES.txt NOTICE.txt)
+  resources=(LICENSE THIRD-PARTY-NOTICES.txt NOTICE.txt)
   if [[ -n "$key" ]]; then resources+=(Sparkle.LICENSE.txt Sparkle.framework/Sparkle); fi
   for resource in "${resources[@]}"; do
     if [[ ! -f "$bundle/Contents/Resources/$resource" ]]; then

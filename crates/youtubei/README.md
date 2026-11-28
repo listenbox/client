@@ -14,7 +14,7 @@ in-process. Bytecode is never loaded from anywhere else. Which bundle to run, an
 how newer ones are fetched and verified, is `sync-engine` policy. Bump
 `BundleABI` whenever bindings or host primitives and bundles stop being
 interchangeable. The original Mazit extraction retains its MIT attribution
-in `THIRD-PARTY-NOTICES.txt`.
+in the client's [THIRD-PARTY-NOTICES.txt](../../THIRD-PARTY-NOTICES.txt).
 
 `New(ctx, fetch)` starts a dedicated, locked OS thread. Every QuickJS value is
 created, accessed and freed there. Calls can overlap while awaiting host I/O;
