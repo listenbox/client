@@ -49,3 +49,13 @@ The parent API E2E suite supplies real API, storage and YouTube fixtures to the
 live desktop drivers. It verifies import, sync, interruption, recovery and
 logout through the production workspace. Native menu/chrome, signed installed
 upgrades and OS performance still require macOS or Windows verification.
+
+## License
+
+Listenbox desktop is free software: you can redistribute it and/or modify it
+under the terms of the GNU General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option) any
+later version (`GPL-3.0-or-later`); see [COPYING](COPYING). It is distributed
+WITHOUT ANY WARRANTY. The rest of this repository, including the shared sync
+engine the app links, stays under the root [MIT license](../../LICENSE), so
+builds of the app ship both texts alongside the third-party notices.

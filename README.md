@@ -56,3 +56,8 @@ MyGo builds bundles and native executable resources. macOS release packaging
 uses its Developer ID signing and notarization support. Windows retains the
 existing Inno Setup installer identity for upgrades from previous releases.
 See [native updates](docs/native-updates.md).
+
+## License
+
+[MIT](LICENSE), except the desktop app in [crates/desktop](crates/desktop/),
+which is [GPL-3.0-or-later](crates/desktop/COPYING).
